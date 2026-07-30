@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Device Simulator — Kids Messenger</title>
+    <link rel="stylesheet" href="../shared/base.css" />
+  </head>
+  <body>
+    <main class="device-shell">
+      <header>
+        <h1>Hardware Simulator</h1>
+        <p class="status" id="status">Connecting…</p>
+      </header>
+
+      <!-- Buttons 1/2/3 render left/centre/right, matching the physical layout. -->
+      <canvas id="device" width="720" height="320" aria-label="Virtual device"></canvas>
+
+      <section class="injector">
+        <h2>Event injector</h2>
+        <div class="injector-buttons" id="injector"></div>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

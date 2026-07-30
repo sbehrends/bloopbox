@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    /* Browser code: DOM instead of node globals. */
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "types": [],
+    "noEmit": true,
+    "rootDir": "."
+  },
+  /* Browser sources may import shared contract types out of src/. */
+  "include": ["public/**/*.ts", "src/ipc/**/*.ts", "src/hal/types.ts", "src/config/schema.ts"]
+}

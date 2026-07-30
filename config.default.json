@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "system": {
+    "hostname": "kids-messenger",
+    "adminPasswordHash": "",
+    "configured": false
+  },
+  "wifi": {
+    "ssid": "",
+    "password": ""
+  },
+  "contacts": {
+    "button1": {
+      "name": "Button 1",
+      "phone": "",
+      "enabled": false
+    },
+    "button2": {
+      "name": "Button 2",
+      "phone": "",
+      "enabled": false
+    },
+    "button3": {
+      "name": "Button 3",
+      "phone": "",
+      "enabled": false
+    }
+  },
+  "audio": {
+    "speakerVolumePercent": 70,
+    "maxVolumeCapPercent": 85,
+    "micGainPercent": 60,
+    "maxRecordingSeconds": 30
+  },
+  "quietHours": {
+    "enabled": true,
+    "startTime": "20:00",
+    "endTime": "07:00"
+  }
+}

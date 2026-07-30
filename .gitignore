@@ -1,0 +1,33 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Persistent writable device volume (config.json, WhatsApp auth). Never committed.
+data/
+/data/
+
+# Generated audio cues (rebuild with `npm run sounds`) and temp recordings
+src/audio/sounds/*.wav
+*.ogg
+
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Never commit: WhatsApp session credentials, device secrets, local overrides
+auth_info*/
+*.session
+config/local.yaml
+config/runtime.yaml
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+.idea/
+.vscode/

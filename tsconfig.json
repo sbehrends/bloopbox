@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "types": ["node"],
+
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "resolveJsonModule": true,
+
+    /* Author imports as "./foo.ts"; tsc rewrites them to "./foo.js" on emit.
+       Keeps specifiers honest and lets tsx run the sources unmodified. */
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "outDir": "dist",
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+
+    /* Strictness: the tighter this is, the less an agent can get wrong silently. */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Only erasable type syntax — no enums, namespaces, or parameter properties.
+       Keeps the sources runnable by Node's native type stripping if we ever drop tsc. */
+    "erasableSyntaxOnly": true,
+
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
+}

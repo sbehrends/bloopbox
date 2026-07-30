@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+data/
+package-lock.json
+
+# Authoritative spec — human-authored, don't let the formatter churn it
+PRODUCT.md
+src/audio/sounds/
+*.ogg
+*.wav
+*.log

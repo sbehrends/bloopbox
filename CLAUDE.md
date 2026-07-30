@@ -108,7 +108,15 @@ by press duration and unread state:
 | 300 ms – 1.0 s | no             | "oops" double-beep, nothing sent                             |
 | ≥ 1.0 s        | either         | record and send on release (capped at `maxRecordingSeconds`) |
 
-Button 1 + Button 3 held together for 3 s toggles silent mode.
+Button 1 + Button 3 held together for 3 s toggles silent mode. Both presses are swallowed the
+instant the chord forms, so a child mashing the outer buttons can never send two voice notes; if
+the chord is released early, nothing at all happens.
+
+**Cue timing follows from this.** Spec §1 plays the "pop" the moment a button is held, but at press
+time we cannot tell a tap from a hold — popping immediately would mean every tap-to-play began with
+a spurious recording chime. So the pop is deferred to the 1.0 s threshold, where the press is
+unambiguously a recording. Audio capture still starts at t=0 (nothing the child says is lost), and
+the LED goes solid immediately, so they always get instant acknowledgement.
 
 ### Silent mode gating
 

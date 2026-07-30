@@ -40,6 +40,7 @@ export type SimulatorToServerEvents = {
   'sim:injectIncoming': (payload: { index: ButtonIndex; count?: number }) => void;
   'sim:injectWifiFailure': (payload: { down: boolean }) => void;
   'sim:injectSessionExpiry': () => void;
+  'sim:injectWhatsAppConnected': () => void;
 };
 
 /** Sent by the hardware server to the browser. */

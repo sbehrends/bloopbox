@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Device Simulator — Kids Messenger</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23ffd54a'/%3E%3C/svg%3E"
+    />
     <link rel="stylesheet" href="../shared/base.css" />
   </head>
   <body>
@@ -14,7 +18,13 @@
       </header>
 
       <!-- Buttons 1/2/3 render left/centre/right, matching the physical layout. -->
-      <canvas id="device" width="720" height="320" aria-label="Virtual device"></canvas>
+      <canvas id="device" width="720" height="340" aria-label="Virtual device"></canvas>
+
+      <p class="hint">
+        Click and <strong>hold</strong> a button to record, or tap it to play what arrived. Keys
+        <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> work too — hold <kbd>1</kbd>+<kbd>3</kbd> for three
+        seconds to toggle silent mode.
+      </p>
 
       <section class="injector">
         <h2>Event injector</h2>

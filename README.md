@@ -12,7 +12,7 @@ full behavioral specification and [`CLAUDE.md`](./CLAUDE.md) for architecture an
 Under active development, built in phases:
 
 - [x] **Phase 1** — project foundation, tooling, validation gate
-- [ ] **Phase 2** — hardware server: config, LED state machine, HAL, audio pipeline, simulator UI
+- [x] **Phase 2** — hardware server: config, LED state machine, HAL, audio pipeline, simulator UI
 - [ ] **Phase 3** — WhatsApp bridge (Baileys)
 - [ ] **Phase 4** — Raspberry Pi provisioning (deferred until hardware is on hand)
 
@@ -34,6 +34,7 @@ npm run doctor
 
 ```bash
 npm install
+npm run sounds      # generate the audio cue WAVs (not committed)
 npm run doctor      # check external prerequisites
 npm run check       # format + lint + typecheck + test — must pass
 ```
@@ -49,7 +50,24 @@ Open http://localhost:5174/simulator/ (virtual device) or http://localhost:5174/
 panel). Vite proxies `/api` and `/socket.io` through to :3000.
 
 In production there is only one server: `npm run build` emits the UIs into `dist/public/`, which
-`npm run start:hw` serves directly from :3000 alongside the API.
+`npm run start:hw` serves from :3000 alongside the API.
+
+### Using the simulator
+
+The device boots into `CONNECTING` and stays there until WhatsApp links, so start by clicking
+**"WhatsApp connected (go READY)"** in the event injector — that is the state where normal
+behaviour lives.
+
+| Action                                                                           | What it does                                      |
+| -------------------------------------------------------------------------------- | ------------------------------------------------- |
+| Click-and-hold a button (or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>) for ≥1s | Records, then sends on release                    |
+| Tap a blinking button                                                            | Plays every voice note waiting from that contact  |
+| Tap a dark button                                                                | "Oops" double-beep — nothing was sent             |
+| Hold <kbd>1</kbd>+<kbd>3</kbd> for 3s                                            | Toggles silent mode                               |
+| Event injector                                                                   | Fake inbound notes, Wi-Fi failure, session expiry |
+
+Recording needs microphone permission. Sending needs the WhatsApp bridge (Phase 3) — until then
+a completed recording fails gracefully with the "oops" cue.
 
 ## Scripts
 

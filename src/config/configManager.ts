@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { constants as fsConstants } from 'node:fs';
 import { access, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { configSchema, type DeviceConfig } from './schema.ts';
+import { configSchema, type ContactConfig, type DeviceConfig } from './schema.ts';
 
 /**
  * Loads, validates and persists the device configuration.
@@ -198,29 +198,74 @@ export class ConfigManager extends EventEmitter<ConfigManagerEvents> {
   }
 }
 
-/** A partial, nested config update. Every section and field is optional. */
+/**
+ * A partial, nested config update. Every section and field is optional.
+ *
+ * Each section is explicitly `| undefined` as well as optional: under
+ * `exactOptionalPropertyTypes` those are different things, and Zod's `.partial()` output
+ * sets absent keys to `undefined` rather than omitting them.
+ */
+type PatchSection<T> = { readonly [K in keyof T]?: T[K] | undefined };
+
 export type ConfigPatch = {
-  readonly [K in keyof DeviceConfig]?: DeviceConfig[K] extends object
-    ? Partial<DeviceConfig[K]>
-    : DeviceConfig[K];
+  readonly [K in keyof DeviceConfig]?:
+    (DeviceConfig[K] extends object ? PatchSection<DeviceConfig[K]> : DeviceConfig[K]) | undefined;
 };
 
+/** Falls back to `base` when the patch omits a field *or* sets it to undefined. */
+function pick<T>(patched: T | undefined, base: T): T {
+  return patched === undefined ? base : patched;
+}
+
 /**
- * Merges a patch one level into each section. Sections are small and flat, so a
- * section-wise merge is both sufficient and predictable — no surprise deep merges.
+ * Merges a patch one level into each section.
+ *
+ * Written out field by field rather than with object spread on purpose: spreading a patch
+ * whose key is explicitly `undefined` *overwrites* the base value with undefined, which on
+ * this device would silently erase a phone number or a volume cap. `pick` treats an
+ * explicit undefined as "not supplied", which is what every caller means.
  */
 export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfig {
+  const contact = (
+    patched: PatchSection<ContactConfig> | undefined,
+    current: ContactConfig,
+  ): ContactConfig => ({
+    name: pick(patched?.name, current.name),
+    phone: pick(patched?.phone, current.phone),
+    enabled: pick(patched?.enabled, current.enabled),
+  });
+
   return {
+    // Schema version is ours to set, never the client's.
     version: base.version,
-    system: { ...base.system, ...patch.system },
-    wifi: { ...base.wifi, ...patch.wifi },
-    contacts: {
-      button1: { ...base.contacts.button1, ...patch.contacts?.button1 },
-      button2: { ...base.contacts.button2, ...patch.contacts?.button2 },
-      button3: { ...base.contacts.button3, ...patch.contacts?.button3 },
+    system: {
+      hostname: pick(patch.system?.hostname, base.system.hostname),
+      adminPasswordHash: pick(patch.system?.adminPasswordHash, base.system.adminPasswordHash),
+      configured: pick(patch.system?.configured, base.system.configured),
     },
-    audio: { ...base.audio, ...patch.audio },
-    quietHours: { ...base.quietHours, ...patch.quietHours },
+    wifi: {
+      ssid: pick(patch.wifi?.ssid, base.wifi.ssid),
+      password: pick(patch.wifi?.password, base.wifi.password),
+    },
+    contacts: {
+      button1: contact(patch.contacts?.button1, base.contacts.button1),
+      button2: contact(patch.contacts?.button2, base.contacts.button2),
+      button3: contact(patch.contacts?.button3, base.contacts.button3),
+    },
+    audio: {
+      speakerVolumePercent: pick(
+        patch.audio?.speakerVolumePercent,
+        base.audio.speakerVolumePercent,
+      ),
+      maxVolumeCapPercent: pick(patch.audio?.maxVolumeCapPercent, base.audio.maxVolumeCapPercent),
+      micGainPercent: pick(patch.audio?.micGainPercent, base.audio.micGainPercent),
+      maxRecordingSeconds: pick(patch.audio?.maxRecordingSeconds, base.audio.maxRecordingSeconds),
+    },
+    quietHours: {
+      enabled: pick(patch.quietHours?.enabled, base.quietHours.enabled),
+      startTime: pick(patch.quietHours?.startTime, base.quietHours.startTime),
+      endTime: pick(patch.quietHours?.endTime, base.quietHours.endTime),
+    },
   };
 }
 

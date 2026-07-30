@@ -14,6 +14,11 @@ import { isWithinQuietHours, minutesUntilNextTransition } from './quietHours.ts'
  *
  * This is the only place that knows how the pieces relate, which keeps every other module
  * independently testable. It owns no I/O of its own — the HAL and ConfigManager do that.
+ *
+ * Config is read when this is constructed and never re-read. Saving settings restarts the
+ * daemon (see `requestRestart` in the hardware server), which is both simpler and safer than
+ * reapplying values live: a partial live update — new timings but a stale volume, say — is a
+ * state no test covers and no user can reason about.
  */
 
 export type OutboundRequest = {
@@ -76,7 +81,6 @@ export class DeviceController {
     this.#wireButtons();
     this.#wireInterpreter();
     this.#wireQueue();
-    this.#wireConfig();
   }
 
   /** Begins LED animation and quiet-hours scheduling. */
@@ -231,17 +235,6 @@ export class DeviceController {
 
     this.queue.on('playbackAborted', () => {
       this.state.setPlaying(null);
-    });
-  }
-
-  #wireConfig(): void {
-    this.#config.on('change', (next) => {
-      // Timing tweaks from the admin panel take effect on the next press, no restart.
-      this.#interpreter.setTimings(next.buttons);
-      this.#interpreter.setMaxRecordingSeconds(next.audio.maxRecordingSeconds);
-      void this.#hal.setVolume(clampVolume(next.audio.speakerVolumePercent, next.audio));
-      // Quiet hours may have moved.
-      this.#evaluateQuietHours();
     });
   }
 

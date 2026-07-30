@@ -30,11 +30,34 @@ import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
 
 const log = childLogger('hardware');
 
+/**
+ * Set once the shutdown path is wired. Routes are constructed before it exists, so they call
+ * through this rather than capturing it directly.
+ */
+let restartHandler: ((reason: string) => void) | null = null;
+
+function requestRestart(reason: string): void {
+  if (restartHandler) {
+    restartHandler(reason);
+    return;
+  }
+  // A config write before startup finished; nothing is serving yet, so this is unreachable
+  // in practice, but exiting is still the correct response.
+  log.warn({ reason }, 'restart requested before startup completed');
+  process.exit(0);
+}
+
 const PORT = Number(process.env['PORT'] ?? 3000);
 /** Audio lives in tmpfs on the device; override for dev. */
 const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/kids-messenger';
 /** Built UI assets. Absent in dev, where Vite serves them on :5174. */
 const STATIC_ROOT = resolve(import.meta.dirname, '../../dist/public');
+
+/**
+ * Grace period between answering a config write and exiting, so the HTTP response and the
+ * Socket.io notice reach the browser before the socket closes.
+ */
+const RESTART_DELAY_MS = 400;
 
 /**
  * How long the boot chase runs before the device starts reporting real status.
@@ -189,6 +212,9 @@ async function main(): Promise<void> {
     unlinkWhatsApp: () => {
       link.current?.unlink();
     },
+    requestRestart: (reason: string) => {
+      requestRestart(reason);
+    },
   };
 
   app.use('/api', createApiRouter(routesContext));
@@ -289,10 +315,10 @@ async function main(): Promise<void> {
   /* ---- shutdown ---- */
 
   let shuttingDown = false;
-  const shutdown = (signal: string): void => {
+  const shutdown = (reason: string): void => {
     if (shuttingDown) return;
     shuttingDown = true;
-    log.info({ signal }, 'shutting down');
+    log.info({ reason }, 'shutting down');
 
     void (async (): Promise<void> => {
       purger.stop();
@@ -310,6 +336,19 @@ async function main(): Promise<void> {
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => shutdown(signal));
   }
+
+  /**
+   * Exits so the supervisor restarts us with the new config.
+   *
+   * Config is read once at boot rather than watched, so this is what makes a saved setting
+   * take effect. Exit code 0 — this is a clean, intentional restart, not a failure. systemd
+   * (`Restart=always`) handles it on the device; `npm run dev:hw` uses scripts/dev-server.ts.
+   */
+  restartHandler = (reason: string): void => {
+    if (shuttingDown) return;
+    log.info({ reason }, 'restarting to apply configuration');
+    setTimeout(() => shutdown(`restart: ${reason}`), RESTART_DELAY_MS).unref();
+  };
 }
 
 await main().catch((error: unknown) => {

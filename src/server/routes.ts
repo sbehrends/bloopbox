@@ -26,6 +26,13 @@ export type RoutesContext = {
   readonly wifiConnected: () => boolean;
   /** Drops WhatsApp credentials so the device can be re-paired. */
   readonly unlinkWhatsApp: () => void;
+  /**
+   * Restarts the daemon so a saved config takes effect.
+   *
+   * Config is snapshot at boot rather than watched, so a write is not live until the process
+   * comes back. Called after the response is sent.
+   */
+  readonly requestRestart: (reason: string) => void;
 };
 
 export function buildStatusPayload(context: RoutesContext): DeviceStatusPayload {
@@ -91,7 +98,9 @@ export function createApiRouter(context: RoutesContext): Router {
 
     try {
       const updated = await context.config.update(parsed.data);
-      res.json({ ok: true, version: updated.version });
+      // Tell the client before going down, so it can show "restarting" and reconnect.
+      res.json({ ok: true, version: updated.version, restarting: true });
+      context.requestRestart('configuration saved');
     } catch (error: unknown) {
       if (error instanceof ConfigValidationError) {
         res.status(400).json({ error: error.message, issues: error.issues });
@@ -120,7 +129,8 @@ export function createApiRouter(context: RoutesContext): Router {
     try {
       const adminPasswordHash = await hashAdminPassword(password);
       await context.config.update({ system: { adminPasswordHash, configured: true } });
-      res.json({ ok: true });
+      res.json({ ok: true, restarting: true });
+      context.requestRestart('onboarding completed');
     } catch (error: unknown) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'onboarding failed' });
     }
@@ -146,7 +156,8 @@ export function createApiRouter(context: RoutesContext): Router {
   router.post('/factory-reset', admin, async (_req, res) => {
     try {
       await context.config.factoryReset();
-      res.json({ ok: true });
+      res.json({ ok: true, restarting: true });
+      context.requestRestart('factory reset');
     } catch {
       res.status(500).json({ error: 'factory reset failed' });
     }

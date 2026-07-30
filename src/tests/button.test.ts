@@ -112,21 +112,11 @@ describe('configurable timings', () => {
     expect(names()).toContain('toggleSilent');
   });
 
-  it('applies retuned timings to the next press, not one already in flight', () => {
-    const { interpreter, names } = setup();
-
-    interpreter.handleButtonDown(0);
-    // Retuning mid-press must not re-arm this press's timers.
-    interpreter.setTimings({ ...DEFAULT_BUTTON_TIMINGS, recordThresholdMs: 3000 });
-    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
-    expect(names()).toContain('captureConfirmed');
-    interpreter.handleButtonUp(0);
-
-    // The next press uses the new window.
-    const before = names().length;
-    interpreter.handleButtonDown(1);
-    vi.advanceTimersByTime(RECORD_THRESHOLD_MS + 100);
-    expect(names().slice(before)).not.toContain('captureConfirmed');
+  it('reports the timings it was built with', () => {
+    // Fixed for the process lifetime: saving config restarts the daemon rather than
+    // reapplying values live, so there is no setter to get out of step with.
+    const { interpreter } = setup({ timings: { recordThresholdMs: 1200 } });
+    expect(interpreter.timings.recordThresholdMs).toBe(1200);
   });
 });
 

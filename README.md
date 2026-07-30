@@ -5,7 +5,8 @@ assigned to one family member. **Hold to send a voice note, tap to play what arr
 no menus, no scrolling.
 
 Runs on a Raspberry Pi Zero 2 W as two Node.js daemons. See [`PRODUCT.md`](./PRODUCT.md) for the
-full behavioral specification and [`CLAUDE.md`](./CLAUDE.md) for architecture and conventions.
+full behavioral specification, [`CLAUDE.md`](./CLAUDE.md) for architecture and conventions, and
+[`PENDING.md`](./PENDING.md) for known gaps and the backlog.
 
 ## Status
 
@@ -64,29 +65,36 @@ behaviour lives.
 | Tap a blinking button (0.15–0.5s)                                                  | Plays every voice note waiting from that contact                    |
 | Tap a dark button                                                                  | "Oops" double-beep — nothing was sent                               |
 | Press under 0.15s                                                                  | Ignored entirely — that is a toddler brushing it                    |
-| Admin → Button timings                                                             | Retune all of the above live, no restart                            |
+| Admin → Button timings                                                             | Retune all of the above (device restarts to apply)                  |
 | Hold <kbd>1</kbd>+<kbd>3</kbd> for 3s                                              | Toggles silent mode                                                 |
 | Event injector                                                                     | Reboot, go READY, fake inbound notes, Wi-Fi failure, session expiry |
 
 Injected notes are synthesised 1.4-second tones with a distinct pitch per button (G4 / C5 / E5), so
 you can hear both _that_ playback worked and _which_ contact it came from.
 
+All four press timings — debounce, record threshold, minimum recording length and the silent-mode
+chord — are editable under **Button timings** in the admin panel, so finding the right feel needs
+no rebuild. Saving any setting **restarts the device** to apply it: config is read at boot rather
+than watched. `npm run dev:hw` supervises the server and brings it straight back, and the admin
+panel shows "restarting" then reloads itself.
+
 Recording needs microphone permission. Sending needs the WhatsApp bridge (Phase 3) — until then
 a completed recording fails gracefully with the "oops" cue.
 
 ## Scripts
 
-| Command                 | Does                                                |
-| ----------------------- | --------------------------------------------------- |
-| `npm run check`         | **The gate.** Format check, lint, typecheck, tests. |
-| `npm run dev`           | Both daemons in watch mode                          |
-| `npm run dev:hw`        | Hardware server only (simulator mode)               |
-| `npm run dev:wa`        | WhatsApp bridge only                                |
-| `npm run test:watch`    | Vitest in watch mode                                |
-| `npm run test:coverage` | Coverage report                                     |
-| `npm run build`         | Compile server to `dist/` and UIs to `dist/public/` |
-| `npm run doctor`        | Verify ffmpeg / audio device prerequisites          |
-| `npm run sounds`        | Regenerate the audio cue WAVs                       |
+| Command                 | Does                                                  |
+| ----------------------- | ----------------------------------------------------- |
+| `npm run check`         | **The gate.** Format check, lint, typecheck, tests.   |
+| `npm run dev`           | Both daemons in watch mode                            |
+| `npm run dev:hw`        | Hardware server, supervised — restarts on config save |
+| `npm run dev:hw:watch`  | Hardware server with file watching, no supervisor     |
+| `npm run dev:wa`        | WhatsApp bridge only                                  |
+| `npm run test:watch`    | Vitest in watch mode                                  |
+| `npm run test:coverage` | Coverage report                                       |
+| `npm run build`         | Compile server to `dist/` and UIs to `dist/public/`   |
+| `npm run doctor`        | Verify ffmpeg / audio device prerequisites            |
+| `npm run sounds`        | Regenerate the audio cue WAVs                         |
 
 ## Hardware
 

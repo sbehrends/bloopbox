@@ -12,8 +12,9 @@ import type { ButtonIndex, ButtonTimings } from '../config/schema.ts';
 /**
  * The two outer buttons form the silent-mode chord.
  *
- * Press *timings* are no longer constants here — they live in `config.buttons` so they can be
- * tuned from the admin panel without a rebuild. See `DEFAULT_BUTTON_TIMINGS` in
+ * Press *timings* are not constants here — they live in `config.buttons` so they can be tuned
+ * from the admin panel. They are read once at construction: saving config restarts the daemon,
+ * so there is no need to reapply them mid-flight. See `DEFAULT_BUTTON_TIMINGS` in
  * `src/config/schema.ts` for the shipped values.
  */
 export const SILENT_COMBO_BUTTONS: readonly ButtonIndex[] = [0, 2];
@@ -85,8 +86,8 @@ type ActivePress = {
  * gets instant acknowledgement that the device noticed them.
  */
 export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
-  #timings: ButtonTimings;
-  #maxRecordingMs: number;
+  readonly #timings: ButtonTimings;
+  readonly #maxRecordingMs: number;
   readonly #hasUnread: (index: ButtonIndex) => boolean;
   readonly #active = new Map<ButtonIndex, ActivePress>();
   #comboTimer: NodeJS.Timeout | null = null;
@@ -101,21 +102,6 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
   /** The active press windows. */
   get timings(): ButtonTimings {
     return this.#timings;
-  }
-
-  /**
-   * Applies new timings from the admin panel.
-   *
-   * Presses already in flight keep the windows they started under: re-arming their timers
-   * mid-press would produce behaviour matching neither the old nor the new values.
-   */
-  setTimings(timings: ButtonTimings): void {
-    this.#timings = timings;
-  }
-
-  /** Config can change at runtime from the admin UI. */
-  setMaxRecordingSeconds(seconds: number): void {
-    this.#maxRecordingMs = seconds * 1000;
   }
 
   /** True while any button is being held. */

@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events';
 import { constants as fsConstants } from 'node:fs';
 import { access, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -38,23 +37,25 @@ export type LoadResult = {
   readonly fallbackReason?: string;
 };
 
-type ConfigManagerEvents = {
-  change: [DeviceConfig];
-};
-
 export type ConfigManagerOptions = {
   readonly configPath?: string;
   readonly templatePath?: string;
 };
 
-export class ConfigManager extends EventEmitter<ConfigManagerEvents> {
+/**
+ * Deliberately not an EventEmitter.
+ *
+ * It used to emit `change` so listeners could reapply settings live, but saving config now
+ * restarts the daemon instead — a partial live update is a state nothing tests and nobody can
+ * reason about. Nothing needs to observe a write, so there is no event to observe.
+ */
+export class ConfigManager {
   readonly #configPath: string;
   readonly #templatePath: string;
   #current: DeviceConfig | null = null;
   #source: ConfigSource = 'defaults';
 
   constructor(options: ConfigManagerOptions = {}) {
-    super();
     this.#configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
     this.#templatePath = options.templatePath ?? DEFAULT_TEMPLATE_PATH;
   }
@@ -124,7 +125,6 @@ export class ConfigManager extends EventEmitter<ConfigManagerEvents> {
     await this.#writeAtomic(this.#configPath, parsed.data);
     this.#current = parsed.data;
     this.#source = 'file';
-    this.emit('change', parsed.data);
     return parsed.data;
   }
 
@@ -143,7 +143,6 @@ export class ConfigManager extends EventEmitter<ConfigManagerEvents> {
       if (!isNotFound(error)) throw error;
     });
     const result = await this.load();
-    this.emit('change', result.config);
     return result.config;
   }
 

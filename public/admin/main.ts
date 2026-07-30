@@ -69,7 +69,11 @@ async function putConfig(patch: unknown): Promise<void> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(patch),
   });
-  if (response.ok) return;
+  if (response.ok) {
+    // Settings are read at boot, so the daemon restarts to apply them.
+    noteRestarting();
+    return;
+  }
 
   // Surface the server's own validation messages rather than inventing our own.
   const detail: unknown = await response.json().catch(() => null);
@@ -284,7 +288,7 @@ function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
     element(
       'p',
       'field-hint',
-      'Takes effect on the next press — no restart needed. Tune these to suit the child.',
+      'Saving restarts the device to apply these. Tune them to suit the child.',
     ),
     field('Debounce (ms)', debounce, 'Presses shorter than this are ignored as accidental.'),
     field('Record threshold (ms)', threshold, 'Hold at least this long to record.'),
@@ -397,6 +401,41 @@ function saveButton(label: string, run: () => Promise<void>): HTMLButtonElement 
     })();
   });
   return button;
+}
+
+/**
+ * Tells the user the device is coming back.
+ *
+ * Socket.io reconnects on its own, so this is only about not leaving them staring at a page
+ * that has silently stopped updating.
+ */
+function noteRestarting(): void {
+  if (!statusLine) return;
+  statusLine.textContent = 'Saved — device restarting to apply settings…';
+  statusLine.classList.remove('error');
+  // Reload once it is back, so every field reflects what was actually persisted.
+  window.setTimeout(() => {
+    void waitForDeviceThenReload();
+  }, 1200);
+}
+
+async function waitForDeviceThenReload(): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      const response = await fetch('/api/status', { cache: 'no-store' });
+      if (response.ok) {
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // Still down; keep waiting.
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  if (statusLine) {
+    statusLine.textContent = 'Device did not come back — check that the server is running.';
+    statusLine.classList.add('error');
+  }
 }
 
 function reportError(error: unknown): void {

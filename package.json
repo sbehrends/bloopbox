@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "run-p dev:hw dev:wa",
-    "dev:hw": "SIMULATOR_MODE=true tsx watch src/processes/hardware-server.ts",
+    "dev:hw": "tsx scripts/dev-server.ts",
     "dev:wa": "tsx watch src/processes/whatsapp-bridge.ts",
     "dev:web": "vite",
     "build": "run-s build:server build:assets build:web",
@@ -30,7 +30,8 @@
     "test:coverage": "vitest run --coverage",
     "doctor": "tsx scripts/doctor.ts",
     "sounds": "tsx scripts/generate-sounds.ts",
-    "check": "run-s format:check lint typecheck test"
+    "check": "run-s format:check lint typecheck test",
+    "dev:hw:watch": "SIMULATOR_MODE=true tsx watch src/processes/hardware-server.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

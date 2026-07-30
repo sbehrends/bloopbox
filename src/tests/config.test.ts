@@ -180,17 +180,16 @@ describe('atomic writes', () => {
     });
   });
 
-  it('emits change so both daemons can reload without a restart', async () => {
+  it('returns the validated config it persisted', async () => {
     const config = manager();
     await config.load();
 
-    const seen: DeviceConfig[] = [];
-    config.on('change', (next) => seen.push(next));
+    const saved = await config.save(await validConfig());
 
-    await config.save(await validConfig());
-
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.system.configured).toBe(true);
+    // No change event: settings are applied by restarting the daemon, so nothing observes
+    // a write in-process. See "Config is snapshot at boot" in CLAUDE.md.
+    expect(saved.system.configured).toBe(true);
+    expect(config.current).toEqual(saved);
   });
 });
 

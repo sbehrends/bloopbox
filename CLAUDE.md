@@ -4,7 +4,9 @@ Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry Pi Zero 2 
 old send and receive WhatsApp voice notes. **Hold to send, tap to play.** No screen, ever.
 
 `PRODUCT.md` is the authoritative behavioral spec. This file records how we build it and the
-decisions the spec left open.
+decisions the spec left open. `PENDING.md` is the backlog — known gaps, unverified claims and
+watch items. Check it before starting something and add to it rather than leaving a finding in
+conversation.
 
 ## Before you report a task done
 
@@ -96,6 +98,27 @@ makes the timing behavior unit-testable with fake timers. Keep it that way.
   the Zod schema (`config.buttons` is the precedent), not in a module constant.
 - Conventional commits (`feat:`, `fix:`, `test:`, `chore:`), one per milestone.
 
+## Config is snapshot at boot — saving restarts the daemon
+
+`DeviceController` reads config when it is constructed and never re-reads it. Writing settings
+makes the hardware server exit cleanly (code 0) so a supervisor brings it back with the new
+values: `requestRestart()` in `src/processes/hardware-server.ts`.
+
+There is deliberately **no live-reload path**. Applying some values live and others only on
+restart produces states no test covers and no user can reason about — new button timings against a
+stale volume cap, say. A restart is a couple of seconds on this device and leaves exactly one code
+path to reason about.
+
+Who does the restarting:
+
+| Context                | Supervisor                                                                                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Device                 | systemd, `Restart=always` (Phase 4)                                                                                                                                  |
+| `npm run dev:hw`       | `scripts/dev-server.ts`, a ~60-line respawner                                                                                                                        |
+| `npm run dev:hw:watch` | nothing — `tsx watch` does **not** restart a process that exits cleanly, so a config save leaves the server down. Use it for editing source, not for testing config. |
+
+The admin panel shows "device restarting", polls `/api/status`, and reloads once it answers.
+
 ## Decisions the spec left open
 
 These are **resolved and locked by tests**. If you think one is wrong, change it deliberately in
@@ -127,10 +150,9 @@ by press duration and unread state:
 | ≥ `recordThresholdMs`            | either         | record and send on release (capped at `maxRecordingSeconds`) |
 
 **These are config, not constants.** They live in `config.buttons` (defaults 150 / 500 / 500 /
-3000 ms) and are editable from the admin panel, taking effect on the next press with no restart —
-finding the right feel by editing source and rebuilding was far too slow. `DEFAULT_BUTTON_TIMINGS`
-in `src/config/schema.ts` is the single source of truth, derived from the schema's own field
-defaults.
+3000 ms) and are editable from the admin panel — finding the right feel by editing source and
+rebuilding was far too slow. `DEFAULT_BUTTON_TIMINGS` in `src/config/schema.ts` is the single
+source of truth, derived from the schema's own field defaults.
 
 Two things the schema enforces, because both would break the device in ways a parent could not
 diagnose:
@@ -141,9 +163,7 @@ diagnose:
   than sent. Hold duration and captured duration are not the same thing: a slow microphone start
   can leave a long hold with almost no audio in it.
 
-`ButtonInterpreter` takes `timings` as a constructor option and exposes `setTimings()`. A press
-already in flight keeps the windows it started under — re-arming its timers mid-press would match
-neither the old nor the new values.
+`ButtonInterpreter` takes `timings` as a constructor option and holds them for its lifetime.
 
 ### Adding a config section without breaking existing devices
 

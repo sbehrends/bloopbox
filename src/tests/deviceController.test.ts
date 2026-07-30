@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,6 +92,21 @@ async function flush(times = 4): Promise<void> {
   }
 }
 
+/**
+ * Waits until `predicate` holds, yielding to the event loop between checks.
+ *
+ * Used instead of a fixed number of `flush()` calls wherever an assertion depends on
+ * filesystem work finishing. A fixed count is a guess, and guessing low yields a test that
+ * passes alone and fails intermittently under parallel load — which is exactly what happened.
+ */
+async function waitFor(predicate: () => boolean, label: string, attempts = 500): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`waitFor timed out waiting for: ${label}`);
+}
+
 /** Presses and releases a button, holding for `holdMs` of fake time. */
 async function press(index: 0 | 1 | 2, holdMs: number): Promise<void> {
   hal.pressButton(index);
@@ -106,6 +122,7 @@ describe('recording and sending', () => {
     hal.fixedDurationMs = 3000;
 
     await press(0, RECORD_THRESHOLD_MS + 1500);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ index: 0, durationMs: 3000 });
@@ -119,9 +136,12 @@ describe('recording and sending', () => {
     hal.fixedDurationMs = MIN_RECORDING_MS - 1;
 
     await press(0, RECORD_THRESHOLD_MS + 1000);
+    await waitFor(
+      () => hal.cueSequence().includes(AudioCue.Oops),
+      'the oops cue after discarding a fragment',
+    );
 
     expect(sent).toHaveLength(0);
-    expect(hal.cueSequence()).toContain(AudioCue.Oops);
     expect(hal.cueSequence()).not.toContain(AudioCue.Swoosh);
   });
 
@@ -138,7 +158,7 @@ describe('recording and sending', () => {
     };
 
     await press(1, RECORD_THRESHOLD_MS + 500);
-    await flush();
+    await waitFor(() => !existsSync(recordingPath), 'the fragment file to be deleted');
 
     await expect(readFile(recordingPath, 'utf8')).rejects.toThrow(/ENOENT/);
   });
@@ -148,9 +168,12 @@ describe('recording and sending', () => {
     sendResult = 'fail';
 
     await press(2, RECORD_THRESHOLD_MS + 1000);
+    await waitFor(
+      () => hal.cueSequence().includes(AudioCue.Oops),
+      'the oops cue after a failed send',
+    );
 
     expect(sent).toHaveLength(0);
-    expect(hal.cueSequence()).toContain(AudioCue.Oops);
   });
 
   it('holds the LED solid while recording, then releases it', async () => {
@@ -207,7 +230,7 @@ describe('receiving', () => {
 
     await press(1, 300);
     await vi.advanceTimersByTimeAsync(500);
-    await flush();
+    await waitFor(() => controller.state.unreadCount(1) === 0, 'the queue to drain');
 
     expect(hal.playSequence()).toEqual(['/tmp/m1.ogg', '/tmp/m2.ogg']);
     // PRODUCT.md §1: the light goes out once the queue finishes.
@@ -302,16 +325,14 @@ describe('volume', () => {
   });
 });
 
-describe('live timing changes from the admin panel', () => {
-  it('applies a new record threshold without a restart', async () => {
+describe('config is snapshot, not watched', () => {
+  it('ignores a config change until the process restarts', async () => {
     await config.update({ buttons: { recordThresholdMs: 1500 } });
 
     hal.pressButton(0);
-    // Past the old 500ms threshold but short of the new 1500ms one.
-    await vi.advanceTimersByTimeAsync(800);
-    expect(controller.state.recording).toBeNull();
-
-    await vi.advanceTimersByTimeAsync(800);
+    // Still the 500ms threshold this controller was built with. The saved 1500ms takes
+    // effect only after the daemon restarts, which the hardware server triggers on write.
+    await vi.advanceTimersByTimeAsync(700);
     expect(controller.state.recording).toBe(0);
 
     hal.releaseButton(0);
@@ -319,23 +340,24 @@ describe('live timing changes from the admin panel', () => {
     await flush();
   });
 
-  it('applies a new minimum recording length without a restart', async () => {
-    await config.update({ buttons: { minRecordingMs: 4000 } });
-    // Comfortably over the default 500ms minimum, but under the new 4s one.
-    hal.fixedDurationMs = 2000;
+  it('picks up saved timings when rebuilt', async () => {
+    await config.update({ buttons: { recordThresholdMs: 1500 } });
 
-    await press(0, RECORD_THRESHOLD_MS + 500);
+    // Standing in for the restart.
+    await controller.stop();
+    const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    rebuilt.setStatus(DeviceStatus.Ready);
 
-    expect(sent).toHaveLength(0);
-    expect(hal.cueSequence()).toContain(AudioCue.Oops);
-  });
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(rebuilt.state.recording).toBeNull();
 
-  it('applies a new debounce window without a restart', async () => {
-    await config.update({ buttons: { debounceMs: 450 } });
+    await vi.advanceTimersByTimeAsync(900);
+    expect(rebuilt.state.recording).toBe(0);
 
-    // Would have been a tap under the default 150ms debounce.
-    await press(0, 300);
-
-    expect(hal.cueSequence()).toEqual([]);
+    hal.releaseButton(0);
+    await vi.advanceTimersByTimeAsync(50);
+    await flush();
+    await rebuilt.stop();
   });
 });

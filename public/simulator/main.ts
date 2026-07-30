@@ -360,6 +360,11 @@ const INJECTORS: readonly { label: string; run: () => void }[] = [
     run: () => socket.emit('sim:injectWhatsAppConnected'),
   },
   {
+    // The boot chase is otherwise only visible in the first seconds of process life.
+    label: 'Reboot (replay boot chase)',
+    run: () => socket.emit('sim:reboot'),
+  },
+  {
     label: 'Voice note from Button 1',
     run: () => socket.emit('sim:injectIncoming', { index: 0 }),
   },

@@ -15,6 +15,9 @@ import type { ButtonIndex } from '../config/schema.ts';
 
 type Recorded = { event: string; payload?: unknown };
 
+/** Comfortably inside the tap window: past debounce, short of the record threshold. */
+const TAP_MS = Math.round((DEBOUNCE_MS + RECORD_THRESHOLD_MS) / 2);
+
 function setup(options: { unread?: ButtonIndex[]; maxRecordingSeconds?: number } = {}) {
   const unread = new Set(options.unread ?? []);
   const interpreter = new ButtonInterpreter({
@@ -59,7 +62,18 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('debounce — presses under 300ms', () => {
+describe('timing constants', () => {
+  it('pins the press windows, so changing them is deliberate', () => {
+    // Tuned during manual testing: faster to respond than the spec's original figures.
+    expect(DEBOUNCE_MS).toBe(150);
+    expect(RECORD_THRESHOLD_MS).toBe(500);
+    expect(SILENT_COMBO_MS).toBe(3000);
+    // A tap window must exist between them or tap-to-play is unreachable.
+    expect(DEBOUNCE_MS).toBeLessThan(RECORD_THRESHOLD_MS);
+  });
+});
+
+describe('debounce — presses under the debounce window', () => {
   it('are dropped with no audible feedback at all', () => {
     const { interpreter, names } = setup();
 
@@ -87,12 +101,12 @@ describe('debounce — presses under 300ms', () => {
   });
 });
 
-describe('tap — 300ms to 1.0s', () => {
+describe('tap — between debounce and the record threshold', () => {
   it('plays the queue when that contact has unread messages', () => {
     const { interpreter, names } = setup({ unread: [2] });
 
     interpreter.handleButtonDown(2);
-    vi.advanceTimersByTime(600);
+    vi.advanceTimersByTime(TAP_MS);
     interpreter.handleButtonUp(2);
 
     expect(names()).toContain('playQueue');
@@ -104,7 +118,7 @@ describe('tap — 300ms to 1.0s', () => {
     const { interpreter, names } = setup({ unread: [] });
 
     interpreter.handleButtonDown(2);
-    vi.advanceTimersByTime(600);
+    vi.advanceTimersByTime(TAP_MS);
     interpreter.handleButtonUp(2);
 
     expect(names()).toContain('cancelBeep');
@@ -116,13 +130,13 @@ describe('tap — 300ms to 1.0s', () => {
     const { interpreter, find } = setup({ unread: [0] });
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(600);
+    vi.advanceTimersByTime(TAP_MS);
     interpreter.handleButtonUp(0);
 
     expect(find('captureCancel')?.payload).toMatchObject({ reason: 'tooShort' });
   });
 
-  it('treats exactly 999ms as a tap, not a recording', () => {
+  it('treats one millisecond under the threshold as a tap, not a recording', () => {
     const { interpreter, names } = setup();
 
     interpreter.handleButtonDown(0);
@@ -134,7 +148,7 @@ describe('tap — 300ms to 1.0s', () => {
   });
 });
 
-describe('hold — 1.0s and beyond', () => {
+describe('hold — at or beyond the record threshold', () => {
   it('confirms the recording at the threshold and commits on release', () => {
     const { interpreter, names, find } = setup();
 

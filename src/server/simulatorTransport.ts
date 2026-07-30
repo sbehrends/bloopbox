@@ -29,6 +29,8 @@ export type SimulatorInjector = {
    * real link needs the WhatsApp bridge running.
    */
   injectWhatsAppConnected(): void;
+  /** Replay the boot sequence. */
+  reboot(): void;
 };
 
 /** Guards against a tab streaming unbounded audio into the RAM disk. */
@@ -180,6 +182,10 @@ export class SocketSimulatorTransport implements SimulatorTransport {
 
     socket.on('sim:injectWhatsAppConnected', () => {
       injector.injectWhatsAppConnected();
+    });
+
+    socket.on('sim:reboot', () => {
+      injector.reboot();
     });
   }
 }

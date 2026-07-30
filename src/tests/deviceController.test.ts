@@ -1,0 +1,300 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { AudioCue } from '../audio/cues.ts';
+import { ConfigManager, DEFAULT_TEMPLATE_PATH } from '../config/configManager.ts';
+import { configSchema, type DeviceConfig } from '../config/schema.ts';
+import { MIN_RECORDING_MS, RECORD_THRESHOLD_MS } from '../core/buttonInterpreter.ts';
+import { DeviceController, type OutboundRequest } from '../core/deviceController.ts';
+import { DeviceStatus } from '../core/deviceState.ts';
+import { MockHal } from '../hal/mockDriver.ts';
+
+/**
+ * End-to-end behaviour of the wired device: a HAL button edge in, cues and sends out.
+ *
+ * This is the layer that decides what the child actually experiences, so the cases here are
+ * the ones a person would notice — a fragment being sent, a cue firing at night, a queue
+ * that does not clear its light.
+ */
+
+let workDir: string;
+let hal: MockHal;
+let config: ConfigManager;
+let controller: DeviceController;
+let sent: OutboundRequest[];
+let sendResult: 'ok' | 'fail';
+
+async function buildConfig(): Promise<DeviceConfig> {
+  const template = configSchema.parse(
+    JSON.parse(await readFile(DEFAULT_TEMPLATE_PATH, 'utf8')) as unknown,
+  );
+  return {
+    ...template,
+    system: { ...template.system, configured: true, adminPasswordHash: '$2b$10$x' },
+    contacts: {
+      button1: { name: 'Mom', phone: '15551234567', enabled: true },
+      button2: { name: 'Dad', phone: '15559876543', enabled: true },
+      button3: { name: 'Grandma', phone: '15555555555', enabled: true },
+    },
+  };
+}
+
+beforeEach(async () => {
+  /*
+   * setImmediate is deliberately left real. The commit path awaits filesystem work, which
+   * completes on libuv's I/O phase — fully faked timers never yield there, so assertions
+   * would run before the chain finished. `flush()` below uses it to hand back control.
+   */
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+  });
+  vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0));
+
+  workDir = await mkdtemp(join(tmpdir(), 'kids-messenger-controller-'));
+  const configPath = join(workDir, 'config.json');
+  await writeFile(configPath, JSON.stringify(await buildConfig()), 'utf8');
+
+  config = new ConfigManager({ configPath, templatePath: DEFAULT_TEMPLATE_PATH });
+  await config.load();
+
+  hal = new MockHal();
+  await hal.init();
+
+  sent = [];
+  sendResult = 'ok';
+  controller = new DeviceController({
+    hal,
+    config,
+    send: (request) => {
+      if (sendResult === 'fail') return Promise.reject(new Error('bridge offline'));
+      sent.push(request);
+      return Promise.resolve();
+    },
+  });
+  controller.setStatus(DeviceStatus.Ready);
+});
+
+afterEach(async () => {
+  await controller.stop();
+  vi.useRealTimers();
+  await rm(workDir, { recursive: true, force: true });
+});
+
+/** Yields to the real event loop so pending filesystem callbacks can run. */
+async function flush(times = 4): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+/** Presses and releases a button, holding for `holdMs` of fake time. */
+async function press(index: 0 | 1 | 2, holdMs: number): Promise<void> {
+  hal.pressButton(index);
+  await vi.advanceTimersByTimeAsync(holdMs);
+  hal.releaseButton(index);
+  // Let the capture/commit chain settle, including its filesystem work.
+  await vi.advanceTimersByTimeAsync(50);
+  await flush();
+}
+
+describe('recording and sending', () => {
+  it('sends a recording that is long enough', async () => {
+    hal.fixedDurationMs = 3000;
+
+    await press(0, RECORD_THRESHOLD_MS + 1500);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ index: 0, durationMs: 3000 });
+    expect(hal.cueSequence()).toContain(AudioCue.Pop);
+    expect(hal.cueSequence()).toContain(AudioCue.Whoosh);
+    expect(hal.cueSequence()).toContain(AudioCue.Swoosh);
+  });
+
+  it('discards a recording whose audio is shorter than the minimum, and says so', async () => {
+    // The hold was long enough, but the microphone delivered almost nothing.
+    hal.fixedDurationMs = MIN_RECORDING_MS - 1;
+
+    await press(0, RECORD_THRESHOLD_MS + 1000);
+
+    expect(sent).toHaveLength(0);
+    expect(hal.cueSequence()).toContain(AudioCue.Oops);
+    expect(hal.cueSequence()).not.toContain(AudioCue.Swoosh);
+  });
+
+  it('deletes the fragment rather than leaving it for the purge', async () => {
+    hal.fixedDurationMs = 100;
+    const recordingPath = join(workDir, 'fragment.ogg');
+    await writeFile(recordingPath, 'x');
+
+    // Point the mock at a real file so deletion is observable.
+    const originalStop = hal.stopRecording.bind(hal);
+    hal.stopRecording = async (handle) => {
+      const result = await originalStop(handle);
+      return { ...result, path: recordingPath, durationMs: 100 };
+    };
+
+    await press(1, RECORD_THRESHOLD_MS + 500);
+    await flush();
+
+    await expect(readFile(recordingPath, 'utf8')).rejects.toThrow(/ENOENT/);
+  });
+
+  it('reports failure with the oops cue when the bridge is offline', async () => {
+    hal.fixedDurationMs = 3000;
+    sendResult = 'fail';
+
+    await press(2, RECORD_THRESHOLD_MS + 1000);
+
+    expect(sent).toHaveLength(0);
+    expect(hal.cueSequence()).toContain(AudioCue.Oops);
+  });
+
+  it('holds the LED solid while recording, then releases it', async () => {
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 100);
+    expect(controller.state.recording).toBe(0);
+
+    hal.releaseButton(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(controller.state.recording).toBeNull();
+  });
+});
+
+describe('taps', () => {
+  it('beeps when there is nothing to play', async () => {
+    await press(0, 300);
+
+    expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('stays completely silent for a press inside the debounce window', async () => {
+    await press(0, 50);
+
+    expect(hal.cueSequence()).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe('receiving', () => {
+  it('lights the button immediately and chimes, without waiting on audio', () => {
+    controller.handleIncoming(1, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+
+    // Synchronous on purpose: the blinking LED must not wait behind a cue.
+    expect(controller.state.unreadCount(1)).toBe(1);
+    expect(controller.queue.count(1)).toBe(1);
+  });
+
+  it('plays the queue on a tap and clears the light when it drains', async () => {
+    for (const id of ['m1', 'm2']) {
+      controller.handleIncoming(1, {
+        messageId: id,
+        path: `/tmp/${id}.ogg`,
+        receivedAt: Date.now(),
+        durationMs: 1400,
+      });
+    }
+    expect(controller.state.unreadCount(1)).toBe(2);
+
+    await press(1, 300);
+    await vi.advanceTimersByTimeAsync(500);
+    await flush();
+
+    expect(hal.playSequence()).toEqual(['/tmp/m1.ogg', '/tmp/m2.ogg']);
+    // PRODUCT.md §1: the light goes out once the queue finishes.
+    expect(controller.state.unreadCount(1)).toBe(0);
+    expect(controller.state.playing).toBeNull();
+  });
+
+  it('protects queued files from the purge until they are played', () => {
+    controller.handleIncoming(2, {
+      messageId: 'm9',
+      path: '/tmp/m9.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+
+    expect(controller.protectedFiles().has('/tmp/m9.ogg')).toBe(true);
+  });
+});
+
+describe('silent mode', () => {
+  it('suppresses record cues but still plays voice notes', async () => {
+    controller.state.setManualSilent(true);
+    hal.clearHistory();
+
+    controller.handleIncoming(0, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+    await press(0, 300);
+    await vi.advanceTimersByTimeAsync(300);
+
+    // No notify chime at night...
+    expect(hal.cueSequence()).not.toContain(AudioCue.Notify);
+    // ...but tapping still plays the message (PRODUCT.md §7).
+    expect(hal.playSequence()).toEqual(['/tmp/m1.ogg']);
+  });
+
+  it('suppresses the pop and whoosh while recording', async () => {
+    controller.state.setManualSilent(true);
+    hal.fixedDurationMs = 3000;
+    hal.clearHistory();
+
+    await press(0, RECORD_THRESHOLD_MS + 1000);
+
+    expect(hal.cueSequence()).toEqual([]);
+    // The message still goes out — only the sounds are suppressed.
+    expect(sent).toHaveLength(1);
+  });
+
+  it('applies quiet hours on start', async () => {
+    // Default schedule is 20:00 -> 07:00; move the clock into it.
+    vi.setSystemTime(new Date(2026, 5, 15, 22, 30, 0));
+    await controller.start();
+
+    expect(controller.state.silentMode).toBe(true);
+    expect(controller.state.snapshot().silentFromSchedule).toBe(true);
+  });
+
+  it('stays audible outside quiet hours', async () => {
+    vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0));
+    await controller.start();
+
+    expect(controller.state.silentMode).toBe(false);
+  });
+});
+
+describe('the silent-mode chord', () => {
+  it('toggles silent mode without sending anything', async () => {
+    hal.pressButton(0);
+    hal.pressButton(2);
+    await vi.advanceTimersByTimeAsync(3000);
+    hal.releaseButton(0);
+    hal.releaseButton(2);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(controller.state.silentMode).toBe(true);
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe('volume', () => {
+  it('clamps the configured volume to the safety cap', () => {
+    // Default config is 70 with an 85 cap.
+    expect(controller.volumePercent()).toBe(70);
+  });
+
+  it('applies the clamped volume to the HAL on start', async () => {
+    await controller.start();
+    expect(hal.volumeChanges).toContain(70);
+  });
+});

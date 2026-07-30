@@ -12,9 +12,9 @@ import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Server } from 'socket.io';
-import { cp } from 'node:fs/promises';
 import { AudioPurger } from '../audio/purge.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
+import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
 import { ConfigManager } from '../config/configManager.ts';
 import { buttonIndexToKey, enabledContacts } from '../config/schema.ts';
 import { DeviceController, type OutboundRequest } from '../core/deviceController.ts';
@@ -35,6 +35,15 @@ const PORT = Number(process.env['PORT'] ?? 3000);
 const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/kids-messenger';
 /** Built UI assets. Absent in dev, where Vite serves them on :5174. */
 const STATIC_ROOT = resolve(import.meta.dirname, '../../dist/public');
+
+/**
+ * How long the boot chase runs before the device starts reporting real status.
+ *
+ * Without this the daemon derives status from Wi-Fi/WhatsApp immediately and BOOTING is
+ * never visible, even though PRODUCT.md §6 defines a boot pattern. A real Pi takes seconds
+ * to bring services up, so holding it here is honest as well as observable.
+ */
+const BOOT_ANIMATION_MS = 2600;
 
 async function main(): Promise<void> {
   const kind = selectHalKind();
@@ -101,8 +110,16 @@ async function main(): Promise<void> {
     },
   });
 
+  let booting = true;
+
   /** Recomputes the lifecycle status from Wi-Fi and WhatsApp health (spec §6). */
   const refreshStatus = (): void => {
+    if (booting) {
+      // Hold the boot chase; real status takes over when the boot window closes.
+      controller.setStatus(DeviceStatus.Booting);
+      transport.broadcastStatus(buildStatusPayload(routesContext));
+      return;
+    }
     if (wifiDown) {
       controller.setStatus(DeviceStatus.WifiError);
     } else if (whatsappState === 'connected') {
@@ -148,6 +165,19 @@ async function main(): Promise<void> {
     },
   });
 
+  /** Ends the boot window and lets real status through. */
+  const finishBoot = (): void => {
+    booting = false;
+    refreshStatus();
+  };
+
+  /** Replays the boot sequence, so it can be observed on demand rather than only at start. */
+  const rebootDevice = (): void => {
+    booting = true;
+    refreshStatus();
+    setTimeout(finishBoot, BOOT_ANIMATION_MS).unref();
+  };
+
   /* ---- routes ---- */
 
   const routesContext = {
@@ -179,22 +209,27 @@ async function main(): Promise<void> {
         void (async (): Promise<void> => {
           for (let n = 0; n < count; n++) {
             const messageId = `injected-${Date.now().toString(36)}-${n}`;
-            const path = resolve(RECORDING_DIRECTORY, `${messageId}.wav`);
             /*
-             * Stage a real file in the recordings directory rather than pointing at the
-             * cue itself: playback is served from /audio, which only exposes recordings,
-             * so a path into src/audio/sounds would 404 and inject silence.
+             * Written into the recordings directory, because playback is served from /audio
+             * which only exposes recordings — a path into src/audio/sounds would 404.
+             * Synthesised rather than copied from a cue so it is long and loud enough to
+             * actually hear, with a per-button pitch.
              */
-            await cp(resolve(SOUNDS_DIRECTORY, 'chime.wav'), path);
+            const path = resolve(RECORDING_DIRECTORY, `${messageId}.wav`);
+            await generateTestNote(path, index);
             controller.handleIncoming(index, {
               messageId,
               path,
               receivedAt: Date.now(),
-              durationMs: 140,
+              durationMs: TEST_NOTE_DURATION_MS,
             });
           }
           log.info({ index: buttonIndexToKey(index), count }, 'injected incoming notes');
         })();
+      },
+      reboot: () => {
+        log.info('replaying boot sequence');
+        rebootDevice();
       },
       injectWifiFailure: (down) => {
         wifiDown = down;
@@ -240,7 +275,9 @@ async function main(): Promise<void> {
     transport.broadcastStatus(buildStatusPayload(routesContext));
   });
 
+  // Show the boot chase, then let real status through.
   refreshStatus();
+  setTimeout(finishBoot, BOOT_ANIMATION_MS).unref();
 
   await new Promise<void>((ready) => {
     httpServer.listen(PORT, () => {

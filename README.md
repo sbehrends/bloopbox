@@ -58,13 +58,17 @@ The device boots into `CONNECTING` and stays there until WhatsApp links, so star
 **"WhatsApp connected (go READY)"** in the event injector — that is the state where normal
 behaviour lives.
 
-| Action                                                                           | What it does                                      |
-| -------------------------------------------------------------------------------- | ------------------------------------------------- |
-| Click-and-hold a button (or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>) for ≥1s | Records, then sends on release                    |
-| Tap a blinking button                                                            | Plays every voice note waiting from that contact  |
-| Tap a dark button                                                                | "Oops" double-beep — nothing was sent             |
-| Hold <kbd>1</kbd>+<kbd>3</kbd> for 3s                                            | Toggles silent mode                               |
-| Event injector                                                                   | Fake inbound notes, Wi-Fi failure, session expiry |
+| Action                                                                             | What it does                                                        |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Click-and-hold a button (or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>) for ≥0.5s | Records, then sends on release                                      |
+| Tap a blinking button (0.15–0.5s)                                                  | Plays every voice note waiting from that contact                    |
+| Tap a dark button                                                                  | "Oops" double-beep — nothing was sent                               |
+| Press under 0.15s                                                                  | Ignored entirely — that is a toddler brushing it                    |
+| Hold <kbd>1</kbd>+<kbd>3</kbd> for 3s                                              | Toggles silent mode                                                 |
+| Event injector                                                                     | Reboot, go READY, fake inbound notes, Wi-Fi failure, session expiry |
+
+Injected notes are synthesised 1.4-second tones with a distinct pitch per button (G4 / C5 / E5), so
+you can hear both _that_ playback worked and _which_ contact it came from.
 
 Recording needs microphone permission. Sending needs the WhatsApp bridge (Phase 3) — until then
 a completed recording fails gracefully with the "oops" cue.

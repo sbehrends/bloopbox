@@ -4,7 +4,7 @@ import { AudioQueueManager, type QueuedNote } from '../audio/queueManager.ts';
 import type { ConfigManager } from '../config/configManager.ts';
 import { clampVolume, type ButtonIndex, type DeviceConfig } from '../config/schema.ts';
 import type { Hal, RecordingHandle } from '../hal/types.ts';
-import { ButtonInterpreter } from './buttonInterpreter.ts';
+import { ButtonInterpreter, MIN_RECORDING_MS } from './buttonInterpreter.ts';
 import { DeviceState, type DeviceStatus } from './deviceState.ts';
 import { LedAnimator } from './ledAnimator.ts';
 import { isWithinQuietHours, minutesUntilNextTransition } from './quietHours.ts';
@@ -274,6 +274,19 @@ export class DeviceController {
       durationMs = result.durationMs;
     } catch {
       // Capture failed after the fact — tell the child nothing was sent.
+      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
+        await this.#safeCue(AudioCue.Oops);
+      }
+      return;
+    }
+
+    /*
+     * The hold was long enough, but the audio may not be: a slow microphone start or
+     * dropped chunks can leave almost nothing in the file. Sending a fragment wastes the
+     * recipient's attention, so treat it exactly like a cancelled take.
+     */
+    if (durationMs < MIN_RECORDING_MS) {
+      await rm(path, { force: true }).catch(() => undefined);
       if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
         await this.#safeCue(AudioCue.Oops);
       }

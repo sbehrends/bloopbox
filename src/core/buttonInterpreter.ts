@@ -10,10 +10,19 @@ import type { ButtonIndex } from '../config/schema.ts';
  */
 
 /** Presses shorter than this are contact bounce or an accidental brush — ignored. */
-export const DEBOUNCE_MS = 300;
+export const DEBOUNCE_MS = 150;
 
 /** At or beyond this, a press is a deliberate recording rather than a tap. */
-export const RECORD_THRESHOLD_MS = 1000;
+export const RECORD_THRESHOLD_MS = 500;
+
+/**
+ * A recording carrying less actual audio than this is discarded instead of sent.
+ *
+ * Separate from {@link RECORD_THRESHOLD_MS} because hold duration and captured duration are
+ * not the same thing: a slow microphone start or dropped chunks can leave a 600ms hold with
+ * almost no audio in it, and nobody wants to receive a 90ms fragment.
+ */
+export const MIN_RECORDING_MS = 500;
 
 /** Hold Button 1 + Button 3 together this long to toggle silent mode. */
 export const SILENT_COMBO_MS = 3000;

@@ -58,8 +58,8 @@ line floating, which on a button input means garbage reads.
 - **Pull-ups** come from the firmware — `gpio=17,27,22=ip,pu` in `/boot/firmware/config.txt`,
   applied by `scripts/provision.sh`. This is more robust anyway: it is set before userspace
   starts and survives any library change.
-- **Debounce** is software-side in `core/buttonInterpreter.ts` (300 ms), which we need regardless
-  for the tap-vs-hold distinction.
+- **Debounce** is software-side in `core/buttonInterpreter.ts` (`DEBOUNCE_MS`), which we need
+  regardless for the tap-vs-hold distinction.
 
 If you find yourself adding an options object to that `watch()` call, re-read this first.
 
@@ -120,10 +120,17 @@ by press duration and unread state:
 
 | Press duration | Unread present | Result                                                       |
 | -------------- | -------------- | ------------------------------------------------------------ |
-| < 300 ms       | either         | ignored (debounce)                                           |
-| 300 ms – 1.0 s | yes            | play that contact's queue                                    |
-| 300 ms – 1.0 s | no             | "oops" double-beep, nothing sent                             |
-| ≥ 1.0 s        | either         | record and send on release (capped at `maxRecordingSeconds`) |
+| < 150 ms       | either         | ignored (debounce)                                           |
+| 150 – 500 ms   | yes            | play that contact's queue                                    |
+| 150 – 500 ms   | no             | "oops" double-beep, nothing sent                             |
+| ≥ 500 ms       | either         | record and send on release (capped at `maxRecordingSeconds`) |
+
+These were retuned down from 300 ms / 1.0 s after manual testing — the original figures felt
+sluggish. `src/tests/button.test.ts` pins the numbers, so changing them is a deliberate edit.
+
+Separately, a committed recording carrying less than `MIN_RECORDING_MS` (500 ms) of _actual audio_
+is discarded rather than sent. Hold duration and captured duration are not the same thing: a slow
+microphone start can leave a long hold with almost no audio in it.
 
 Button 1 + Button 3 held together for 3 s toggles silent mode. Both presses are swallowed the
 instant the chord forms, so a child mashing the outer buttons can never send two voice notes; if
@@ -134,6 +141,13 @@ time we cannot tell a tap from a hold — popping immediately would mean every t
 a spurious recording chime. So the pop is deferred to the 1.0 s threshold, where the press is
 unambiguously a recording. Audio capture still starts at t=0 (nothing the child says is lost), and
 the LED goes solid immediately, so they always get instant acknowledgement.
+
+### Boot animation is held deliberately
+
+The daemon derives status from Wi-Fi/WhatsApp health, which resolves instantly — so `BOOTING`
+would never be visible even though `PRODUCT.md` §6 defines a chase pattern for it.
+`BOOT_ANIMATION_MS` (2.6 s) holds it, and the simulator has a **Reboot** injector to replay it,
+since a browser opened after startup would otherwise never see it.
 
 ### Silent mode gating
 

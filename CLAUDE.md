@@ -58,8 +58,8 @@ line floating, which on a button input means garbage reads.
 - **Pull-ups** come from the firmware — `gpio=17,27,22=ip,pu` in `/boot/firmware/config.txt`,
   applied by `scripts/provision.sh`. This is more robust anyway: it is set before userspace
   starts and survives any library change.
-- **Debounce** is software-side in `core/buttonInterpreter.ts` (`DEBOUNCE_MS`), which we need
-  regardless for the tap-vs-hold distinction.
+- **Debounce** is software-side in `core/buttonInterpreter.ts` (`config.buttons.debounceMs`),
+  which we need regardless for the tap-vs-hold distinction.
 
 If you find yourself adding an options object to that `watch()` call, re-read this first.
 
@@ -91,8 +91,9 @@ makes the timing behavior unit-testable with fake timers. Keep it that way.
   `as const` objects + union types instead of enums.
 - Config types are **inferred from the Zod schema** in `src/config/schema.ts`. Never hand-write a
   parallel interface — add the field to the schema and the type follows.
-- Timing constants live in one place per module and are exported, so tests assert against the same
-  numbers the runtime uses. No magic numbers inline.
+- Timing values live in exactly one place and are exported, so tests assert against the same
+  numbers the runtime uses. No magic numbers inline. Anything a user might want to tune belongs in
+  the Zod schema (`config.buttons` is the precedent), not in a module constant.
 - Conventional commits (`feat:`, `fix:`, `test:`, `chore:`), one per milestone.
 
 ## Decisions the spec left open
@@ -118,19 +119,42 @@ LED 1 vs. an unread message on LED 1). Resolved **per-LED, first match wins**:
 The spec says a short press is the "oops" cancel _and_ that a tap plays unread messages. Resolved
 by press duration and unread state:
 
-| Press duration | Unread present | Result                                                       |
-| -------------- | -------------- | ------------------------------------------------------------ |
-| < 150 ms       | either         | ignored (debounce)                                           |
-| 150 – 500 ms   | yes            | play that contact's queue                                    |
-| 150 – 500 ms   | no             | "oops" double-beep, nothing sent                             |
-| ≥ 500 ms       | either         | record and send on release (capped at `maxRecordingSeconds`) |
+| Press duration                   | Unread present | Result                                                       |
+| -------------------------------- | -------------- | ------------------------------------------------------------ |
+| < `debounceMs`                   | either         | ignored (debounce)                                           |
+| `debounceMs`–`recordThresholdMs` | yes            | play that contact's queue                                    |
+| `debounceMs`–`recordThresholdMs` | no             | "oops" double-beep, nothing sent                             |
+| ≥ `recordThresholdMs`            | either         | record and send on release (capped at `maxRecordingSeconds`) |
 
-These were retuned down from 300 ms / 1.0 s after manual testing — the original figures felt
-sluggish. `src/tests/button.test.ts` pins the numbers, so changing them is a deliberate edit.
+**These are config, not constants.** They live in `config.buttons` (defaults 150 / 500 / 500 /
+3000 ms) and are editable from the admin panel, taking effect on the next press with no restart —
+finding the right feel by editing source and rebuilding was far too slow. `DEFAULT_BUTTON_TIMINGS`
+in `src/config/schema.ts` is the single source of truth, derived from the schema's own field
+defaults.
 
-Separately, a committed recording carrying less than `MIN_RECORDING_MS` (500 ms) of _actual audio_
-is discarded rather than sent. Hold duration and captured duration are not the same thing: a slow
-microphone start can leave a long hold with almost no audio in it.
+Two things the schema enforces, because both would break the device in ways a parent could not
+diagnose:
+
+- `debounceMs` **must** be below `recordThresholdMs`. Without a gap there is no tap, so playing a
+  received message becomes impossible.
+- A committed recording carrying less than `minRecordingMs` of _actual audio_ is discarded rather
+  than sent. Hold duration and captured duration are not the same thing: a slow microphone start
+  can leave a long hold with almost no audio in it.
+
+`ButtonInterpreter` takes `timings` as a constructor option and exposes `setTimings()`. A press
+already in flight keeps the windows it started under — re-arming its timers mid-press would match
+neither the old nor the new values.
+
+### Adding a config section without breaking existing devices
+
+`buttons` was added after devices already had a `config.json`. A new **required** section would
+have failed validation, silently falling back to defaults and wiping the parent's contacts. The
+section uses `.prefault({})` so an absent or partial section fills in from the field defaults.
+
+Note `.prefault({})`, **not** `.default({})` — Zod's `.default()` substitutes the literal value
+_without_ parsing it, so `{}` comes back empty and every timing ends up `undefined`. Use
+`prefault` for any future section, and cover the migration with a test (see
+`src/tests/config.test.ts`).
 
 Button 1 + Button 3 held together for 3 s toggles silent mode. Both presses are swallowed the
 instant the chord forms, so a child mashing the outer buttons can never send two voice notes; if

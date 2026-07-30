@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { ButtonIndex } from '../config/schema.ts';
+import type { ButtonIndex, ButtonTimings } from '../config/schema.ts';
 
 /**
  * Turns raw button edges into user intents (PRODUCT.md §1, §5, §7).
@@ -9,25 +9,13 @@ import type { ButtonIndex } from '../config/schema.ts';
  * behaviour is testable on fake timers with no hardware and no sleeping.
  */
 
-/** Presses shorter than this are contact bounce or an accidental brush — ignored. */
-export const DEBOUNCE_MS = 150;
-
-/** At or beyond this, a press is a deliberate recording rather than a tap. */
-export const RECORD_THRESHOLD_MS = 500;
-
 /**
- * A recording carrying less actual audio than this is discarded instead of sent.
+ * The two outer buttons form the silent-mode chord.
  *
- * Separate from {@link RECORD_THRESHOLD_MS} because hold duration and captured duration are
- * not the same thing: a slow microphone start or dropped chunks can leave a 600ms hold with
- * almost no audio in it, and nobody wants to receive a 90ms fragment.
+ * Press *timings* are no longer constants here — they live in `config.buttons` so they can be
+ * tuned from the admin panel without a rebuild. See `DEFAULT_BUTTON_TIMINGS` in
+ * `src/config/schema.ts` for the shipped values.
  */
-export const MIN_RECORDING_MS = 500;
-
-/** Hold Button 1 + Button 3 together this long to toggle silent mode. */
-export const SILENT_COMBO_MS = 3000;
-
-/** The two outer buttons form the silent-mode chord. */
 export const SILENT_COMBO_BUTTONS: readonly ButtonIndex[] = [0, 2];
 
 export type CancelReason =
@@ -43,7 +31,7 @@ export type ButtonInterpreterEvents = {
    */
   captureStart: [{ index: ButtonIndex }];
   /**
-   * The press has passed {@link RECORD_THRESHOLD_MS} and is definitely a recording.
+   * The press has passed `recordThresholdMs` and is definitely a recording.
    * This is when the "pop" cue plays — see the note on cue timing below.
    */
   captureConfirmed: [{ index: ButtonIndex }];
@@ -64,6 +52,8 @@ export type ButtonInterpreterEvents = {
 };
 
 export type ButtonInterpreterOptions = {
+  /** Press windows, from `config.buttons`. */
+  readonly timings: ButtonTimings;
   /** Auto-commits a recording that runs this long, bounding RAM-disk use. */
   readonly maxRecordingSeconds: number;
   /** Whether the contact on this button has messages waiting. */
@@ -73,7 +63,7 @@ export type ButtonInterpreterOptions = {
 type ActivePress = {
   readonly index: ButtonIndex;
   readonly startedAt: number;
-  /** Fires at RECORD_THRESHOLD_MS to confirm this is a recording. */
+  /** Fires at `recordThresholdMs` to confirm this is a recording. */
   confirmTimer: NodeJS.Timeout | null;
   /** Fires at maxRecordingSeconds to auto-commit. */
   maxTimer: NodeJS.Timeout | null;
@@ -90,11 +80,12 @@ type ActivePress = {
  * cannot yet tell a tap from a hold. Popping immediately would mean every tap-to-play
  * started with a spurious recording chime.
  *
- * So the pop is deferred to RECORD_THRESHOLD_MS, when the press is unambiguously a
+ * So the pop is deferred to `recordThresholdMs`, when the press is unambiguously a
  * recording. Visual feedback (LED solid) still fires immediately, so the child always
  * gets instant acknowledgement that the device noticed them.
  */
 export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
+  #timings: ButtonTimings;
   #maxRecordingMs: number;
   readonly #hasUnread: (index: ButtonIndex) => boolean;
   readonly #active = new Map<ButtonIndex, ActivePress>();
@@ -102,8 +93,24 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
 
   constructor(options: ButtonInterpreterOptions) {
     super();
+    this.#timings = options.timings;
     this.#maxRecordingMs = options.maxRecordingSeconds * 1000;
     this.#hasUnread = options.hasUnread;
+  }
+
+  /** The active press windows. */
+  get timings(): ButtonTimings {
+    return this.#timings;
+  }
+
+  /**
+   * Applies new timings from the admin panel.
+   *
+   * Presses already in flight keep the windows they started under: re-arming their timers
+   * mid-press would produce behaviour matching neither the old nor the new values.
+   */
+  setTimings(timings: ButtonTimings): void {
+    this.#timings = timings;
   }
 
   /** Config can change at runtime from the admin UI. */
@@ -136,6 +143,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.emit('pressVisualOn', { index });
     this.emit('captureStart', { index });
 
+    const { recordThresholdMs } = this.#timings;
     press.confirmTimer = setTimeout(() => {
       press.confirmTimer = null;
       if (press.swallowed) return;
@@ -143,11 +151,15 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       this.emit('captureConfirmed', { index });
 
       // Only arm the auto-commit once we know this is a real recording.
-      press.maxTimer = setTimeout(() => {
-        press.maxTimer = null;
-        this.#finish(index, true);
-      }, this.#maxRecordingMs - RECORD_THRESHOLD_MS);
-    }, RECORD_THRESHOLD_MS);
+      press.maxTimer = setTimeout(
+        () => {
+          press.maxTimer = null;
+          this.#finish(index, true);
+        },
+        // Already recordThresholdMs into the press, so only the remainder is left.
+        Math.max(0, this.#maxRecordingMs - recordThresholdMs),
+      );
+    }, recordThresholdMs);
 
     this.#maybeArmCombo();
   }
@@ -193,7 +205,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
 
     this.emit('captureCancel', { index, durationMs, reason: 'tooShort' });
 
-    if (durationMs < DEBOUNCE_MS) {
+    if (durationMs < this.#timings.debounceMs) {
       // Bounce or brush: no sound at all.
       return;
     }
@@ -231,7 +243,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.#comboTimer = setTimeout(() => {
       this.#comboTimer = null;
       this.emit('toggleSilent');
-    }, SILENT_COMBO_MS);
+    }, this.#timings.silentComboMs);
   }
 
   #disarmCombo(): void {

@@ -13,6 +13,7 @@ import {
   buttonKeyToIndex,
   clampVolume,
   configSchema,
+  DEFAULT_BUTTON_TIMINGS,
   enabledContacts,
   toJid,
   type DeviceConfig,
@@ -320,5 +321,77 @@ describe('schema validation rules', () => {
     const config = await validConfig();
     config.audio = { ...config.audio, maxRecordingSeconds: 3600 };
     expect(configSchema.safeParse(config).success).toBe(false);
+  });
+});
+
+describe('button timings', () => {
+  it('ships the tuned defaults in config.default.json', async () => {
+    const config = await validConfig();
+    expect(config.buttons).toEqual(DEFAULT_BUTTON_TIMINGS);
+  });
+
+  it('fills the section in for a config written before it existed', async () => {
+    // The migration case: a real config.json from an earlier build has no `buttons` key.
+    const legacy: Record<string, unknown> = { ...(await validConfig()) };
+    delete legacy['buttons'];
+
+    const result = configSchema.safeParse(legacy);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.buttons).toEqual(DEFAULT_BUTTON_TIMINGS);
+    // Crucially, the parent's own settings survive rather than resetting to defaults.
+    expect(result.data?.contacts.button1.name).toBe('Mom');
+  });
+
+  it('fills in individual missing fields', async () => {
+    const partial: Record<string, unknown> = {
+      ...(await validConfig()),
+      buttons: { debounceMs: 90 },
+    };
+
+    const result = configSchema.safeParse(partial);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.buttons.debounceMs).toBe(90);
+    expect(result.data?.buttons.recordThresholdMs).toBe(DEFAULT_BUTTON_TIMINGS.recordThresholdMs);
+  });
+
+  it('refuses timings that would leave no tap window', async () => {
+    const config = await validConfig();
+    // Debounce past the record threshold means a tap can never be observed, so
+    // playing a received message would become impossible.
+    config.buttons = { ...config.buttons, debounceMs: 800, recordThresholdMs: 400 };
+
+    const result = configSchema.safeParse(config);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/tapping to play is unreachable/);
+  });
+
+  it('refuses out-of-range timings', async () => {
+    const config = await validConfig();
+    for (const bad of [
+      { debounceMs: -1 },
+      { recordThresholdMs: 50 },
+      { silentComboMs: 100 },
+      { minRecordingMs: 999_999 },
+    ]) {
+      const candidate = { ...config, buttons: { ...config.buttons, ...bad } };
+      expect(configSchema.safeParse(candidate).success).toBe(false);
+    }
+  });
+
+  it('persists a retuned set through an atomic write', async () => {
+    const manager2 = manager();
+    await manager2.load();
+    await manager2.save(await validConfig());
+
+    await manager2.update({ buttons: { debounceMs: 80, recordThresholdMs: 350 } });
+
+    const reloaded = await manager().load();
+    expect(reloaded.config.buttons.debounceMs).toBe(80);
+    expect(reloaded.config.buttons.recordThresholdMs).toBe(350);
+    // Untouched fields keep their values.
+    expect(reloaded.config.buttons.silentComboMs).toBe(DEFAULT_BUTTON_TIMINGS.silentComboMs);
   });
 });

@@ -24,6 +24,12 @@ type ConfigView = {
     maxRecordingSeconds: number;
   };
   quietHours: { enabled: boolean; startTime: string; endTime: string };
+  buttons: {
+    debounceMs: number;
+    recordThresholdMs: number;
+    minRecordingMs: number;
+    silentComboMs: number;
+  };
 };
 
 type StatusView = {
@@ -251,6 +257,59 @@ function renderQuietHours(config: ConfigView, onSave: SaveFn): HTMLElement {
   return section;
 }
 
+function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
+  const section = card('Button timings');
+
+  const debounce = numberInput(config.buttons.debounceMs, 0, 2000);
+  const threshold = numberInput(config.buttons.recordThresholdMs, 100, 10_000);
+  const minRecording = numberInput(config.buttons.minRecordingMs, 0, 10_000);
+  const combo = numberInput(config.buttons.silentComboMs, 500, 15_000);
+
+  /** Shows the resulting press windows, so the numbers are not abstract. */
+  const summary = element('p', 'field-hint');
+  const refreshSummary = (): void => {
+    const d = debounce.valueAsNumber;
+    const t = threshold.valueAsNumber;
+    summary.textContent =
+      d < t
+        ? `Under ${String(d)}ms: ignored · ${String(d)}–${String(t)}ms: tap to play · ` +
+          `over ${String(t)}ms: record`
+        : 'Debounce must be below the record threshold, or tapping to play is impossible.';
+  };
+  debounce.addEventListener('input', refreshSummary);
+  threshold.addEventListener('input', refreshSummary);
+  refreshSummary();
+
+  section.append(
+    element(
+      'p',
+      'field-hint',
+      'Takes effect on the next press — no restart needed. Tune these to suit the child.',
+    ),
+    field('Debounce (ms)', debounce, 'Presses shorter than this are ignored as accidental.'),
+    field('Record threshold (ms)', threshold, 'Hold at least this long to record.'),
+    field(
+      'Minimum recording (ms)',
+      minRecording,
+      'Recordings with less actual audio than this are discarded rather than sent.',
+    ),
+    field('Silent-mode chord (ms)', combo, 'How long to hold Button 1 + Button 3 together.'),
+    summary,
+    saveButton('Save button timings', () =>
+      onSave({
+        buttons: {
+          debounceMs: debounce.valueAsNumber,
+          recordThresholdMs: threshold.valueAsNumber,
+          minRecordingMs: minRecording.valueAsNumber,
+          silentComboMs: combo.valueAsNumber,
+        },
+      }),
+    ),
+  );
+
+  return section;
+}
+
 function renderWifi(config: ConfigView, onSave: SaveFn): HTMLElement {
   const section = card('Wi-Fi');
 
@@ -353,7 +412,13 @@ function reportError(error: unknown): void {
 
 function isConfigView(value: unknown): value is ConfigView {
   if (typeof value !== 'object' || value === null) return false;
-  return 'contacts' in value && 'audio' in value && 'quietHours' in value && 'wifi' in value;
+  return (
+    'contacts' in value &&
+    'audio' in value &&
+    'quietHours' in value &&
+    'wifi' in value &&
+    'buttons' in value
+  );
 }
 
 function isStatusView(value: unknown): value is StatusView {
@@ -405,6 +470,7 @@ async function main(): Promise<void> {
     sections.append(
       renderContacts(config, onSave),
       renderAudio(config, onSave),
+      renderButtonTimings(config, onSave),
       renderQuietHours(config, onSave),
       renderWifi(config, onSave),
     );

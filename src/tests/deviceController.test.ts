@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AudioCue } from '../audio/cues.ts';
 import { ConfigManager, DEFAULT_TEMPLATE_PATH } from '../config/configManager.ts';
-import { configSchema, type DeviceConfig } from '../config/schema.ts';
-import { MIN_RECORDING_MS, RECORD_THRESHOLD_MS } from '../core/buttonInterpreter.ts';
+import { configSchema, DEFAULT_BUTTON_TIMINGS, type DeviceConfig } from '../config/schema.ts';
+
+const { recordThresholdMs: RECORD_THRESHOLD_MS, minRecordingMs: MIN_RECORDING_MS } =
+  DEFAULT_BUTTON_TIMINGS;
+
 import { DeviceController, type OutboundRequest } from '../core/deviceController.ts';
 import { DeviceStatus } from '../core/deviceState.ts';
 import { MockHal } from '../hal/mockDriver.ts';
@@ -296,5 +299,43 @@ describe('volume', () => {
   it('applies the clamped volume to the HAL on start', async () => {
     await controller.start();
     expect(hal.volumeChanges).toContain(70);
+  });
+});
+
+describe('live timing changes from the admin panel', () => {
+  it('applies a new record threshold without a restart', async () => {
+    await config.update({ buttons: { recordThresholdMs: 1500 } });
+
+    hal.pressButton(0);
+    // Past the old 500ms threshold but short of the new 1500ms one.
+    await vi.advanceTimersByTimeAsync(800);
+    expect(controller.state.recording).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(800);
+    expect(controller.state.recording).toBe(0);
+
+    hal.releaseButton(0);
+    await vi.advanceTimersByTimeAsync(50);
+    await flush();
+  });
+
+  it('applies a new minimum recording length without a restart', async () => {
+    await config.update({ buttons: { minRecordingMs: 4000 } });
+    // Comfortably over the default 500ms minimum, but under the new 4s one.
+    hal.fixedDurationMs = 2000;
+
+    await press(0, RECORD_THRESHOLD_MS + 500);
+
+    expect(sent).toHaveLength(0);
+    expect(hal.cueSequence()).toContain(AudioCue.Oops);
+  });
+
+  it('applies a new debounce window without a restart', async () => {
+    await config.update({ buttons: { debounceMs: 450 } });
+
+    // Would have been a tap under the default 150ms debounce.
+    await press(0, 300);
+
+    expect(hal.cueSequence()).toEqual([]);
   });
 });

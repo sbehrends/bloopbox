@@ -4,7 +4,7 @@ import { AudioQueueManager, type QueuedNote } from '../audio/queueManager.ts';
 import type { ConfigManager } from '../config/configManager.ts';
 import { clampVolume, type ButtonIndex, type DeviceConfig } from '../config/schema.ts';
 import type { Hal, RecordingHandle } from '../hal/types.ts';
-import { ButtonInterpreter, MIN_RECORDING_MS } from './buttonInterpreter.ts';
+import { ButtonInterpreter } from './buttonInterpreter.ts';
 import { DeviceState, type DeviceStatus } from './deviceState.ts';
 import { LedAnimator } from './ledAnimator.ts';
 import { isWithinQuietHours, minutesUntilNextTransition } from './quietHours.ts';
@@ -65,6 +65,7 @@ export class DeviceController {
     });
 
     this.#interpreter = new ButtonInterpreter({
+      timings: this.#config.current.buttons,
       maxRecordingSeconds: this.#audio().maxRecordingSeconds,
       hasUnread: (index) => this.state.hasUnread(index),
     });
@@ -235,6 +236,8 @@ export class DeviceController {
 
   #wireConfig(): void {
     this.#config.on('change', (next) => {
+      // Timing tweaks from the admin panel take effect on the next press, no restart.
+      this.#interpreter.setTimings(next.buttons);
       this.#interpreter.setMaxRecordingSeconds(next.audio.maxRecordingSeconds);
       void this.#hal.setVolume(clampVolume(next.audio.speakerVolumePercent, next.audio));
       // Quiet hours may have moved.
@@ -285,7 +288,7 @@ export class DeviceController {
      * dropped chunks can leave almost nothing in the file. Sending a fragment wastes the
      * recipient's attention, so treat it exactly like a cancelled take.
      */
-    if (durationMs < MIN_RECORDING_MS) {
+    if (durationMs < this.#config.current.buttons.minRecordingMs) {
       await rm(path, { force: true }).catch(() => undefined);
       if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
         await this.#safeCue(AudioCue.Oops);

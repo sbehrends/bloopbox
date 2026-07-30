@@ -2,7 +2,12 @@ import { EventEmitter } from 'node:events';
 import { constants as fsConstants } from 'node:fs';
 import { access, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { configSchema, type ContactConfig, type DeviceConfig } from './schema.ts';
+import {
+  configSchema,
+  type ButtonTimings,
+  type ContactConfig,
+  type DeviceConfig,
+} from './schema.ts';
 
 /**
  * Loads, validates and persists the device configuration.
@@ -266,6 +271,19 @@ export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfi
       startTime: pick(patch.quietHours?.startTime, base.quietHours.startTime),
       endTime: pick(patch.quietHours?.endTime, base.quietHours.endTime),
     },
+    buttons: mergeButtons(patch.buttons, base.buttons),
+  };
+}
+
+function mergeButtons(
+  patched: PatchSection<ButtonTimings> | undefined,
+  base: ButtonTimings,
+): ButtonTimings {
+  return {
+    debounceMs: pick(patched?.debounceMs, base.debounceMs),
+    recordThresholdMs: pick(patched?.recordThresholdMs, base.recordThresholdMs),
+    minRecordingMs: pick(patched?.minRecordingMs, base.minRecordingMs),
+    silentComboMs: pick(patched?.silentComboMs, base.silentComboMs),
   };
 }
 

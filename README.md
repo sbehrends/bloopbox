@@ -64,6 +64,7 @@ behaviour lives.
 | Tap a blinking button (0.15–0.5s)                                                  | Plays every voice note waiting from that contact                    |
 | Tap a dark button                                                                  | "Oops" double-beep — nothing was sent                               |
 | Press under 0.15s                                                                  | Ignored entirely — that is a toddler brushing it                    |
+| Admin → Button timings                                                             | Retune all of the above live, no restart                            |
 | Hold <kbd>1</kbd>+<kbd>3</kbd> for 3s                                              | Toggles silent mode                                                 |
 | Event injector                                                                     | Reboot, go READY, fake inbound notes, Wi-Fi failure, session expiry |
 

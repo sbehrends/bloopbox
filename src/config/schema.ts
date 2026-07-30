@@ -99,6 +99,40 @@ const quietHoursSchema = z.object({
   endTime: timeOfDaySchema,
 });
 
+/**
+ * Button press timings (PRODUCT.md §1, §5).
+ *
+ * Configurable because the right values are a feel judgement that depends on the child and
+ * the switches, and finding them by editing source and rebuilding is far too slow. These are
+ * the defaults; the admin panel can adjust them live.
+ *
+ * `prefault({})` rather than `default({})` on the section below is deliberate — Zod's
+ * `.default()` substitutes the literal value *without* parsing it, so `{}` would come back
+ * empty and leave every timing undefined. `prefault` runs it through the schema, so the
+ * field defaults here are the single source of truth and an existing config.json written
+ * before this section existed still loads.
+ */
+const buttonTimingsSchema = z
+  .object({
+    /** Presses shorter than this are contact bounce or an accidental brush. */
+    debounceMs: z.number().int().min(0).max(2000).default(150),
+    /** At or beyond this, a press is a recording rather than a tap. */
+    recordThresholdMs: z.number().int().min(100).max(10_000).default(500),
+    /**
+     * A committed recording carrying less *actual audio* than this is discarded. Distinct
+     * from the threshold above: a slow microphone start can leave a long hold nearly empty.
+     */
+    minRecordingMs: z.number().int().min(0).max(10_000).default(500),
+    /** How long Button 1 + Button 3 must be held together to toggle silent mode. */
+    silentComboMs: z.number().int().min(500).max(15_000).default(3000),
+  })
+  .prefault({})
+  .refine((timings) => timings.debounceMs < timings.recordThresholdMs, {
+    // Without a gap between them there is no tap, so playing a message becomes impossible.
+    error: 'debounceMs must be less than recordThresholdMs, or tapping to play is unreachable',
+    path: ['debounceMs'],
+  });
+
 export const configSchema = z.object({
   version: z.literal(1),
   system: systemSchema,
@@ -110,12 +144,17 @@ export const configSchema = z.object({
   }),
   audio: audioSchema,
   quietHours: quietHoursSchema,
+  buttons: buttonTimingsSchema,
 });
 
 export type DeviceConfig = z.infer<typeof configSchema>;
 export type ContactConfig = z.infer<typeof contactSchema>;
 export type AudioConfig = z.infer<typeof audioSchema>;
 export type QuietHoursConfig = z.infer<typeof quietHoursSchema>;
+export type ButtonTimings = z.infer<typeof buttonTimingsSchema>;
+
+/** The shipped timings, derived from the schema so they cannot drift out of step. */
+export const DEFAULT_BUTTON_TIMINGS: ButtonTimings = buttonTimingsSchema.parse(undefined);
 
 /**
  * What the admin API accepts: any subset of the mutable sections. `version` and
@@ -134,6 +173,7 @@ export const configUpdateSchema = z
       .partial(),
     audio: audioSchema,
     quietHours: quietHoursSchema,
+    buttons: buttonTimingsSchema,
   })
   .partial();
 

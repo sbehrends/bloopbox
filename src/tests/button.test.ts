@@ -1,12 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  ButtonInterpreter,
-  DEBOUNCE_MS,
-  RECORD_THRESHOLD_MS,
-  SILENT_COMBO_MS,
-  type CancelReason,
-} from '../core/buttonInterpreter.ts';
-import type { ButtonIndex } from '../config/schema.ts';
+import { ButtonInterpreter, type CancelReason } from '../core/buttonInterpreter.ts';
+import { DEFAULT_BUTTON_TIMINGS, type ButtonIndex, type ButtonTimings } from '../config/schema.ts';
 
 /**
  * Button timing behaviour (PRODUCT.md §1, §5) and the tap-vs-cancel resolution recorded
@@ -15,12 +9,22 @@ import type { ButtonIndex } from '../config/schema.ts';
 
 type Recorded = { event: string; payload?: unknown };
 
+const { debounceMs: DEBOUNCE_MS, recordThresholdMs: RECORD_THRESHOLD_MS } = DEFAULT_BUTTON_TIMINGS;
+const SILENT_COMBO_MS = DEFAULT_BUTTON_TIMINGS.silentComboMs;
+
 /** Comfortably inside the tap window: past debounce, short of the record threshold. */
 const TAP_MS = Math.round((DEBOUNCE_MS + RECORD_THRESHOLD_MS) / 2);
 
-function setup(options: { unread?: ButtonIndex[]; maxRecordingSeconds?: number } = {}) {
+function setup(
+  options: {
+    unread?: ButtonIndex[];
+    maxRecordingSeconds?: number;
+    timings?: Partial<ButtonTimings>;
+  } = {},
+) {
   const unread = new Set(options.unread ?? []);
   const interpreter = new ButtonInterpreter({
+    timings: { ...DEFAULT_BUTTON_TIMINGS, ...options.timings },
     maxRecordingSeconds: options.maxRecordingSeconds ?? 30,
     hasUnread: (index) => unread.has(index),
   });
@@ -62,14 +66,67 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('timing constants', () => {
-  it('pins the press windows, so changing them is deliberate', () => {
-    // Tuned during manual testing: faster to respond than the spec's original figures.
-    expect(DEBOUNCE_MS).toBe(150);
-    expect(RECORD_THRESHOLD_MS).toBe(500);
-    expect(SILENT_COMBO_MS).toBe(3000);
+describe('configurable timings', () => {
+  it('ships the tuned defaults', () => {
+    // Retuned during manual testing; adjustable per-device from the admin panel.
+    expect(DEFAULT_BUTTON_TIMINGS).toEqual({
+      debounceMs: 150,
+      recordThresholdMs: 500,
+      minRecordingMs: 500,
+      silentComboMs: 3000,
+    });
     // A tap window must exist between them or tap-to-play is unreachable.
     expect(DEBOUNCE_MS).toBeLessThan(RECORD_THRESHOLD_MS);
+  });
+
+  it('honours a custom record threshold', () => {
+    const { interpreter, names } = setup({ timings: { recordThresholdMs: 1200 } });
+
+    interpreter.handleButtonDown(0);
+    // Would already be a recording under the default 500ms threshold.
+    vi.advanceTimersByTime(700);
+    expect(names()).not.toContain('captureConfirmed');
+
+    vi.advanceTimersByTime(600);
+    expect(names()).toContain('captureConfirmed');
+  });
+
+  it('honours a custom debounce window', () => {
+    const { interpreter, names } = setup({ timings: { debounceMs: 400 } });
+
+    interpreter.handleButtonDown(0);
+    // Inside the widened debounce window, so it stays silent.
+    vi.advanceTimersByTime(300);
+    interpreter.handleButtonUp(0);
+
+    expect(names()).not.toContain('cancelBeep');
+  });
+
+  it('honours a custom silent-mode chord duration', () => {
+    const { interpreter, names } = setup({ timings: { silentComboMs: 1000 } });
+
+    interpreter.handleButtonDown(0);
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(1000);
+
+    expect(names()).toContain('toggleSilent');
+  });
+
+  it('applies retuned timings to the next press, not one already in flight', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    // Retuning mid-press must not re-arm this press's timers.
+    interpreter.setTimings({ ...DEFAULT_BUTTON_TIMINGS, recordThresholdMs: 3000 });
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
+    expect(names()).toContain('captureConfirmed');
+    interpreter.handleButtonUp(0);
+
+    // The next press uses the new window.
+    const before = names().length;
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS + 100);
+    expect(names().slice(before)).not.toContain('captureConfirmed');
   });
 });
 

@@ -41,26 +41,75 @@ const timeOfDaySchema = z
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be a 24-hour time like "20:00"');
 
 /**
- * A WhatsApp JID (`15551234567@s.whatsapp.net`) or the bare digits the admin UI collects.
- * Empty string means "not yet assigned" — valid only while the button is disabled.
+ * What a button is wired to. Either one person or one group.
+ *
+ * A group is as valid a destination as a person — "the family chat" on Button 2 is a natural
+ * thing to want — and WhatsApp addresses both with a JID, so the pipeline needs no special
+ * case beyond recognising which is which.
  */
-const phoneSchema = z
-  .string()
-  .regex(
-    /^$|^\d{7,15}(@s\.whatsapp\.net)?$/,
-    'must be 7-15 digits, optionally suffixed with @s.whatsapp.net',
-  );
+export const TARGET_KINDS = ['individual', 'group'] as const;
+export type TargetKind = (typeof TARGET_KINDS)[number];
 
-const contactSchema = z
-  .object({
-    name: z.string().min(1).max(24),
-    phone: phoneSchema,
-    enabled: z.boolean(),
-  })
-  .refine((contact) => !contact.enabled || contact.phone.length > 0, {
-    error: 'an enabled contact must have a phone number',
-    path: ['phone'],
+/** Bare digits (what a parent types) or a full user JID. */
+const INDIVIDUAL_PATTERN = /^\d{7,15}(@s\.whatsapp\.net)?$/;
+/**
+ * Group JIDs are `<id>@g.us`, where the id is usually `<creator>-<timestamp>` but is opaque.
+ * Nobody types one from memory, so the admin panel offers a picker fed by the bridge.
+ */
+const GROUP_PATTERN = /^[\w.-]{5,}@g\.us$/;
+
+export type ParsedTarget = { readonly kind: TargetKind; readonly jid: string };
+
+/** Normalises a configured target into a JID, or null if it is unusable. */
+export function parseTarget(raw: string): ParsedTarget | null {
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  if (GROUP_PATTERN.test(value)) return { kind: 'group', jid: value };
+  if (INDIVIDUAL_PATTERN.test(value)) {
+    return {
+      kind: 'individual',
+      jid: value.includes('@') ? value : `${value}@s.whatsapp.net`,
+    };
+  }
+  return null;
+}
+
+const targetSchema = z
+  .string()
+  .max(128)
+  .refine((value) => value.length === 0 || parseTarget(value) !== null, {
+    error: 'must be a phone number (7-15 digits) or a group id ending in @g.us',
   });
+
+/**
+ * Reads the legacy `phone` field as `target`.
+ *
+ * `target` replaced `phone` when groups became valid destinations. Devices already have a
+ * config.json using the old name, and dropping it would fail validation and silently reset
+ * the parent's contacts. Rewritten on the next save, so this is a one-way ramp.
+ */
+function migrateContact(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null) return value;
+  // `in` narrows `value` here, so `phone` is readable without a cast.
+  if ('target' in value || !('phone' in value)) return value;
+  const { phone, ...rest } = value;
+  return { ...rest, target: phone };
+}
+
+const contactSchema = z.preprocess(
+  migrateContact,
+  z
+    .object({
+      name: z.string().min(1).max(24),
+      /** A phone number or a group id. Empty means "not yet assigned". */
+      target: targetSchema,
+      enabled: z.boolean(),
+    })
+    .refine((contact) => !contact.enabled || contact.target.length > 0, {
+      error: 'an enabled contact must have a phone number or group',
+      path: ['target'],
+    }),
+);
 
 const systemSchema = z.object({
   hostname: z
@@ -185,19 +234,31 @@ export function clampVolume(requestedPercent: number, audio: AudioConfig): numbe
   return Math.min(bounded, audio.maxVolumeCapPercent);
 }
 
-/** Normalises a bare phone number into the JID form Baileys expects. */
-export function toJid(phone: string): string {
-  if (phone.length === 0) return '';
-  return phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+/** Normalises a configured target into the JID Baileys expects. "" if unusable. */
+export function toJid(target: string): string {
+  return parseTarget(target)?.jid ?? '';
 }
 
-/** The contacts that may send to and receive from this device. */
-export function enabledContacts(
-  config: DeviceConfig,
-): { key: ButtonKey; index: ButtonIndex; contact: ContactConfig; jid: string }[] {
+export type ResolvedContact = {
+  readonly key: ButtonKey;
+  readonly index: ButtonIndex;
+  readonly contact: ContactConfig;
+  readonly jid: string;
+  readonly kind: TargetKind;
+};
+
+/**
+ * The contacts that may send to and receive from this device.
+ *
+ * This is the whitelist. Anything not in it is dropped — a toddler must not be reachable by
+ * strangers, and that includes groups nobody deliberately assigned.
+ */
+export function enabledContacts(config: DeviceConfig): ResolvedContact[] {
   return BUTTON_KEYS.flatMap((key) => {
     const contact = config.contacts[key];
-    if (!contact.enabled || contact.phone.length === 0) return [];
-    return [{ key, index: buttonKeyToIndex(key), contact, jid: toJid(contact.phone) }];
+    if (!contact.enabled) return [];
+    const parsed = parseTarget(contact.target);
+    if (!parsed) return [];
+    return [{ key, index: buttonKeyToIndex(key), contact, jid: parsed.jid, kind: parsed.kind }];
   });
 }

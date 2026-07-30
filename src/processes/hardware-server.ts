@@ -212,6 +212,7 @@ async function main(): Promise<void> {
     unlinkWhatsApp: () => {
       link.current?.unlink();
     },
+    listGroups: async () => (await link.current?.listGroups()) ?? [],
     requestRestart: (reason: string) => {
       requestRestart(reason);
     },

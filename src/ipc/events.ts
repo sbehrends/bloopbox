@@ -117,6 +117,11 @@ export type BridgeToServerEvents = {
     durationMs: number | null;
     receivedAt: number;
   }) => void;
+  /** Groups the linked account belongs to, answering `wa:listGroups`. */
+  'wa:groups': (payload: {
+    requestId: string;
+    groups: readonly { id: string; subject: string }[];
+  }) => void;
   /** An outbound send finished. */
   'wa:sendResult': (payload: {
     requestId: string;
@@ -138,6 +143,12 @@ export type ServerToBridgeEvents = {
   'wa:unlink': () => void;
   /** Mark messages read upstream once the queue has been played. */
   'wa:markRead': (payload: { index: ButtonIndex; messageIds: readonly string[] }) => void;
+  /**
+   * Ask for the account's groups, so the admin panel can offer a picker.
+   *
+   * Group JIDs are opaque, so a parent cannot type one — they have to choose from a list.
+   */
+  'wa:listGroups': (payload: { requestId: string }) => void;
 };
 
 /** Generates a short correlation id for send requests and playback tokens. */

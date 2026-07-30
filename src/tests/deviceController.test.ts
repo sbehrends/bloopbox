@@ -37,9 +37,9 @@ async function buildConfig(): Promise<DeviceConfig> {
     ...template,
     system: { ...template.system, configured: true, adminPasswordHash: '$2b$10$x' },
     contacts: {
-      button1: { name: 'Mom', phone: '15551234567', enabled: true },
-      button2: { name: 'Dad', phone: '15559876543', enabled: true },
-      button3: { name: 'Grandma', phone: '15555555555', enabled: true },
+      button1: { name: 'Mom', target: '15551234567', enabled: true },
+      button2: { name: 'Dad', target: '15559876543', enabled: true },
+      button3: { name: 'Grandma', target: '15555555555', enabled: true },
     },
   };
 }

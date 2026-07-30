@@ -138,6 +138,13 @@ export async function toVoiceNote(inputPath: string, outputPath: string): Promis
     '-i',
     inputPath,
     '-vn',
+    /*
+     * Baileys documents `-avoid_negative_ts make_zero` plus a single channel as necessary for
+     * voice notes to play on every device. Without it some clients show the bubble but refuse
+     * to play it, which on this device is indistinguishable from the message never arriving.
+     */
+    '-avoid_negative_ts',
+    'make_zero',
     '-ac',
     String(VOICE_ENCODING.channels),
     '-ar',

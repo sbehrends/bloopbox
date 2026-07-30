@@ -40,6 +40,22 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
   are enabled explicitly instead.
 - Revisit ESLint only once typescript-eslint ships TS 7 support.
 
+## Baileys 7 notes
+
+Pinned to `7.0.0-rc14` exactly (an RC is what the `latest` tag points at). Things this version
+does differently from the 6.x examples most guides show:
+
+- **`printQRInTerminal` is deprecated and its feature removed** — passing it does nothing. The QR
+  arrives on `connection.update` and we forward it to the admin panel, which is the only place it
+  could be scanned from anyway.
+- **`isJidUser` does not exist** (only `isJidGroup`). Group detection is a `@g.us` suffix check.
+- `version` on the socket config is `version?: WAVersion`, which under
+  `exactOptionalPropertyTypes` rejects an explicit `undefined` — spread it conditionally.
+- `syncFullHistory` is **off**: it would download every chat this account ever had into a RAM
+  disk on a 512MB machine.
+- Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys' own docs, or
+  some clients show the voice bubble but refuse to play it.
+
 ## Hardware status: NOT ON HAND
 
 All development happens on macOS through the **simulator** HAL driver. `src/hal/gpioDriver.ts` is
@@ -97,6 +113,25 @@ makes the timing behavior unit-testable with fake timers. Keep it that way.
   numbers the runtime uses. No magic numbers inline. Anything a user might want to tune belongs in
   the Zod schema (`config.buttons` is the precedent), not in a module constant.
 - Conventional commits (`feat:`, `fix:`, `test:`, `chore:`), one per milestone.
+
+## A button targets a person **or** a group
+
+`contacts.*.target` accepts either a phone number (bare digits, normalised to
+`<digits>@s.whatsapp.net`) or a group JID ending in `@g.us`. `parseTarget()` in
+`src/config/schema.ts` is the only place that decides which, and everything downstream just
+carries the resulting JID — Baileys addresses both identically.
+
+Group JIDs are opaque, so nobody can type one. The admin panel offers a picker fed by
+`GET /api/whatsapp/groups`, which asks the bridge, which calls `groupFetchAllParticipating()`.
+That endpoint is behind the admin gate: the list names the family's group chats.
+
+**The field used to be `phone`.** `src/config/schema.ts` migrates it via a `z.preprocess` on the
+contact schema, because devices already have a config.json using the old name and dropping it
+would fail validation and silently reset the parent's contacts.
+
+For a group, **membership is the permission.** A parent assigning "the family chat" is accepting
+everyone in it; the device cannot filter further without becoming unpredictable to a child. The
+speaker is logged but not gated on.
 
 ## Config is snapshot at boot — saving restarts the daemon
 
@@ -212,5 +247,11 @@ itself, which always plays at the configured volume (spec §7). Volume is always
   during power loss would brick the device.
 - Invalid or missing config falls back to `config.default.json` **in RAM** and boots into the
   captive-portal onboarding flow. It never crashes the daemon.
-- Only the three configured JIDs are accepted. Groups, status broadcasts, and unknown senders are
-  dropped — a toddler must not be reachable by strangers.
+- Only the configured JIDs are accepted — `src/whatsapp/whitelist.ts`, the safety boundary of
+  the product. Unknown numbers, groups nobody assigned, status broadcasts, newsletters and the
+  device's own echoed sends are all dropped. Filtering happens **before** download, so a
+  stranger's audio never reaches the disk. `src/tests/whitelist.test.ts` is written from the
+  position that anything not explicitly assigned must not get through.
+- JIDs are normalised before comparison (`15551234567:12@s.whatsapp.net` is the same person as
+  `15551234567@s.whatsapp.net`), or the same contact would be accepted or rejected depending on
+  which of their linked devices they happened to send from.

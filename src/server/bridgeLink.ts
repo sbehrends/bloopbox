@@ -47,10 +47,14 @@ export type BridgeLinkOptions = {
   readonly onConnectionChange: (connected: boolean) => void;
 };
 
+export type GroupSummary = { readonly id: string; readonly subject: string };
+
 export type BridgeLink = {
   readonly connected: boolean;
   /** Ships a recording. Resolves when the bridge confirms delivery. */
   send(request: OutboundRequest): Promise<void>;
+  /** Groups the linked account is in, for the admin panel's picker. [] if unavailable. */
+  listGroups(): Promise<GroupSummary[]>;
   sendContacts(contacts: readonly { index: ButtonIndex; jid: string }[]): void;
   markRead(index: ButtonIndex, messageIds: readonly string[]): void;
   unlink(): void;
@@ -62,10 +66,19 @@ type PendingSend = {
   timer: NodeJS.Timeout;
 };
 
+type PendingGroups = {
+  resolve: (groups: GroupSummary[]) => void;
+  timer: NodeJS.Timeout;
+};
+
+/** Listing groups is a UI nicety, so give up quickly rather than blocking the admin panel. */
+const GROUPS_TIMEOUT_MS = 10_000;
+
 export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink {
   let socket: Socket | null = null;
   let counter = 0;
   const pending = new Map<string, PendingSend>();
+  const pendingGroups = new Map<string, PendingGroups>();
 
   const failAllPending = (reason: string): void => {
     for (const [id, entry] of pending) {
@@ -99,6 +112,12 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
       if (socket?.id !== incoming.id) return;
       socket = null;
       failAllPending('bridge disconnected');
+      // Group listing has no error path — an empty list means "not available".
+      for (const [id, entry] of pendingGroups) {
+        clearTimeout(entry.timer);
+        pendingGroups.delete(id);
+        entry.resolve([]);
+      }
       options.onConnectionChange(false);
     });
 
@@ -115,6 +134,16 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
     incoming.on('wa:incoming', (payload: unknown) => {
       const note = readIncoming(payload);
       if (note) options.onIncoming(note);
+    });
+
+    incoming.on('wa:groups', (payload: unknown) => {
+      const requestId = readString(payload, 'requestId', 64);
+      if (requestId === null) return;
+      const entry = pendingGroups.get(requestId);
+      if (!entry) return;
+      clearTimeout(entry.timer);
+      pendingGroups.delete(requestId);
+      entry.resolve(readGroups(payload));
     });
 
     incoming.on('wa:sendResult', (payload: unknown) => {
@@ -155,6 +184,25 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
       });
     },
 
+    async listGroups(): Promise<GroupSummary[]> {
+      const active = socket;
+      if (!active) return [];
+
+      counter += 1;
+      const requestId = createRequestId('groups', counter);
+
+      return new Promise<GroupSummary[]>((resolvePromise) => {
+        const timer = setTimeout(() => {
+          pendingGroups.delete(requestId);
+          resolvePromise([]);
+        }, GROUPS_TIMEOUT_MS);
+        timer.unref();
+
+        pendingGroups.set(requestId, { resolve: resolvePromise, timer });
+        active.emit('wa:listGroups', { requestId });
+      });
+    },
+
     sendContacts(contacts): void {
       socket?.emit('wa:contactsChanged', { contacts });
     },
@@ -183,6 +231,16 @@ const WHATSAPP_STATES: readonly WhatsAppConnectionState[] = [
 function readWhatsAppState(payload: unknown): WhatsAppConnectionState | null {
   const value = readField(payload, 'state');
   return WHATSAPP_STATES.find((state) => state === value) ?? null;
+}
+
+function readGroups(payload: unknown): GroupSummary[] {
+  const raw = readField(payload, 'groups');
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry: unknown): GroupSummary[] => {
+    const id = readString(entry, 'id', 256);
+    if (id === null) return [];
+    return [{ id, subject: readString(entry, 'subject', 128) ?? id }];
+  });
 }
 
 function readIncoming(payload: unknown): IncomingNote | null {

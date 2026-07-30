@@ -235,7 +235,7 @@ export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfi
     current: ContactConfig,
   ): ContactConfig => ({
     name: pick(patched?.name, current.name),
-    phone: pick(patched?.phone, current.phone),
+    target: pick(patched?.target, current.target),
     enabled: pick(patched?.enabled, current.enabled),
   });
 

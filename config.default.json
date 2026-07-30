@@ -12,17 +12,17 @@
   "contacts": {
     "button1": {
       "name": "Button 1",
-      "phone": "",
+      "target": "",
       "enabled": false
     },
     "button2": {
       "name": "Button 2",
-      "phone": "",
+      "target": "",
       "enabled": false
     },
     "button3": {
       "name": "Button 3",
-      "phone": "",
+      "target": "",
       "enabled": false
     }
   },

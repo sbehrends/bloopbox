@@ -10,7 +10,7 @@ import { io, type Socket } from 'socket.io-client';
 
 type ButtonKey = 'button1' | 'button2' | 'button3';
 
-type ContactView = { name: string; phone: string; enabled: boolean };
+type ContactView = { name: string; target: string; enabled: boolean };
 
 type ConfigView = {
   version: number;
@@ -160,41 +160,113 @@ function card(title: string): HTMLElement {
  * Sections
  * ------------------------------------------------------------------ */
 
-function renderContacts(config: ConfigView, onSave: SaveFn): HTMLElement {
+type GroupOption = { id: string; subject: string };
+
+/** Groups the linked account belongs to, for the picker. Empty if unavailable. */
+async function fetchGroups(): Promise<GroupOption[]> {
+  try {
+    const payload = await getJson('/api/whatsapp/groups');
+    if (typeof payload !== 'object' || payload === null || !('groups' in payload)) return [];
+    const groups = payload.groups;
+    if (!Array.isArray(groups)) return [];
+    return groups.flatMap((entry: unknown): GroupOption[] => {
+      if (typeof entry !== 'object' || entry === null) return [];
+      const id = 'id' in entry ? asText(entry.id) : '';
+      const subject = 'subject' in entry ? asText(entry.subject) : '';
+      return id.length > 0 ? [{ id, subject: subject.length > 0 ? subject : id }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function renderContacts(
+  config: ConfigView,
+  groups: readonly GroupOption[],
+  onSave: SaveFn,
+): HTMLElement {
   const section = card('Contacts');
   const inputs = new Map<
     ButtonKey,
-    { name: HTMLInputElement; phone: HTMLInputElement; enabled: HTMLInputElement }
+    { name: HTMLInputElement; target: HTMLInputElement; enabled: HTMLInputElement }
   >();
+
+  section.append(
+    element(
+      'p',
+      'field-hint',
+      'A button can point at one person or at one group. Only these targets can reach the ' +
+        'device — anything else is dropped.',
+    ),
+  );
 
   for (const key of BUTTON_KEYS) {
     const contact = config.contacts[key];
-    const group = element('div', 'contact');
-    group.append(element('h3', undefined, BUTTON_LABELS[key]));
+    const row = element('div', 'contact');
+    row.append(element('h3', undefined, BUTTON_LABELS[key]));
 
     const name = textInput(contact.name, { maxLength: 24 });
-    const phone = textInput(contact.phone, { placeholder: '15551234567' });
+    const target = textInput(contact.target, { placeholder: '15551234567' });
     const enabled = checkbox(contact.enabled);
 
-    group.append(
+    row.append(
       field('Name', name),
-      field('Phone number', phone, 'Digits only, with country code. No + or spaces.'),
-      field('Enabled', enabled),
+      field(
+        'Phone number or group',
+        target,
+        'Phone: digits with country code, no + or spaces. Groups end in @g.us — use the picker.',
+      ),
     );
-    inputs.set(key, { name, phone, enabled });
-    section.append(group);
+
+    // A group JID is opaque, so offer the ones this account is actually in.
+    if (groups.length > 0) {
+      const picker = element('select');
+      const blank = element('option');
+      blank.value = '';
+      blank.textContent = '— pick a group —';
+      picker.append(blank);
+      for (const group of groups) {
+        const option = element('option');
+        option.value = group.id;
+        option.textContent = group.subject;
+        if (group.id === contact.target) option.selected = true;
+        picker.append(option);
+      }
+      picker.addEventListener('change', () => {
+        if (picker.value.length === 0) return;
+        target.value = picker.value;
+        // Adopt the group's name unless the parent has already written one.
+        const chosen = groups.find((group) => group.id === picker.value);
+        if (chosen && name.value.trim().length === 0) name.value = chosen.subject.slice(0, 24);
+      });
+      row.append(field('Or choose a group', picker));
+    }
+
+    row.append(field('Enabled', enabled));
+    inputs.set(key, { name, target, enabled });
+    section.append(row);
+  }
+
+  if (groups.length === 0) {
+    section.append(
+      element(
+        'p',
+        'field-hint',
+        'No group list available — link WhatsApp first, then reload to pick from your groups.',
+      ),
+    );
   }
 
   section.append(
     saveButton('Save contacts', () => {
       const contacts: Partial<Record<ButtonKey, ContactView>> = {};
       for (const key of BUTTON_KEYS) {
-        const group = inputs.get(key);
-        if (!group) continue;
+        const row = inputs.get(key);
+        if (!row) continue;
         contacts[key] = {
-          name: group.name.value.trim(),
-          phone: group.phone.value.trim(),
-          enabled: group.enabled.checked,
+          name: row.name.value.trim(),
+          target: row.target.value.trim(),
+          enabled: row.enabled.checked,
         };
       }
       return onSave({ contacts });
@@ -506,8 +578,9 @@ async function main(): Promise<void> {
   const onSave: SaveFn = (patch) => putConfig(patch);
 
   if (config) {
+    const groups = await fetchGroups();
     sections.append(
-      renderContacts(config, onSave),
+      renderContacts(config, groups, onSave),
       renderAudio(config, onSave),
       renderButtonTimings(config, onSave),
       renderQuietHours(config, onSave),

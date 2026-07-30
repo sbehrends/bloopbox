@@ -26,6 +26,8 @@ export type RoutesContext = {
   readonly wifiConnected: () => boolean;
   /** Drops WhatsApp credentials so the device can be re-paired. */
   readonly unlinkWhatsApp: () => void;
+  /** Groups the linked account is in, so a parent can pick one instead of typing a JID. */
+  readonly listGroups: () => Promise<{ id: string; subject: string }[]>;
   /**
    * Restarts the daemon so a saved config takes effect.
    *
@@ -146,6 +148,16 @@ export function createApiRouter(context: RoutesContext): Router {
       context.controller.state.setManualSilent(desired);
     }
     res.json({ silentMode: context.controller.state.silentMode });
+  });
+
+  /**
+   * Groups available as button targets.
+   *
+   * Behind the admin gate: the list names the family's group chats, which is not something to
+   * hand out to anything that can reach port 3000.
+   */
+  router.get('/whatsapp/groups', admin, async (_req, res) => {
+    res.json({ groups: await context.listGroups() });
   });
 
   router.post('/whatsapp/unlink', admin, (_req, res) => {

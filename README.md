@@ -14,7 +14,7 @@ Under active development, built in phases:
 
 - [x] **Phase 1** — project foundation, tooling, validation gate
 - [x] **Phase 2** — hardware server: config, LED state machine, HAL, audio pipeline, simulator UI
-- [ ] **Phase 3** — WhatsApp bridge (Baileys)
+- [x] **Phase 3** — WhatsApp bridge (Baileys), people and groups as targets
 - [ ] **Phase 4** — Raspberry Pi provisioning (deferred until hardware is on hand)
 
 The physical device does not exist yet. Everything is developed and verified against a **browser
@@ -108,7 +108,8 @@ a completed recording fails gracefully with the "oops" cue.
 
 ## Safety and privacy
 
-The device only accepts messages from the three explicitly configured phone numbers — groups,
-status broadcasts, and unknown senders are dropped. Recordings live in a RAM disk and unread audio
+Each button targets one person **or** one group, and the device accepts messages only from those
+targets — unknown numbers, groups nobody assigned, status broadcasts and newsletters are all
+dropped, before any audio is downloaded. Recordings live in a RAM disk and unread audio
 is deleted after 48 hours. The root filesystem is mounted read-only so pulling the plug cannot
 corrupt it.

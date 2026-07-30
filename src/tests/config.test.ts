@@ -15,6 +15,7 @@ import {
   configSchema,
   DEFAULT_BUTTON_TIMINGS,
   enabledContacts,
+  parseTarget,
   toJid,
   type DeviceConfig,
 } from '../config/schema.ts';
@@ -52,9 +53,9 @@ async function validConfig(): Promise<DeviceConfig> {
     ...template,
     system: { ...template.system, configured: true, adminPasswordHash: '$2b$10$abcdefg' },
     contacts: {
-      button1: { name: 'Mom', phone: '15551234567', enabled: true },
-      button2: { name: 'Dad', phone: '15559876543', enabled: true },
-      button3: { name: 'Grandma', phone: '', enabled: false },
+      button1: { name: 'Mom', target: '15551234567', enabled: true },
+      button2: { name: 'Dad', target: '15559876543', enabled: true },
+      button3: { name: 'Grandma', target: '', enabled: false },
     },
   };
 }
@@ -173,7 +174,7 @@ describe('atomic writes', () => {
     await config.load();
 
     const broken = await validConfig();
-    broken.contacts.button1 = { name: 'Mom', phone: '', enabled: true };
+    broken.contacts.button1 = { name: 'Mom', target: '', enabled: true };
 
     await expect(config.save(broken)).rejects.toMatchObject({
       name: 'ConfigValidationError',
@@ -252,7 +253,7 @@ describe('mergeConfig', () => {
   it('merges an individual contact without disturbing the others', async () => {
     const base = await validConfig();
     const merged = mergeConfig(base, {
-      contacts: { button3: { name: 'Nana', phone: '15551110000', enabled: true } },
+      contacts: { button3: { name: 'Nana', target: '15551110000', enabled: true } },
     });
 
     expect(merged.contacts.button3.name).toBe('Nana');
@@ -282,7 +283,7 @@ describe('schema helpers', () => {
     expect(toJid('')).toBe('');
   });
 
-  it('lists only enabled contacts that actually have a number', async () => {
+  it('lists only enabled contacts that actually have a target', async () => {
     const config = await validConfig();
     const active = enabledContacts(config);
 
@@ -292,15 +293,15 @@ describe('schema helpers', () => {
 });
 
 describe('schema validation rules', () => {
-  it('refuses an enabled contact with no phone number', async () => {
+  it('refuses an enabled contact with no target', async () => {
     const config = await validConfig();
-    config.contacts.button3 = { name: 'Grandma', phone: '', enabled: true };
+    config.contacts.button3 = { name: 'Grandma', target: '', enabled: true };
     expect(configSchema.safeParse(config).success).toBe(false);
   });
 
-  it('allows a disabled contact with no phone number', async () => {
+  it('allows a disabled contact with no target', async () => {
     const config = await validConfig();
-    config.contacts.button3 = { name: 'Grandma', phone: '', enabled: false };
+    config.contacts.button3 = { name: 'Grandma', target: '', enabled: false };
     expect(configSchema.safeParse(config).success).toBe(true);
   });
 
@@ -392,5 +393,138 @@ describe('button timings', () => {
     expect(reloaded.config.buttons.recordThresholdMs).toBe(350);
     // Untouched fields keep their values.
     expect(reloaded.config.buttons.silentComboMs).toBe(DEFAULT_BUTTON_TIMINGS.silentComboMs);
+  });
+});
+
+describe('targets — a button points at a person or a group', () => {
+  it('normalises a bare phone number into a user JID', () => {
+    expect(parseTarget('15551234567')).toEqual({
+      kind: 'individual',
+      jid: '15551234567@s.whatsapp.net',
+    });
+  });
+
+  it('accepts a full user JID unchanged', () => {
+    expect(parseTarget('15551234567@s.whatsapp.net')).toEqual({
+      kind: 'individual',
+      jid: '15551234567@s.whatsapp.net',
+    });
+  });
+
+  it('recognises a group JID', () => {
+    expect(parseTarget('15551234567-1699999999@g.us')).toEqual({
+      kind: 'group',
+      jid: '15551234567-1699999999@g.us',
+    });
+  });
+
+  it('tolerates surrounding whitespace, which is easy to paste in', () => {
+    expect(parseTarget('  15551234567  ')?.jid).toBe('15551234567@s.whatsapp.net');
+  });
+
+  it('rejects anything that is neither', () => {
+    for (const bad of ['', '  ', '123', 'not-a-number', 'name@example.com', '+1 555 123 4567']) {
+      expect(parseTarget(bad)).toBeNull();
+    }
+  });
+
+  it('is idempotent through toJid', () => {
+    const jid = toJid('15551234567');
+    expect(toJid(jid)).toBe(jid);
+    expect(toJid('15551234567-1699999999@g.us')).toBe('15551234567-1699999999@g.us');
+    expect(toJid('rubbish')).toBe('');
+  });
+});
+
+describe('group targets in config', () => {
+  it('accepts a group as an enabled contact', async () => {
+    const config = await validConfig();
+    config.contacts.button3 = {
+      name: 'Family',
+      target: '15551234567-1699999999@g.us',
+      enabled: true,
+    };
+
+    const result = configSchema.safeParse(config);
+
+    expect(result.success).toBe(true);
+  });
+
+  it('reports the kind so the bridge can log which it used', async () => {
+    const config = await validConfig();
+    config.contacts.button3 = {
+      name: 'Family',
+      target: '15551234567-1699999999@g.us',
+      enabled: true,
+    };
+
+    const active = enabledContacts(configSchema.parse(config));
+
+    expect(active.map((c) => c.kind)).toEqual(['individual', 'individual', 'group']);
+  });
+
+  it('refuses a malformed target', async () => {
+    const config = await validConfig();
+    config.contacts.button1 = { name: 'Mom', target: 'not-a-target', enabled: true };
+
+    expect(configSchema.safeParse(config).success).toBe(false);
+  });
+
+  it('excludes a contact whose target is unusable, rather than sending nowhere', async () => {
+    const config = configSchema.parse(await validConfig());
+    // Bypassing validation the way a hand-edited file could: enabled but with no target.
+    const tampered = { ...config, contacts: { ...config.contacts } };
+    tampered.contacts.button1 = { name: 'Mom', target: '', enabled: true };
+
+    // button1 is dropped despite being enabled; button3 was already disabled in the fixture.
+    expect(enabledContacts(tampered).map((c) => c.key)).toEqual(['button2']);
+  });
+});
+
+describe('legacy `phone` field migration', () => {
+  it('reads a config written before groups existed', async () => {
+    const legacy = {
+      ...(await validConfig()),
+      contacts: {
+        button1: { name: 'Mom', phone: '15551234567', enabled: true },
+        button2: { name: 'Dad', phone: '15559876543', enabled: true },
+        button3: { name: 'Grandma', phone: '', enabled: false },
+      },
+    };
+
+    const result = configSchema.safeParse(legacy);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.contacts.button1.target).toBe('15551234567');
+    // The parent's contacts must survive the rename, not reset to defaults.
+    expect(result.data?.contacts.button2.target).toBe('15559876543');
+  });
+
+  it('prefers target when both are somehow present', async () => {
+    const mixed = {
+      ...(await validConfig()),
+      contacts: {
+        button1: { name: 'Mom', target: '15551110000', phone: '15559990000', enabled: true },
+        button2: { name: 'Dad', target: '', enabled: false },
+        button3: { name: 'Grandma', target: '', enabled: false },
+      },
+    };
+
+    const result = configSchema.safeParse(mixed);
+
+    expect(result.data?.contacts.button1.target).toBe('15551110000');
+  });
+
+  it('still enforces the invariant on a migrated contact', async () => {
+    const legacy = {
+      ...(await validConfig()),
+      contacts: {
+        button1: { name: 'Mom', phone: '', enabled: true },
+        button2: { name: 'Dad', phone: '', enabled: false },
+        button3: { name: 'Grandma', phone: '', enabled: false },
+      },
+    };
+
+    expect(configSchema.safeParse(legacy).success).toBe(false);
   });
 });

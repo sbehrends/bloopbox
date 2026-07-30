@@ -34,6 +34,7 @@
     "dev:hw:watch": "SIMULATOR_MODE=true tsx watch src/processes/hardware-server.ts"
   },
   "dependencies": {
+    "baileys": "7.0.0-rc14",
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "pino": "^10.3.1",

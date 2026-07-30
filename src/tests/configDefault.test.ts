@@ -24,7 +24,7 @@ describe('config.default.json', () => {
 
     for (const contact of [button1, button2, button3]) {
       expect(contact.enabled).toBe(false);
-      expect(contact.phone).toBe('');
+      expect(contact.target).toBe('');
       expect(contact.name).not.toBe('');
     }
   });

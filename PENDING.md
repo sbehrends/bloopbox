@@ -66,6 +66,17 @@ verification was not possible. The ffmpeg leg of that path (WebM/Opus in, Ogg/Op
 verified separately against real ffmpeg. What remains unproven is the browser glue: that a hold
 produces a valid `.ogg` in the recordings directory.
 
+### WhatsApp end to end with a real account
+
+The bridge connects, produces a pairing QR, propagates the whitelist and reports state — all
+verified. What has **not** run is the part that needs a linked account: scanning the QR,
+receiving a real voice note, and sending one that appears as a PTT bubble on a phone. Also
+unverified: the group picker with real groups, and `markRead`.
+
+Worth checking when pairing: that a voice note from a number **not** assigned to a button is
+dropped (it should not appear, and the bridge logs `dropped a voice note`), and that a message in
+an assigned group arrives on that button whoever in the group sent it.
+
 ### GPIO driver on real hardware
 
 `src/hal/gpioDriver.ts` is written from datasheets and the opengpio API but has never run on a
@@ -88,7 +99,12 @@ Not work, but things that could bite.
 
 - **Baileys is pinned to a release candidate** (`7.0.0-rc14`, which is what the `latest` tag
   points at). It is an unofficial WhatsApp API surface and can break from WhatsApp's side at any
-  time. `legacy` (6.7.24) is the fallback if the RC proves unstable.
+  time. `legacy` (6.7.24) is the fallback if the RC proves unstable. See the Baileys 7 notes in
+  `CLAUDE.md` for the API differences from the 6.x examples most guides show.
+- **A group target trusts every member of that group.** That is the deliberate reading of "assign
+  the family chat to a button", but it means adding someone to that group gives them a channel to
+  the child without anyone touching the device's settings. If that becomes a concern, the
+  extension is a per-group participant allowlist.
 - **oxlint has no `--rules` output** in 1.76, so valid rule names have to be read out of
   `node_modules/oxlint/configuration_schema.json`. An unknown name is a hard config error.
 - **opengpio 2.0.2 transposes `bias` and `debounce`** when calling its native binding. Worked

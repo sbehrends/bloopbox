@@ -31,6 +31,8 @@
     "typescript/prefer-readonly-parameter-types": "off",
     "typescript/strict-void-return": "off",
 
+    "no-await-in-loop": "off",
+
     "unicorn/prefer-node-protocol": "error",
     "unicorn/no-null": "off",
     "unicorn/prefer-event-target": "off",

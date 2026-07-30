@@ -5,6 +5,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { platform, release } from 'node:os';
+import { ALL_AUDIO_CUES } from '../src/audio/cues.ts';
+import { missingCues } from '../src/audio/soundFiles.ts';
 
 const run = promisify(execFile);
 
@@ -93,12 +95,27 @@ async function checkAlsa(): Promise<CheckResult> {
   }
 }
 
+/** Cue WAVs are generated, not committed, so a fresh clone has none. */
+function checkCueFiles(): CheckResult {
+  const missing = missingCues();
+  return {
+    name: 'audio cue files',
+    ok: missing.length === 0,
+    detail:
+      missing.length === 0
+        ? `all ${ALL_AUDIO_CUES.length} cues present`
+        : `missing ${missing.join(', ')} — run "npm run sounds"`,
+    required: true,
+  };
+}
+
 async function main(): Promise<void> {
   console.log(`kids-messenger doctor — ${platform()} ${release()}\n`);
 
   const results: CheckResult[] = [
     checkNode(),
     ...(await Promise.all([checkFfmpeg(), checkOpusEncoder(), checkAlsa()])),
+    checkCueFiles(),
   ];
 
   for (const r of results) {

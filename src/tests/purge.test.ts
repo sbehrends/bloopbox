@@ -1,0 +1,246 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { AUDIO_TTL_MS, AudioPurger, purgeExpiredAudio } from '../audio/purge.ts';
+
+/**
+ * Automatic storage purge (PRODUCT.md §5, §8): "Validates auto-deletion of temporary audio
+ * files older than 48 hours."
+ */
+
+let workDir: string;
+const NOW = new Date(2026, 5, 15, 12, 0, 0).getTime();
+
+beforeEach(async () => {
+  workDir = await mkdtemp(join(tmpdir(), 'kids-messenger-purge-'));
+});
+
+afterEach(async () => {
+  await rm(workDir, { recursive: true, force: true });
+});
+
+/** Writes a file and backdates its mtime by `ageMs`. */
+async function writeAged(name: string, ageMs: number, contents = 'audio'): Promise<string> {
+  const path = join(workDir, name);
+  await writeFile(path, contents);
+  const when = new Date(NOW - ageMs);
+  await utimes(path, when, when);
+  return path;
+}
+
+const now = (): number => NOW;
+
+describe('TTL enforcement', () => {
+  it('deletes audio older than 48 hours', async () => {
+    const stale = await writeAged('old.ogg', AUDIO_TTL_MS + 60_000);
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toEqual([stale]);
+    expect(await readdir(workDir)).toEqual([]);
+  });
+
+  it('keeps audio younger than 48 hours', async () => {
+    await writeAged('fresh.ogg', AUDIO_TTL_MS - 60_000);
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toEqual([]);
+    expect(await readdir(workDir)).toEqual(['fresh.ogg']);
+  });
+
+  it('deletes a file exactly at the boundary', async () => {
+    await writeAged('boundary.ogg', AUDIO_TTL_MS);
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toHaveLength(1);
+  });
+
+  it('honours a custom TTL', async () => {
+    await writeAged('hour-old.ogg', 60 * 60 * 1000);
+
+    const kept = await purgeExpiredAudio({ directory: workDir, ttlMs: 2 * 60 * 60 * 1000, now });
+    expect(kept.deleted).toEqual([]);
+
+    const purged = await purgeExpiredAudio({ directory: workDir, ttlMs: 30 * 60 * 1000, now });
+    expect(purged.deleted).toHaveLength(1);
+  });
+
+  it('deletes unplayed notes too — the TTL bounds how long a voice stays on the device', async () => {
+    // Nothing records whether a note was heard; age alone decides.
+    await writeAged('never-played.ogg', AUDIO_TTL_MS + 1000);
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toHaveLength(1);
+  });
+});
+
+describe('file selection', () => {
+  it('purges every audio artefact the pipeline can leave behind', async () => {
+    for (const name of ['a.ogg', 'b.wav', 'c.webm', 'd.m4a', 'e.opus']) {
+      await writeAged(name, AUDIO_TTL_MS + 1000);
+    }
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toHaveLength(5);
+  });
+
+  it('leaves non-audio files alone, however old', async () => {
+    await writeAged('config.json', AUDIO_TTL_MS * 10);
+    await writeAged('notes.txt', AUDIO_TTL_MS * 10);
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toEqual([]);
+    expect((await readdir(workDir)).toSorted()).toEqual(['config.json', 'notes.txt']);
+  });
+
+  it('matches extensions case-insensitively', async () => {
+    await writeAged('SHOUTY.OGG', AUDIO_TTL_MS + 1000);
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toHaveLength(1);
+  });
+
+  it('spares files on the keep list, even when expired', async () => {
+    const queued = await writeAged('still-queued.ogg', AUDIO_TTL_MS + 1000);
+    await writeAged('done.ogg', AUDIO_TTL_MS + 1000);
+
+    const result = await purgeExpiredAudio({
+      directory: workDir,
+      now,
+      keep: new Set([queued]),
+    });
+
+    // A note waiting to be played must survive its own TTL.
+    expect(result.deleted).toHaveLength(1);
+    expect(await readdir(workDir)).toEqual(['still-queued.ogg']);
+  });
+});
+
+describe('reporting', () => {
+  it('reports how much space was reclaimed', async () => {
+    await writeAged('big.ogg', AUDIO_TTL_MS + 1000, 'x'.repeat(4096));
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.freedBytes).toBe(4096);
+    expect(result.scanned).toBe(1);
+  });
+
+  it('counts scanned files, including those it keeps', async () => {
+    await writeAged('old.ogg', AUDIO_TTL_MS + 1000);
+    await writeAged('new.ogg', 1000);
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.scanned).toBe(2);
+    expect(result.deleted).toHaveLength(1);
+  });
+});
+
+describe('robustness', () => {
+  it('treats a missing directory as empty rather than failing', async () => {
+    const result = await purgeExpiredAudio({ directory: join(workDir, 'nope'), now });
+
+    // A purge failure must never take the daemon down.
+    expect(result).toEqual({ scanned: 0, deleted: [], freedBytes: 0, errors: [] });
+  });
+
+  it('ignores subdirectories', async () => {
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(join(workDir, 'nested.ogg'), { recursive: true });
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toEqual([]);
+  });
+});
+
+describe('AudioPurger scheduling', () => {
+  /*
+   * Sweeps do real filesystem I/O on the libuv threadpool, which fake timers cannot flush.
+   * `whenIdle()` is what makes these deterministic — advancing timers only *starts* a
+   * sweep, so each assertion waits for the work itself to finish.
+   */
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('sweeps immediately on start, since the device may have been off for days', async () => {
+    await writeAged('old.ogg', AUDIO_TTL_MS + 1000);
+
+    const purger = new AudioPurger({ directory: workDir, now, intervalMs: 60_000 });
+    purger.start();
+    await purger.whenIdle();
+
+    expect(await readdir(workDir)).toEqual([]);
+    purger.stop();
+  });
+
+  it('sweeps again on each interval', async () => {
+    const purger = new AudioPurger({ directory: workDir, now, intervalMs: 60_000 });
+    purger.start();
+    await purger.whenIdle();
+
+    await writeAged('appeared-later.ogg', AUDIO_TTL_MS + 1000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await purger.whenIdle();
+
+    expect(await readdir(workDir)).toEqual([]);
+    purger.stop();
+  });
+
+  it('stops sweeping once stopped', async () => {
+    const purger = new AudioPurger({ directory: workDir, now, intervalMs: 60_000 });
+    purger.start();
+    await purger.whenIdle();
+    purger.stop();
+
+    await writeAged('after-stop.ogg', AUDIO_TTL_MS + 1000);
+    await vi.advanceTimersByTimeAsync(60_000 * 5);
+    await purger.whenIdle();
+
+    expect(await readdir(workDir)).toEqual(['after-stop.ogg']);
+  });
+
+  it('reports results only when something happened', async () => {
+    const results: number[] = [];
+    const purger = new AudioPurger({
+      directory: workDir,
+      now,
+      intervalMs: 60_000,
+      onResult: (result) => results.push(result.deleted.length),
+    });
+
+    purger.start();
+    await purger.whenIdle();
+    expect(results).toEqual([]); // nothing to delete, so stay quiet
+
+    await writeAged('old.ogg', AUDIO_TTL_MS + 1000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await purger.whenIdle();
+    expect(results).toEqual([1]);
+
+    purger.stop();
+  });
+
+  it('reports whether it is running', () => {
+    const purger = new AudioPurger({ directory: workDir, now });
+    expect(purger.running).toBe(false);
+    purger.start();
+    expect(purger.running).toBe(true);
+    purger.stop();
+    expect(purger.running).toBe(false);
+  });
+});

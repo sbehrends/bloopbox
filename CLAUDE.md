@@ -46,6 +46,23 @@ that only work with real GPIO, and never import `opengpio` statically (it is an
 `optionalDependency` and does not build on macOS; `src/hal/index.ts` loads it via dynamic
 `import()`).
 
+## opengpio 2.0.2 has a bias/debounce bug — do not "fix" the driver by passing options
+
+`Watch`'s constructor calls its native binding as `watch(chip, line, debounce, bias, cb)` while
+the binding's own signature is `watch(chip, line, bias, debounce, cb)` — **the two are
+transposed**. Asking for `{ bias: Bias.PullUp }` therefore sets a 4 ms debounce and leaves the
+line floating, which on a button input means garbage reads.
+
+`gpioDriver.ts` passes **no options at all** and handles both concerns properly elsewhere:
+
+- **Pull-ups** come from the firmware — `gpio=17,27,22=ip,pu` in `/boot/firmware/config.txt`,
+  applied by `scripts/provision.sh`. This is more robust anyway: it is set before userspace
+  starts and survives any library change.
+- **Debounce** is software-side in `core/buttonInterpreter.ts` (300 ms), which we need regardless
+  for the tap-vs-hold distinction.
+
+If you find yourself adding an options object to that `watch()` call, re-read this first.
+
 ## Architecture
 
 Two decoupled Node processes (systemd units on the Pi):

@@ -54,6 +54,13 @@
       "rules": {
         "no-console": "off"
       }
+    },
+    {
+      "files": ["src/types/**/*.d.ts"],
+      "rules": {
+        "typescript/no-extraneous-class": "off",
+        "typescript/no-explicit-any": "off"
+      }
     }
   ]
 }

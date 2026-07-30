@@ -8,5 +8,5 @@
     "rootDir": "."
   },
   /* Browser sources may import shared contract types out of src/. */
-  "include": ["public/**/*.ts", "src/ipc/**/*.ts", "src/hal/types.ts", "src/config/schema.ts"]
+  "include": ["public/**/*.ts", "src/ipc/**/*.ts", "src/audio/cues.ts", "src/config/schema.ts"]
 }

@@ -54,6 +54,54 @@ while quietly ignoring everything they configured.
 
 ---
 
+### AP hotspot / captive portal for onboarding
+
+**Problem.** `PRODUCT.md` §First Boot has the device come up as an access point serving a captive
+portal, and §6 gives Wi-Fi Error an "opens AP hotspot after 30s" behaviour. None of that exists.
+`config.wifi` is written by the admin panel and, since packaging, applied to NetworkManager by
+`deploy/wifi-apply.sh` — but only over a network that already works.
+
+So the first-boot story is currently: the parent supplies Wi-Fi **before** first boot by editing
+`kids-messenger-wifi.txt` on the boot partition, or the image is built with `--wifi-ssid`. A
+device that cannot reach the network cannot be configured over the network either.
+
+**Proposed work.** A `hostapd` + `dnsmasq` profile (or NetworkManager's own AP mode, which is
+already installed) brought up when no known network associates within ~30 s, serving the existing
+admin UI as a captive portal, and torn down once real credentials are accepted. The routes exist:
+`POST /api/onboard` and the guard that stands aside while `system.configured` is false.
+
+**Why it matters.** It is the difference between a device a parent can set up and one that needs
+a laptop and a card reader. Today the recovery path is physical — pull the card, edit a text
+file — which is documented but is not what the spec promises.
+
+### Read-only root filesystem needs /data on its own partition
+
+**Problem.** `PRODUCT.md` §11 wants the root filesystem mounted read-only through overlayfs so an
+abrupt power cut cannot corrupt the OS. `scripts/build-sd-image.sh` deliberately does not enable
+it, because `/data` currently lives **on** the root filesystem: with the overlay active, every
+config write and the WhatsApp credentials would land in a RAM overlay and vanish on reboot. That
+is a worse failure than the one it prevents, and a silent one.
+
+**Proposed work.** Give `/data` a third ext4 partition (label `kidsdata`, mounted from fstab),
+then `raspi-config nonint do_overlayfs 0` becomes safe. The catch to design around: Pi OS expands
+the **last** partition on first boot, so a naive third partition after the rootfs breaks
+auto-expand. Either put `/data` before the rootfs, or size the rootfs at build time and do the
+expansion in the image builder rather than on the device.
+
+**Acceptance.** A built image where pulling power during a settings save leaves both the OS and
+the previous config intact, and `sudo kids-messenger-doctor` reports `/data` writable with `/`
+read-only.
+
+### On-device doctor duplicates the tsx one
+
+`npm run doctor` (`scripts/doctor.ts`) cannot run on the device: it is a tsx script and the
+release carries no devDependencies. `deploy/doctor.sh` covers the same ground in bash, plus the
+things that only exist once installed. Two implementations of one idea will drift — the cue list
+already had to be read out of `dist/audio/soundFiles.js` at runtime to stop it drifting once.
+
+Worth considering: compile the checks into `dist/` (a `dist/doctor.js` the bash wrapper calls) so
+there is one implementation and the device runs the same code CI does.
+
 ## Verification gaps
 
 These are things built but not proven. Not bugs — just claims that have not been tested.
@@ -81,10 +129,25 @@ an assigned group arrives on that button whoever in the group sent it.
 ### GPIO driver on real hardware
 
 `src/hal/gpioDriver.ts` is written from datasheets and the opengpio API but has never run on a
-Pi Zero 2 W. Pin numbers, ULN2003 polarity and ALSA device names are all unverified. See
-`docs/hardware-bringup.md` (to be written in Phase 4) and the `TODO(hardware)` banner in the
-driver. Contained behind the HAL, so bring-up should be a debugging session rather than a
-rewrite.
+Pi Zero 2 W. Pin numbers, ULN2003 polarity and ALSA device names are all unverified. See the
+`TODO(hardware)` banner in the driver; `docs/hardware-bringup.md` is still to be written.
+Contained behind the HAL, so bring-up should be a debugging session rather than a rewrite.
+
+What packaging did settle: the addon **compiles and loads on arm64 Trixie** against `libgpiod3`,
+and `RaspberryPi_Zero2W` is a real export of opengpio 2.0.2 — both verified in a container by
+`scripts/smoke-test-release.sh`. What no container can show is whether the pins, the polarity and
+the ALSA device names are right. First moves are in `deploy/environment.example`:
+`LED_ACTIVE_HIGH`, `BUTTON_ACTIVE_LOW`, `ALSA_CAPTURE_DEVICE`, `ALSA_PLAYBACK_DEVICE`,
+`ALSA_MIXER_CONTROL`. If something fails with a permission error rather than wrong behaviour,
+comment out the hardening block in the systemd unit before suspecting the driver.
+
+### Audio capture and playback on real ALSA devices
+
+`arecord`, `aplay` and `amixer` have never been run by this code against a real sound card. The
+`amixer` control name in particular differs across USB adapters (`PCM`, `Speaker`, `Master`), and
+`GpioHal` treats a mixer failure as non-fatal — so a wrong name means playback at whatever volume
+the adapter booted with, silently, including the volume cap being ignored. Worth an explicit
+check during bring-up: set the volume, then read it back.
 
 ### Simulator playback timing
 
@@ -110,6 +173,20 @@ Not work, but things that could bite.
   `node_modules/oxlint/configuration_schema.json`. An unknown name is a hard config error.
 - **opengpio 2.0.2 transposes `bias` and `debounce`** when calling its native binding. Worked
   around by not passing options at all; see `CLAUDE.md`. Revisit if a fixed release appears.
+- **The Pi OS image is pinned in `packaging/versions.env` and will go stale.** Bumping it means
+  updating `PI_OS_RELEASE`, `PI_OS_IMAGE` and `PI_OS_SHA256` together and rebuilding. Watch for
+  first-boot mechanisms changing underneath it: the 2026-06 Trixie images use a bare `resize`
+  token in `cmdline.txt` (not the old `init_resize.sh`), still ship a `pi` user plus
+  `userconfig.service` for `userconf.txt`, and carry inert cloud-init templates
+  (`user-data`, `network-config`) on the boot partition that could become live in a future
+  release. `scripts/build-sd-image.sh` depends on all three of those facts.
+- **`libgpiod` soname churn.** The addon links `libgpiodcxx.so.2` / `libgpiod.so.3` from Trixie's
+  `libgpiod3` (upstream 2.2.x). A future Debian bumping to libgpiod 3.x upstream would break it
+  the same way Bookworm's 1.6 does today, and the failure is a build error in CI rather than
+  anything subtle.
+- **`MemoryMax` on the two units is a guess, not a measurement.** 128/192 MB for the hardware
+  server and 192/288 MB for the bridge, on a 512 MB device. Worth confirming against real
+  `systemd-cgtop` numbers once it runs on hardware, especially the bridge during a media download.
 - **Tests that depend on filesystem work must use `waitFor`, not a fixed `flush(n)`.**
   `deviceController.test.ts` runs on fake timers with `setImmediate` left real, because the
   commit path awaits `rm`. A fixed number of yields passed in isolation and failed

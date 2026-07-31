@@ -15,10 +15,15 @@ Under active development, built in phases:
 - [x] **Phase 1** — project foundation, tooling, validation gate
 - [x] **Phase 2** — hardware server: config, LED state machine, HAL, audio pipeline, simulator UI
 - [x] **Phase 3** — WhatsApp bridge (Baileys), people and groups as targets
-- [ ] **Phase 4** — Raspberry Pi provisioning (deferred until hardware is on hand)
+- [x] **Phase 4** — packaging: arm64 release builds, an installer, systemd units, a flashable
+      SD card image and CI ([`docs/deployment.md`](./docs/deployment.md))
+- [ ] **Phase 5** — hardware bring-up: the GPIO driver, audio and WhatsApp pairing against real
+      hardware (waiting on the parts)
 
 The physical device does not exist yet. Everything is developed and verified against a **browser
-based hardware simulator**, so no Pi is needed to work on this.
+based hardware simulator**, so no Pi is needed to work on this. The build pipeline is verified
+against arm64 Debian Trixie containers, up to booting both daemons out of a mounted SD card
+image — but nothing has yet run on a Pi with buttons attached.
 
 ## Prerequisites
 
@@ -113,6 +118,9 @@ Saving restarts the device, then the LEDs go dark, meaning ready.
 | `npm run build`         | Compile server to `dist/` and UIs to `dist/public/`   |
 | `npm run doctor`        | Verify ffmpeg / audio device prerequisites            |
 | `npm run sounds`        | Regenerate the audio cue WAVs                         |
+| `npm run release`       | Build the arm64 device tarball (Docker)               |
+| `npm run release:smoke` | Install and boot that tarball in an arm64 container   |
+| `npm run release:image` | Build a flashable SD card image (Linux + root)        |
 
 ## Hardware
 
@@ -124,10 +132,35 @@ Saving restarts the device, then the LEDs go dark, meaning ready.
 | Audio      | USB speakerphone or USB soundcard + mic |
 | Power      | 5 V 2.5 A micro-USB                     |
 
+The OS target is **Raspberry Pi OS Trixie, 64-bit**, and that is not a preference: the GPIO
+addon compiles against the libgpiod v2 API, which Bookworm does not have.
+
+## Putting it on a device
+
+```bash
+npm run release          # arm64 tarball, built in Docker — the Pi compiles nothing
+npm run release:smoke    # install and boot it in a bare arm64 Debian Trixie container
+```
+
+Then either copy the tarball over and `sudo ./install.sh`, or build a card that needs no install
+step at all:
+
+```bash
+sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
+```
+
+Flash the resulting `.img.xz`, power up, and the device is on the network with the admin panel on
+port 3000. Full details, including what the installer changes and how Wi-Fi is provisioned
+without a screen, are in [`docs/deployment.md`](./docs/deployment.md).
+
 ## Safety and privacy
 
 Each button targets one person **or** one group, and the device accepts messages only from those
 targets — unknown numbers, groups nobody assigned, status broadcasts and newsletters are all
-dropped, before any audio is downloaded. Recordings live in a RAM disk and unread audio
-is deleted after 48 hours. The root filesystem is mounted read-only so pulling the plug cannot
-corrupt it.
+dropped, before any audio is downloaded. Recordings live in a RAM disk (`/run/kids-messenger`,
+a tmpfs) and unread audio is deleted after 48 hours. Writes to `/data/config.json` are atomic, so
+losing power mid-save cannot corrupt the parent's settings.
+
+`PRODUCT.md` §11 also calls for a **read-only root filesystem** via overlayfs. That is not built
+yet: with `/data` on the root filesystem, enabling the overlay would make every setting and the
+WhatsApp pairing evaporate on reboot, so it needs a dedicated partition first. See `PENDING.md`.

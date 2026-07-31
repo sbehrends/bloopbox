@@ -1,6 +1,8 @@
-# Kids WhatsApp Voice Messenger — working notes
+# CLAUDE.md
 
-Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry Pi Zero 2 W let a 2–5 year
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Kids WhatsApp Voice Messenger. Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry Pi Zero 2 W let a 2–5 year
 old send and receive WhatsApp voice notes. **Hold to send, tap to play.** No screen, ever.
 
 `PRODUCT.md` is the authoritative behavioral spec. This file records how we build it and the
@@ -19,6 +21,51 @@ Run `npm run check` (format + lint + typecheck + test). It must pass. That is th
 - Node ≥ 22 (developed on 24)
 - **`ffmpeg` on PATH** — required for the Opus/ogg pipeline. `brew install ffmpeg` on macOS,
   `apt install ffmpeg` on the Pi. Override the location with `FFMPEG_PATH`.
+- `npm run sounds` after a fresh clone — the cue WAVs in `src/audio/sounds/` are **generated, not
+  committed** (`scripts/generate-sounds.ts` synthesises them). `data/` is gitignored too, so a
+  clean checkout has no config and boots into onboarding.
+
+## Commands
+
+```bash
+npm run dev:hw          # terminal 1 — hardware server + API + Socket.io on :3000 (SIMULATOR_MODE=true)
+npm run dev:web         # terminal 2 — Vite for the two UIs on :5174, proxying /api and /socket.io to :3000
+npm run dev:wa          # WhatsApp bridge (only needed for real pairing/sending)
+npm run dev             # dev:hw + dev:wa together (no Vite; use the built UIs or add dev:web)
+```
+
+Then open `http://localhost:5174/simulator/` or `/admin/`. In production there is one server:
+`npm run build` emits `dist/` + `dist/public/`, and `npm run start:hw` serves both from :3000.
+
+Running tests:
+
+```bash
+npx vitest run src/tests/button.test.ts        # one file
+npx vitest run -t 'discards a short recording' # one test by name
+npm run test:watch                             # watch mode
+npm run test:coverage                          # v8, 80% thresholds, enforced
+```
+
+Individual gate steps when iterating: `npm run typecheck` (runs both server and web projects),
+`npm run lint`, `npm run lint:fix`, `npm run format`.
+
+### Environment variables
+
+Defaults are the **device's** absolute paths. `scripts/dev-server.ts` sets only `SIMULATOR_MODE`,
+so on macOS `/data` does not exist: without `CONFIG_PATH=./data/config.json` the server falls back
+to `config.default.json` in RAM and every settings save fails. Set it when testing config at all.
+
+| Variable                                         | Default               | Notes                                             |
+| ------------------------------------------------ | --------------------- | ------------------------------------------------- |
+| `SIMULATOR_MODE=true`                            | unset → `gpio`        | Selects the HAL. `HAL_DRIVER=mock` wins over it.  |
+| `CONFIG_PATH`                                    | `/data/config.json`   | Point at `./data/config.json` locally             |
+| `RECORDING_DIR`                                  | `/tmp/kids-messenger` | `/run/kids-messenger` on the device (tmpfs)       |
+| `WA_AUTH_DIR`                                    | `/data/auth_info`     | Baileys credentials                               |
+| `BRIDGE_TOKEN`                                   | `''`                  | Shared secret both processes must agree on        |
+| `HARDWARE_URL` / `PORT`                          | `localhost:3000`      | Where the bridge dials / where the server listens |
+| `FFMPEG_PATH`                                    | `ffmpeg`              |                                                   |
+| `LOG_LEVEL`                                      | `debug` in dev        | pino; `pino-pretty` in dev                        |
+| `ALSA_*`, `LED_ACTIVE_HIGH`, `BUTTON_ACTIVE_LOW` | see `gpioDriver.ts`   | Pi-only, unverified                               |
 
 ## Toolchain: TypeScript 7 + oxlint (do not swap in ESLint)
 
@@ -64,6 +111,33 @@ that only work with real GPIO, and never import `opengpio` statically (it is an
 `optionalDependency` and does not build on macOS; `src/hal/index.ts` loads it via dynamic
 `import()`).
 
+## Packaging: the device target is Trixie 64-bit, and that is forced by opengpio
+
+`docs/deployment.md` is the full guide. The parts that constrain how you write code:
+
+- **`opengpio@2.0.2` compiles against the libgpiod _v2_ C++ API** (`gpiod::line::value`,
+  `line_request::release()`). Bookworm ships libgpiod 1.6, where those do not exist, so the addon
+  does not build there at all — verified, not assumed. The target is **Raspberry Pi OS Trixie,
+  64-bit**: `libgpiod3` at runtime, `libgpiod-dev` to build. Every current Pi OS Lite arm64 image
+  is Trixie. Do not "add Bookworm support".
+- Everything pinned lives in **`packaging/versions.env`** — base images, the Pi OS image and its
+  sha256, the apt lists. One place, sourced by the scripts and both workflows.
+- The release **bundles the `node` binary** from the build image, so the compiled addon's
+  `NODE_MODULE_VERSION` and the runtime loading it cannot drift. The device installs no Node and
+  compiles nothing.
+- **`package.json` ships in the release.** Without `"type": "module"` beside `dist/`, node
+  rejects every import in it. `hardware-server.js` also resolves the UI at `../../dist/public`
+  and `configManager.js` the defaults at `../../config.default.json`, both relative to `dist/` —
+  so that layout is load-bearing, not tidiness.
+- **`RECORDING_DIR` is `/run/kids-messenger` on the device**, not `/tmp`: `/run` is already a
+  tmpfs, so `RuntimeDirectory=` in both units gives us audio-in-RAM with no mount unit.
+- The three commands: `npm run release`, `npm run release:smoke`, `npm run release:image`.
+  The smoke test installs the artefact in a bare Trixie arm64 container and boots both daemons;
+  run it after touching anything under `deploy/` or `packaging/`.
+- **Do not write `cmd | grep -q` in these scripts.** `grep -q` exits at the first match, the
+  producer takes a SIGPIPE, and `set -o pipefail` reports the whole check as failed. This bit
+  three separate checks during bring-up. Capture into a variable and use `[[ $x == *y* ]]`.
+
 ## opengpio 2.0.2 has a bias/debounce bug — do not "fix" the driver by passing options
 
 `Watch`'s constructor calls its native binding as `watch(chip, line, debounce, bias, cb)` while
@@ -100,6 +174,45 @@ records every `setLed` call with a timestamp).
 
 Domain logic in `src/core/` is **pure and I/O-free** — it only calls `hal.setLed()`. That is what
 makes the timing behavior unit-testable with fake timers. Keep it that way.
+
+Supporting layers: `src/server/` (Express routes, admin auth, the `/bridge` Socket.io link,
+simulator transport), `src/audio/` (ffmpeg pipeline, cue playback, unread queue, 48 h purge),
+`src/whatsapp/` (Baileys client + whitelist), `src/config/` (Zod schema + atomic ConfigManager).
+
+### The two browser UIs
+
+`public/simulator/` (virtual device) and `public/admin/` (parent settings) are plain TS + a shared
+`public/shared/base.css` — no framework. They are **outside `src/`** and compiled by Vite, not tsc:
+
+- Three tsconfigs. `tsconfig.json` typechecks `src/` + `scripts/` (node libs, no DOM);
+  `tsconfig.web.json` typechecks `public/` with DOM libs and `types: []`, whitelisting only the
+  shared modules browser code may import (`src/ipc/`, `src/audio/cues.ts`, `src/config/schema.ts`);
+  `tsconfig.build.json` is the emit config. `npm run typecheck` runs the first two — a DOM global in
+  `src/`, or a node global in `public/`, fails there and nowhere else.
+- Vite 8 bundles with **Rolldown**: use `rolldownOptions`, not `rollupOptions`.
+- Both UIs speak the same typed contract as the daemons via `src/ipc/events.ts`. Adding a
+  simulator or admin event means editing that file first.
+
+### Server surface
+
+`/api` is the only mutable surface, mounted in `hardware-server.ts` alongside `/audio` (recordings)
+and `/sounds` (cues). Everything under `/api` sits behind `requireAdmin` — HTTP Basic against a
+bcrypt hash in config — except `GET /status`, `GET /whatsapp`, `GET /cues` and `POST /onboard`.
+The guard also **stands aside entirely while `system.configured` is false**, or first-run
+onboarding could never set a password; don't "fix" that. The bridge authenticates separately with `BRIDGE_TOKEN` on the `x-bridge-token` header,
+compared in constant time.
+
+### Tests
+
+`src/tests/*.test.ts`, node environment. `vitest.config.ts` declares 80% coverage thresholds
+(excluding `src/tests`, `src/processes` and `gpioDriver.ts`) but **`npm run check` does not run
+them** — it calls plain `vitest run`. As of this writing `npm run test:coverage` fails at 55%
+statements / 44% branches, because `src/server/**` and `src/ipc/payload.ts` have no tests at all.
+Treat that number as a known debt, not a passing gate. Timing-sensitive suites (LED patterns, debounce,
+purge TTL) run on **fake timers** — never add a real sleep. Where a code path awaits real
+filesystem work (`deviceController.test.ts` leaves `setImmediate` real because commit awaits `rm`),
+assert with a `waitFor` condition rather than a fixed number of yields: fixed flushes passed in
+isolation and failed intermittently under parallel load.
 
 ## Conventions
 
@@ -148,7 +261,7 @@ Who does the restarting:
 
 | Context                | Supervisor                                                                                                                                                           |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Device                 | systemd, `Restart=always` (Phase 4)                                                                                                                                  |
+| Device                 | systemd, `Restart=always` in `deploy/systemd/kids-messenger-hardware.service`                                                                                        |
 | `npm run dev:hw`       | `scripts/dev-server.ts`, a ~60-line respawner                                                                                                                        |
 | `npm run dev:hw:watch` | nothing — `tsx watch` does **not** restart a process that exits cleanly, so a config save leaves the server down. Use it for editing source, not for testing config. |
 

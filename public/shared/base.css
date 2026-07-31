@@ -196,6 +196,34 @@ input[type='checkbox'] {
   color: #ff8f8f;
 }
 
+.pairing h3 {
+  margin: 1.25rem 0 0.35rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* White plate behind the code: scanners need the quiet zone and true contrast. */
+.qr-image {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  margin: 0.5rem 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.pair-code {
+  margin: 0.5rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 1.5rem;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+}
+
 .qr-code {
   overflow-x: auto;
   padding: 0.75rem;

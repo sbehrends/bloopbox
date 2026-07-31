@@ -213,6 +213,10 @@ async function main(): Promise<void> {
       link.current?.unlink();
     },
     listGroups: async () => (await link.current?.listGroups()) ?? [],
+    requestPairingCode: async (phone: string) =>
+      (await link.current?.requestPairingCode(phone)) ?? {
+        error: 'the WhatsApp bridge is not running',
+      },
     requestRestart: (reason: string) => {
       requestRestart(reason);
     },

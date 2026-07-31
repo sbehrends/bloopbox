@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { basename, resolve } from 'node:path';
+import { toString as qrToString } from 'qrcode';
 import { ALL_AUDIO_CUES } from '../audio/cues.ts';
 import { ConfigValidationError, type ConfigManager } from '../config/configManager.ts';
 import { configUpdateSchema, enabledContacts } from '../config/schema.ts';
@@ -28,6 +29,8 @@ export type RoutesContext = {
   readonly unlinkWhatsApp: () => void;
   /** Groups the linked account is in, so a parent can pick one instead of typing a JID. */
   readonly listGroups: () => Promise<{ id: string; subject: string }[]>;
+  /** Starts phone-number pairing, the alternative to scanning a QR. */
+  readonly requestPairingCode: (phone: string) => Promise<{ code?: string; error?: string }>;
   /**
    * Restarts the daemon so a saved config takes effect.
    *
@@ -148,6 +151,46 @@ export function createApiRouter(context: RoutesContext): Router {
       context.controller.state.setManualSilent(desired);
     }
     res.json({ silentMode: context.controller.state.silentMode });
+  });
+
+  /**
+   * The pairing QR as a scannable SVG.
+   *
+   * The raw payload is a long string; WhatsApp's "Link a device" flow scans an image, so
+   * rendering it here is what makes pairing possible at all. Admin-gated because whoever scans
+   * it becomes the account this device speaks as.
+   */
+  router.get('/whatsapp/qr.svg', admin, async (_req, res) => {
+    const { state, qr } = context.whatsapp();
+    if (state !== 'awaitingPairing' || qr === null) {
+      res.status(404).json({ error: 'no pairing code is pending' });
+      return;
+    }
+    try {
+      /*
+       * margin 4 is the quiet zone the QR spec requires; scanners can fail to lock on
+       * without it. errorCorrectionLevel M tolerates a little screen glare and moire.
+       */
+      const svg = await qrToString(qr, { type: 'svg', margin: 4, errorCorrectionLevel: 'M' });
+      res.type('image/svg+xml').set('cache-control', 'no-store').send(svg);
+    } catch {
+      res.status(500).json({ error: 'could not render the pairing code' });
+    }
+  });
+
+  /** Phone-number pairing: returns a code to type into WhatsApp instead of scanning. */
+  router.post('/whatsapp/pair', admin, async (req: Request, res: Response) => {
+    const phone = readString(req.body, 'phone');
+    if (phone === null) {
+      res.status(400).json({ error: 'a phone number is required' });
+      return;
+    }
+    const result = await context.requestPairingCode(phone);
+    if (result.code === undefined) {
+      res.status(409).json({ error: result.error ?? 'pairing failed' });
+      return;
+    }
+    res.json({ code: result.code });
   });
 
   /**

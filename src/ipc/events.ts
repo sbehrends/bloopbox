@@ -117,6 +117,8 @@ export type BridgeToServerEvents = {
     durationMs: number | null;
     receivedAt: number;
   }) => void;
+  /** Answers `wa:requestPairingCode`. `code` is absent when pairing could not start. */
+  'wa:pairingCode': (payload: { requestId: string; code?: string; error?: string }) => void;
   /** Groups the linked account belongs to, answering `wa:listGroups`. */
   'wa:groups': (payload: {
     requestId: string;
@@ -149,6 +151,13 @@ export type ServerToBridgeEvents = {
    * Group JIDs are opaque, so a parent cannot type one — they have to choose from a list.
    */
   'wa:listGroups': (payload: { requestId: string }) => void;
+  /**
+   * Start phone-number pairing, the alternative to scanning a QR.
+   *
+   * Easier on a screenless appliance: the parent already has their phone in hand, and typing
+   * an 8-character code beats pointing a camera at a laptop.
+   */
+  'wa:requestPairingCode': (payload: { requestId: string; phone: string }) => void;
 };
 
 /** Generates a short correlation id for send requests and playback tokens. */

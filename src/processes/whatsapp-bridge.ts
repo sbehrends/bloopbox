@@ -78,6 +78,27 @@ async function main(): Promise<void> {
     });
   });
 
+  socket.on('wa:requestPairingCode', (payload: unknown) => {
+    const requestId = readString(payload, 'requestId', 64);
+    const phone = readString(payload, 'phone', 32);
+    if (requestId === null) return;
+    void (async (): Promise<void> => {
+      if (phone === null) {
+        socket.emit('wa:pairingCode', { requestId, error: 'a phone number is required' });
+        return;
+      }
+      try {
+        const code = await client.requestPairingCode(phone);
+        log.info('issued a pairing code');
+        socket.emit('wa:pairingCode', { requestId, code });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.warn({ err: error }, 'pairing code request failed');
+        socket.emit('wa:pairingCode', { requestId, error: message });
+      }
+    })();
+  });
+
   socket.on('wa:listGroups', (payload: unknown) => {
     const requestId = readString(payload, 'requestId', 64);
     if (requestId === null) return;

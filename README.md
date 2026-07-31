@@ -78,8 +78,26 @@ no rebuild. Saving any setting **restarts the device** to apply it: config is re
 than watched. `npm run dev:hw` supervises the server and brings it straight back, and the admin
 panel shows "restarting" then reloads itself.
 
-Recording needs microphone permission. Sending needs the WhatsApp bridge (Phase 3) — until then
-a completed recording fails gracefully with the "oops" cue.
+Recording needs microphone permission.
+
+### Linking WhatsApp
+
+Sending and receiving need a linked WhatsApp account. Run both daemons, open the admin panel, and
+scroll to **WhatsApp** — it offers two routes:
+
+- **Scan the QR.** On your phone: WhatsApp → Settings → Linked devices → Link a device.
+- **Link with a phone number.** Enter your number, press _Get a pairing code_, then on your phone
+  choose "Link with phone number instead" and type the 8-character code. Usually easier than
+  pointing a camera at a laptop.
+
+Codes expire after about 20 seconds; press _Refresh pairing status_ for a new one.
+
+Once linked, assign a target to each button under **Contacts** — a phone number, or a group chosen
+from the picker (which appears after linking, since group ids have to be read from the account).
+Saving restarts the device, then the LEDs go dark, meaning ready.
+
+> The account you link becomes the identity the device sends as. Use a spare number if you would
+> rather not have a toddler's device speaking as you.
 
 ## Scripts
 

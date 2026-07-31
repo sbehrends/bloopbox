@@ -68,10 +68,11 @@ produces a valid `.ogg` in the recordings directory.
 
 ### WhatsApp end to end with a real account
 
-The bridge connects, produces a pairing QR, propagates the whitelist and reports state — all
-verified. What has **not** run is the part that needs a linked account: scanning the QR,
-receiving a real voice note, and sending one that appears as a PTT bubble on a phone. Also
-unverified: the group picker with real groups, and `markRead`.
+The bridge connects, produces a pairing QR (verified scannable by decoding it back to the exact
+payload), offers phone-number pairing, propagates the whitelist and reports state. What has **not**
+run is the part that needs a linked account: completing a pairing, receiving a real voice note, and
+sending one that appears as a PTT bubble on a phone. Also unverified: the group picker against real
+groups, `markRead`, and `requestPairingCode` actually returning a code.
 
 Worth checking when pairing: that a voice note from a number **not** assigned to a button is
 dropped (it should not appear, and the bridge logs `dropped a voice note`), and that a message in

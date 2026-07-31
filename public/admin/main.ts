@@ -412,29 +412,93 @@ function renderWifi(config: ConfigView, onSave: SaveFn): HTMLElement {
 function renderWhatsApp(status: StatusView): HTMLElement {
   const section = card('WhatsApp');
   const state = element('p', 'status', status.whatsappConnected ? 'Linked' : 'Not linked');
-  const qrHolder = element('div', 'qr');
+  const pairing = element('div', 'pairing');
 
-  section.append(state, qrHolder);
+  section.append(state, pairing);
 
+  /** Renders whichever pairing route is currently available. */
   const refresh = async (): Promise<void> => {
+    pairing.replaceChildren();
+    let current = 'unknown';
+    let awaiting = false;
     try {
       const payload = await getJson('/api/whatsapp');
-      const record: Record<string, unknown> =
-        typeof payload === 'object' && payload !== null ? { ...payload } : {};
-      const qr = record['qr'];
-      state.textContent = `State: ${asText(record['state']) || 'unknown'}`;
-      qrHolder.replaceChildren();
-      if (typeof qr === 'string' && qr.length > 0) {
-        // The bridge sends the raw pairing string; showing it as text is enough to
-        // regenerate a QR with any tool, and avoids bundling a QR library.
-        qrHolder.append(
-          element('p', 'field-hint', 'Scan this pairing code from WhatsApp → Linked devices:'),
-          element('pre', 'qr-code', qr),
-        );
+      if (typeof payload === 'object' && payload !== null && 'state' in payload) {
+        current = asText(payload.state) || 'unknown';
+        awaiting = current === 'awaitingPairing';
       }
     } catch {
-      state.textContent = 'State: unavailable';
+      state.textContent = 'State: unavailable — is the WhatsApp bridge running?';
+      return;
     }
+
+    state.textContent = `State: ${current}`;
+    if (!awaiting) return;
+
+    pairing.append(
+      element('h3', undefined, 'Option 1 — scan this code'),
+      element(
+        'p',
+        'field-hint',
+        'On your phone: WhatsApp → Settings → Linked devices → Link a device.',
+      ),
+    );
+
+    // Rendered server-side; the raw payload is a long string and unscannable as text.
+    const image = element('img', 'qr-image');
+    image.alt = 'WhatsApp pairing QR code';
+    // Cache-busted so a refresh never shows a stale, already-expired code.
+    image.src = `/api/whatsapp/qr.svg?t=${String(Date.now())}`;
+    image.addEventListener('error', () => {
+      image.replaceWith(element('p', 'field-hint', 'The code expired — refresh to get a new one.'));
+    });
+    pairing.append(image);
+
+    pairing.append(
+      element('h3', undefined, 'Option 2 — link with your phone number'),
+      element(
+        'p',
+        'field-hint',
+        'Often easier: WhatsApp → Linked devices → Link a device → "Link with phone number ' +
+          'instead", then type the code below.',
+      ),
+    );
+
+    const phone = textInput('', { placeholder: '15551234567' });
+    const codeOut = element('p', 'pair-code');
+    const request = element('button', 'primary', 'Get a pairing code');
+    request.type = 'button';
+    request.addEventListener('click', () => {
+      void (async (): Promise<void> => {
+        request.disabled = true;
+        codeOut.textContent = 'Requesting…';
+        try {
+          const response = await fetch('/api/whatsapp/pair', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ phone: phone.value.trim() }),
+          });
+          const body: unknown = await response.json();
+          const code =
+            typeof body === 'object' && body !== null && 'code' in body ? asText(body.code) : '';
+          if (response.ok && code.length > 0) {
+            codeOut.textContent = code;
+          } else {
+            codeOut.textContent = describeApiError(body) ?? 'Could not get a code.';
+          }
+        } catch {
+          codeOut.textContent = 'Could not reach the device.';
+        } finally {
+          request.disabled = false;
+        }
+      })();
+    });
+
+    pairing.append(
+      field('Your phone number', phone, 'Digits with country code, no + or spaces.'),
+      request,
+      codeOut,
+    );
   };
 
   void refresh();
@@ -442,6 +506,8 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     saveButton('Refresh pairing status', refresh),
     saveButton('Unlink WhatsApp', async () => {
       await fetch('/api/whatsapp/unlink', { method: 'POST' });
+      // Give the bridge a moment to produce a fresh code.
+      await new Promise((resolve) => window.setTimeout(resolve, 2500));
       await refresh();
     }),
   );

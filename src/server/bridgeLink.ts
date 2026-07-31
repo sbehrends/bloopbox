@@ -55,6 +55,8 @@ export type BridgeLink = {
   send(request: OutboundRequest): Promise<void>;
   /** Groups the linked account is in, for the admin panel's picker. [] if unavailable. */
   listGroups(): Promise<GroupSummary[]>;
+  /** Starts phone-number pairing and returns the code to type into WhatsApp. */
+  requestPairingCode(phone: string): Promise<{ code?: string; error?: string }>;
   sendContacts(contacts: readonly { index: ButtonIndex; jid: string }[]): void;
   markRead(index: ButtonIndex, messageIds: readonly string[]): void;
   unlink(): void;
@@ -71,6 +73,14 @@ type PendingGroups = {
   timer: NodeJS.Timeout;
 };
 
+type PendingPairing = {
+  resolve: (result: { code?: string; error?: string }) => void;
+  timer: NodeJS.Timeout;
+};
+
+/** WhatsApp usually answers a pairing request quickly; do not leave the panel hanging. */
+const PAIRING_TIMEOUT_MS = 20_000;
+
 /** Listing groups is a UI nicety, so give up quickly rather than blocking the admin panel. */
 const GROUPS_TIMEOUT_MS = 10_000;
 
@@ -79,6 +89,7 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
   let counter = 0;
   const pending = new Map<string, PendingSend>();
   const pendingGroups = new Map<string, PendingGroups>();
+  const pendingPairing = new Map<string, PendingPairing>();
 
   const failAllPending = (reason: string): void => {
     for (const [id, entry] of pending) {
@@ -118,6 +129,11 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
         pendingGroups.delete(id);
         entry.resolve([]);
       }
+      for (const [id, entry] of pendingPairing) {
+        clearTimeout(entry.timer);
+        pendingPairing.delete(id);
+        entry.resolve({ error: 'the WhatsApp bridge disconnected' });
+      }
       options.onConnectionChange(false);
     });
 
@@ -134,6 +150,19 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
     incoming.on('wa:incoming', (payload: unknown) => {
       const note = readIncoming(payload);
       if (note) options.onIncoming(note);
+    });
+
+    incoming.on('wa:pairingCode', (payload: unknown) => {
+      const requestId = readString(payload, 'requestId', 64);
+      if (requestId === null) return;
+      const entry = pendingPairing.get(requestId);
+      if (!entry) return;
+      clearTimeout(entry.timer);
+      pendingPairing.delete(requestId);
+
+      const code = readString(payload, 'code', 32);
+      const error = readString(payload, 'error', 256);
+      entry.resolve(code === null ? { error: error ?? 'pairing failed' } : { code });
     });
 
     incoming.on('wa:groups', (payload: unknown) => {
@@ -181,6 +210,25 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
 
         pending.set(requestId, { resolve: resolvePromise, reject: rejectPromise, timer });
         active.emit('wa:send', { requestId, index: request.index, path: request.path });
+      });
+    },
+
+    async requestPairingCode(phone: string): Promise<{ code?: string; error?: string }> {
+      const active = socket;
+      if (!active) return { error: 'the WhatsApp bridge is not running' };
+
+      counter += 1;
+      const requestId = createRequestId('pair', counter);
+
+      return new Promise<{ code?: string; error?: string }>((resolvePromise) => {
+        const timer = setTimeout(() => {
+          pendingPairing.delete(requestId);
+          resolvePromise({ error: 'WhatsApp did not answer in time' });
+        }, PAIRING_TIMEOUT_MS);
+        timer.unref();
+
+        pendingPairing.set(requestId, { resolve: resolvePromise, timer });
+        active.emit('wa:requestPairingCode', { requestId, phone });
       });
     },
 

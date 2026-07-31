@@ -152,6 +152,24 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     await socket.readMessages([...keys]);
   }
 
+  /**
+   * Starts phone-number pairing and returns the code to type into WhatsApp.
+   *
+   * Only valid while unpaired — WhatsApp rejects it once credentials exist, and the socket has
+   * to be up to make the request at all.
+   */
+  async requestPairingCode(phone: string): Promise<string> {
+    const socket = this.#socket;
+    if (!socket) throw new Error('not connected to WhatsApp yet — try again in a moment');
+    if (this.connected) throw new Error('already linked; unlink first to pair a new account');
+
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 7 || digits.length > 15) {
+      throw new Error('enter the full number with country code, digits only');
+    }
+    return socket.requestPairingCode(digits);
+  }
+
   /** Groups the linked account participates in, for the admin panel's picker. */
   async listGroups(): Promise<GroupSummary[]> {
     const socket = this.#socket;

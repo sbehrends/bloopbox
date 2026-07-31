@@ -15,7 +15,15 @@ conversation.
 
 Run `npm run check` (format + lint + typecheck + test). It must pass. That is the only gate.
 
-`npm run doctor` verifies external prerequisites (ffmpeg, ALSA devices).
+It is also a **pre-commit hook** (`.githooks/pre-commit`, wired up by the `prepare` script, so
+`npm install` installs it — no husky). The whole gate takes about six seconds, so the hook runs
+all of it rather than just a typecheck, plus `bash -n` over any staged shell script since neither
+prettier nor oxlint looks at those. `git commit --no-verify` bypasses it. The hook checks the
+working tree, not the staged snapshot: committing a subset of files can still pass here and be
+broken in isolation, which is what CI is for.
+
+`npm run doctor` verifies external prerequisites (ffmpeg, ALSA devices). Markdown is deliberately
+outside prettier's scope — see `.prettierignore`.
 
 ## Prerequisites
 

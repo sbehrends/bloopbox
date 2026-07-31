@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# The gate, before the commit instead of after it. Same `npm run check` CLAUDE.md asks for —
+# format, lint, typecheck, tests — because the whole thing takes about six seconds, which is
+# cheaper than noticing in CI ten minutes later.
+#
+# Committed to the repo and wired up by the `prepare` script in package.json
+# (`git config core.hooksPath .githooks`), so a fresh clone gets it from `npm install`
+# without adding husky or any other dependency.
+#
+# To skip it deliberately:  git commit --no-verify
+#
+# Caveat worth knowing: this checks the working tree, not the staged snapshot. A commit of
+# selected files can still pass here and be broken in isolation. Stashing to test the index
+# exactly is a good way to lose work in a hook, so it is not done.
+set -uo pipefail
+
+fail() {
+  printf '\n\033[31mpre-commit: %s\033[0m\n' "$1" >&2
+  printf 'Fix it, or bypass with: git commit --no-verify\n' >&2
+  exit 1
+}
+
+# Nothing staged means nothing to check (a bare `git commit --amend` of a message, say).
+git diff --cached --quiet && exit 0
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# Shell is a good third of this repo now (deploy/, packaging/, the release scripts) and
+# neither prettier nor oxlint looks at it. `bash -n` is a parse check and costs nothing;
+# shellcheck runs too when it happens to be installed.
+SHELL_FILES="$(printf '%s\n' "${STAGED}" | { grep -E '\.sh$|^\.githooks/' || true; })"
+if [[ -n "${SHELL_FILES}" ]]; then
+  echo "pre-commit: checking shell scripts"
+  while IFS= read -r file; do
+    [[ -f "${file}" ]] || continue
+    bash -n "${file}" || fail "${file} is not valid bash"
+    if command -v shellcheck >/dev/null 2>&1; then
+      shellcheck --severity=warning "${file}" || fail "shellcheck flagged ${file}"
+    fi
+  done <<<"${SHELL_FILES}"
+fi
+
+# The cue WAVs are generated rather than committed, and the audio tests need them. A fresh
+# clone has none, so the gate would fail for a reason that has nothing to do with the commit.
+if [[ ! -f src/audio/sounds/pop.wav ]]; then
+  echo "pre-commit: audio cues missing — running npm run sounds"
+  npm run sounds --silent || fail "could not generate the audio cues (is ffmpeg installed?)"
+fi
+
+echo "pre-commit: npm run check"
+npm run check --silent || fail "npm run check failed"
+
+printf '\033[32mpre-commit: ok\033[0m\n'

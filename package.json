@@ -8,6 +8,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "dev": "run-p dev:hw dev:wa",
     "dev:hw": "tsx scripts/dev-server.ts",
     "dev:wa": "tsx watch src/processes/whatsapp-bridge.ts",

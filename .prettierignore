@@ -4,8 +4,10 @@ coverage/
 data/
 package-lock.json
 
-# Authoritative spec — human-authored, don't let the formatter churn it
-PRODUCT.md
+# Prose is human-authored and hand-wrapped; the formatter's reflowing buries the actual
+# change in a diff. `npm run check` therefore does not check markdown at all — it started
+# with PRODUCT.md, the authoritative spec, and the same reasoning covers the rest.
+*.md
 src/audio/sounds/
 *.ogg
 *.wav

@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Kids WhatsApp Voice Messenger. Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry Pi Zero 2 W let a 2–5 year
 old send and receive WhatsApp voice notes. **Hold to send, tap to play.** No screen, ever.
 
-`PRODUCT.md` is the authoritative behavioral spec. This file records how we build it and the
+`docs/PRODUCT.md` is the authoritative behavioral spec (the `§` citations throughout the source
+point at its sections). This file records how we build it and the
 decisions the spec left open. `PENDING.md` is the backlog — known gaps, unverified claims and
 watch items. Check it before starting something and add to it rather than leaving a finding in
 conversation.

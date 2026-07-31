@@ -4,7 +4,7 @@ A screenless WhatsApp voice messenger for children aged 2–5. Three illuminated
 assigned to one family member. **Hold to send a voice note, tap to play what arrived.** No screen,
 no menus, no scrolling.
 
-Runs on a Raspberry Pi Zero 2 W as two Node.js daemons. See [`PRODUCT.md`](./PRODUCT.md) for the
+Runs on a Raspberry Pi Zero 2 W as two Node.js daemons. See [`PRODUCT.md`](./docs/PRODUCT.md) for the
 full behavioral specification, [`CLAUDE.md`](./CLAUDE.md) for architecture and conventions, and
 [`PENDING.md`](./PENDING.md) for known gaps and the backlog.
 

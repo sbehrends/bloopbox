@@ -1,0 +1,183 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      build_image:
+        description: 'Also build the flashable SD card image (adds ~15 min)'
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The same gate as every push. A tag that cannot pass it must not become a release.
+  # gate_only, because the packaging job below is this workflow's own.
+  check:
+    uses: ./.github/workflows/ci.yml
+    with:
+      gate_only: true
+
+  package:
+    name: package arm64 release
+    needs: check
+    runs-on: ubuntu-latest
+    outputs:
+      artifact: ${{ steps.build.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.18.1'
+
+      # GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping
+      # runs-on for an arm64 runner makes this several times faster and needs no other change.
+      - name: Set up QEMU for arm64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the release tarball
+        id: build
+        run: |
+          ./scripts/build-release.sh
+          echo "artifact=$(basename "$(ls release/*.tar.gz)")" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test it on bare Debian Trixie arm64
+        run: ./scripts/smoke-test-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-tarball
+          path: |
+            release/*.tar.gz
+            release/*.tar.gz.sha256
+          if-no-files-found: error
+
+  image:
+    name: build SD card image
+    needs: package
+    if: github.event_name == 'push' || inputs.build_image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-tarball
+          path: release
+
+      - name: Install image build tools
+        run: |
+          sudo apt-get update -qq
+          # qemu-user-static + binfmt-support let the x86 runner chroot into the arm64
+          # image; zerofree makes the compressed result much smaller.
+          sudo apt-get install -y --no-install-recommends \
+            qemu-user-static binfmt-support parted e2fsprogs dosfstools xz-utils zerofree
+
+      - name: Build the image
+        # /mnt is the runner's large scratch disk — the uncompressed image is several GB.
+        run: |
+          sudo ./scripts/build-sd-image.sh \
+            --work-dir /mnt/kids-messenger-image \
+            --output "release/$(basename "$(ls release/*.tar.gz)" .tar.gz | sed 's/-linux-arm64//')-sd.img.xz" \
+            ${WIFI_SSID:+--wifi-ssid "$WIFI_SSID"} \
+            ${WIFI_PSK:+--wifi-psk "$WIFI_PSK"} \
+            ${WIFI_COUNTRY:+--wifi-country "$WIFI_COUNTRY"} \
+            ${IMAGE_PASSWORD:+--password "$IMAGE_PASSWORD"}
+        env:
+          # All optional. Set them as repository secrets to bake your own network and ssh
+          # password into the image; otherwise the image ships with a fillable
+          # kids-messenger-wifi.txt and a generated password.
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PSK: ${{ secrets.WIFI_PSK }}
+          WIFI_COUNTRY: ${{ secrets.WIFI_COUNTRY }}
+          IMAGE_PASSWORD: ${{ secrets.IMAGE_PASSWORD }}
+
+      - name: Fix ownership of the outputs
+        run: sudo chown -R "$(id -u):$(id -g)" release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sd-card-image
+          path: |
+            release/*.img.xz
+            release/*.img.xz.sha256
+          if-no-files-found: error
+
+      # Kept out of the image artifact above and never attached to a release: it holds the
+      # generated ssh password.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sd-card-credentials
+          path: release/*.credentials.txt
+          if-no-files-found: warn
+
+  release:
+    name: attach to the GitHub release
+    needs: [package, image]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-tarball
+          path: release
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sd-card-image
+          path: release
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Explicit asset list: credentials.txt must never be published, and a glob would
+          # eventually pick it up.
+          assets=()
+          for pattern in 'release/*.tar.gz' 'release/*.tar.gz.sha256' \
+                         'release/*.img.xz' 'release/*.img.xz.sha256'; do
+            for file in $pattern; do
+              # An `if`, not `[[ ... ]] && ...`: an unmatched glob makes that a failing
+              # command and `set -e` would abort the whole step.
+              if [[ -f "$file" ]]; then assets+=("$file"); fi
+            done
+          done
+          [[ "${#assets[@]}" -gt 0 ]] || { echo "no release assets were produced" >&2; exit 1; }
+          printf 'attaching:\n'; printf '  %s\n' "${assets[@]}"
+
+          notes=$(cat <<'EOF'
+          Install on a Raspberry Pi Zero 2 W running Raspberry Pi OS Trixie (64-bit):
+
+          ```
+          tar xzf kids-messenger-*-linux-arm64.tar.gz
+          sudo ./kids-messenger-*-linux-arm64/install.sh
+          ```
+
+          Or flash the `-sd.img.xz` for a card that needs no install step. See
+          `docs/deployment.md`. The ssh password for a CI-built image is in the
+          `sd-card-credentials` build artifact, not here.
+          EOF
+          )
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --title "${GITHUB_REF_NAME}" --notes "${notes}"
+          fi

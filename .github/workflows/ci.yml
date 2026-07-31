@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # release.yml runs this same gate before it packages anything.
+  workflow_call:
+    inputs:
+      gate_only:
+        description: 'Skip the packaging job — the caller does its own'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (format, lint, typecheck, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # Matches packaging/versions.env, so what CI validates is what the device runs.
+          node-version: '24.18.1'
+          cache: npm
+
+      # The Opus pipeline, and `npm run sounds` synthesises the cue WAVs through it. Without
+      # this, generate-sounds fails and every audio test has nothing to play.
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - run: npm ci
+
+      # Not committed — src/audio/sounds/*.wav is generated. Must run before the gate.
+      - run: npm run sounds
+
+      - name: npm run doctor
+        run: npm run doctor
+
+      - name: npm run check
+        run: npm run check
+
+  package:
+    name: package arm64 release
+    # Proves on every push that the thing which actually ships still builds: the native
+    # opengpio addon, the bundled runtime, and the installer running on a bare Trixie.
+    #
+    # Skipped when release.yml calls this workflow for the gate, or the emulated arm64 build
+    # would run twice per release. `inputs` is null on a normal trigger, so this stays true.
+    if: ${{ !inputs.gate_only }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.18.1'
+
+      - name: Set up QEMU for arm64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the release tarball
+        run: ./scripts/build-release.sh
+
+      - name: Smoke test it on bare Debian Trixie arm64
+        run: ./scripts/smoke-test-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kids-messenger-release
+          path: |
+            release/*.tar.gz
+            release/*.tar.gz.sha256
+          retention-days: 14
+          if-no-files-found: error

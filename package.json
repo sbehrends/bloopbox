@@ -30,6 +30,9 @@
     "test:coverage": "vitest run --coverage",
     "doctor": "tsx scripts/doctor.ts",
     "sounds": "tsx scripts/generate-sounds.ts",
+    "release": "./scripts/build-release.sh",
+    "release:smoke": "./scripts/smoke-test-release.sh",
+    "release:image": "./scripts/build-sd-image.sh",
     "check": "run-s format:check lint typecheck test",
     "dev:hw:watch": "SIMULATOR_MODE=true tsx watch src/processes/hardware-server.ts"
   },

@@ -4,6 +4,9 @@ build/
 coverage/
 *.tsbuildinfo
 
+# Release artefacts and the SD card image build scratch (a cached Pi OS image lives here)
+release/
+
 # Persistent writable device volume (config.json, WhatsApp auth). Never committed.
 data/
 /data/

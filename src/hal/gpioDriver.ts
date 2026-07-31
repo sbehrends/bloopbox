@@ -93,8 +93,9 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     const { Edge, RaspberryPi_Zero2W } = await import('opengpio').catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
-        'opengpio unavailable — this driver needs a Pi with libgpiod installed ' +
-          `(apt install libgpiod2). Underlying error: ${detail}`,
+        'opengpio unavailable — this driver needs a Pi with libgpiod v2 installed ' +
+          `(apt install libgpiod3 on Trixie; the addon links -lgpiodcxx and will not ` +
+          `build or load against libgpiod 1.x). Underlying error: ${detail}`,
       );
     });
 

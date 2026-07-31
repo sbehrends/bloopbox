@@ -1,0 +1,123 @@
+# syntax=docker/dockerfile:1
+#
+# Builds the arm64 release bundle for the device. Driven by scripts/build-release.sh —
+# see packaging/versions.env for why the base image is Trixie and not Bookworm.
+#
+# Everything the Pi needs that npm can supply is resolved here, on the target
+# architecture, so the device never compiles anything and never needs a toolchain:
+#
+#   - node_modules built for linux/arm64, including the `opengpio` native addon and
+#     sharp's prebuilt libvips (a macOS `npm ci` tree carries darwin binaries and is
+#     useless on the Pi).
+#   - the `node` binary lifted straight out of this image, so the addon's
+#     NODE_MODULE_VERSION and the runtime that loads it cannot drift apart.
+#
+# The final stage is `scratch` holding only the tarball, so `--output type=local` writes
+# the artefact and nothing else.
+
+ARG NODE_IMAGE
+FROM ${NODE_IMAGE} AS build
+
+ARG BUILD_PACKAGES
+ARG APP_VERSION=0.0.0
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ARG NODE_IMAGE
+ARG TARGET_OS=unknown
+# Fixed timestamp for every file in the tarball, so the same input gives the same bytes.
+ARG SOURCE_DATE_EPOCH=0
+# Supplied by BuildKit from --platform; must be declared before it can be read.
+ARG TARGETARCH
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+# `opengpio` is compiled here (-lgpiodcxx against libgpiod-dev). Nothing below this line
+# is needed at runtime; the tarball carries no compiler.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update -qq \
+ && apt-get install -y --no-install-recommends ${BUILD_PACKAGES} \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Dependencies first: this layer is reused whenever only source changed.
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+
+# `opengpio` is an optionalDependency, so npm swallows a failed build and carries on. A
+# release without this file boots into a device with no buttons and no lights, which is
+# worth failing the build over.
+RUN test -f node_modules/opengpio/build/Release/opengpio.node \
+ || { echo "FATAL: opengpio did not compile — the GPIO HAL would be unavailable on the device." >&2; exit 1; }
+RUN node -e "require('opengpio'); console.log('opengpio loads')" \
+ && node -e "require('sharp'); console.log('sharp loads (baileys media)')"
+
+COPY . .
+
+# The cue WAVs are generated, not committed (scripts/generate-sounds.ts), and
+# build:assets refuses to continue without them — a silent miss here is a mute device.
+RUN npm run sounds \
+ && npm run build
+
+# Prove the emitted ESM actually loads and the packaged assets are where the runtime
+# looks for them, rather than discovering it on the Pi.
+RUN node --input-type=module -e " \
+      const { missingCues } = await import('/src/dist/audio/soundFiles.js'); \
+      const { DEFAULT_BUTTON_TIMINGS } = await import('/src/dist/config/schema.js'); \
+      const absent = missingCues(); \
+      if (absent.length) throw new Error('cues missing from dist: ' + absent.join(', ')); \
+      console.log('dist loads; timings', JSON.stringify(DEFAULT_BUTTON_TIMINGS)); \
+    " \
+ && test -f dist/public/admin/index.html \
+ && test -f dist/public/simulator/index.html \
+ && test -f dist/processes/hardware-server.js \
+ && test -f dist/processes/whatsapp-bridge.js
+
+# Drop devDependencies but keep the addon we just compiled. `npm ci --omit=dev` would
+# throw the build away and do it again.
+RUN npm prune --omit=dev \
+ && test -f node_modules/opengpio/build/Release/opengpio.node
+
+# ---------------------------------------------------------------------------------------
+# Assemble the tarball.
+#
+# Layout matters: hardware-server.js resolves the UI at ../../dist/public and
+# configManager.js resolves the shipped defaults at ../../config.default.json, both
+# relative to their own location in dist/. package.json must ship too — without
+# "type": "module" beside dist/, node refuses every import in it.
+# ---------------------------------------------------------------------------------------
+RUN name="kids-messenger-${APP_VERSION}-linux-${TARGETARCH:-arm64}" \
+ && root="/stage/${name}" \
+ && mkdir -p "${root}/node/bin" \
+ && cp -r dist "${root}/dist" \
+ && cp -r node_modules "${root}/node_modules" \
+ && cp package.json package-lock.json config.default.json "${root}/" \
+ && cp -r deploy/. "${root}/" \
+ && cp "$(command -v node)" "${root}/node/bin/node" \
+ && "${root}/node/bin/node" --version \
+ && printf '%s\n' \
+      "# Written by packaging/Dockerfile.release. Sourced by install.sh and doctor.sh," \
+      "# so every value stays quoted — TARGET_OS contains spaces and parentheses." \
+      "APP_VERSION='${APP_VERSION}'" \
+      "GIT_SHA='${GIT_SHA}'" \
+      "BUILD_DATE='${BUILD_DATE}'" \
+      "NODE_VERSION='$(node --version)'" \
+      "NODE_IMAGE='${NODE_IMAGE}'" \
+      "TARGET_ARCH='${TARGETARCH:-arm64}'" \
+      "TARGET_OS='${TARGET_OS}'" \
+      > "${root}/release.env" \
+ && chmod 0755 "${root}"/*.sh \
+ && mkdir -p /out \
+ && tar --create --gzip \
+      --file "/out/${name}.tar.gz" \
+      --directory /stage \
+      --owner=0 --group=0 --numeric-owner \
+      --sort=name --mtime="@${SOURCE_DATE_EPOCH}" \
+      "${name}" \
+ && ( cd /out && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256" ) \
+ && ls -lh /out
+
+FROM scratch AS artifact
+COPY --from=build /out/ /

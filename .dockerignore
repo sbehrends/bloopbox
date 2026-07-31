@@ -1,0 +1,31 @@
+# The build context is the repo root. Everything the release needs is either committed or
+# generated inside the container.
+#
+# node_modules is the important one: the host tree holds darwin binaries (sharp, rolldown,
+# oxlint), and `COPY . .` would drop them on top of the arm64 tree npm just built.
+node_modules/
+dist/
+coverage/
+release/
+build/
+*.tsbuildinfo
+
+# Device state and generated audio — rebuilt in the image by `npm run sounds`.
+data/
+src/audio/sounds/
+*.ogg
+*.wav
+
+.git/
+.github/
+.claude/
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Secrets must never enter a build context.
+auth_info*/
+.env
+.env.*
+!.env.example

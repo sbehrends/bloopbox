@@ -1,0 +1,67 @@
+[Unit]
+# Process 1 of 2 (src/processes/hardware-server.ts): GPIO, LEDs, audio, config, the admin
+# panel and the Socket.io server the WhatsApp bridge dials into.
+Description=Kids WhatsApp Voice Messenger — hardware and web server
+Documentation=file://@PREFIX@/deploy/doctor.sh
+After=network.target sound.target
+# Not Requires=: the buttons and the LED error patterns are exactly what should still work
+# when the network is down.
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+# gpio: /dev/gpiochip*, via the udev rules Raspberry Pi OS ships. audio: /dev/snd, for
+# arecord / aplay / amixer.
+SupplementaryGroups=gpio audio
+WorkingDirectory=@PREFIX@
+EnvironmentFile=@ETC_DIR@/environment
+
+# Saving Wi-Fi settings in the admin panel restarts this unit, so this is where a network
+# change is picked up. "+" runs it as root (the daemon itself is unprivileged); "-" means a
+# failure to apply never stops the device from starting.
+ExecStartPre=-+@PREFIX@/deploy/wifi-apply.sh
+
+ExecStart=@PREFIX@/node/bin/node dist/processes/hardware-server.js
+
+# Saving a setting makes the daemon exit 0 on purpose so the new config is read at boot —
+# there is deliberately no live-reload path (see CLAUDE.md). Restart=always is what turns
+# that clean exit back into a running device, and covers a crash identically.
+Restart=always
+RestartSec=1
+TimeoutStopSec=10
+
+# Recordings live in RAM and must not survive a power cut. /run is already a tmpfs, so
+# this needs no mount unit: systemd creates /run/kids-messenger owned by the service user.
+# Preserve=yes keeps it across the restart-on-config-save, and across the bridge stopping,
+# since both units declare the same directory.
+RuntimeDirectory=kids-messenger
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+RuntimeDirectorySize=64M
+
+# Button-to-LED latency is the one thing a two-year-old will notice.
+Nice=-5
+
+# 512 MB total on a Pi Zero 2 W, shared with the bridge. MemoryHigh throttles first;
+# MemoryMax is the backstop, and Restart=always recovers from an OOM kill.
+MemoryHigh=128M
+MemoryMax=192M
+Environment=NODE_OPTIONS=--max-old-space-size=128
+
+# Hardening. /data is the only writable path on disk; everything else the daemon needs is
+# the RuntimeDirectory above. If bring-up hits an unexplained EACCES, comment this block
+# out first — the GPIO and ALSA paths have never run on real hardware.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=@DATA_DIR@
+# Deliberately not PrivateTmp: both daemons hand each other file paths for audio.
+PrivateTmp=no
+
+[Install]
+WantedBy=multi-user.target

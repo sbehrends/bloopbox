@@ -1,0 +1,52 @@
+[Unit]
+# Process 2 of 2 (src/processes/whatsapp-bridge.ts): the Baileys socket, and nothing else.
+Description=Kids WhatsApp Voice Messenger — WhatsApp bridge
+Documentation=file://@PREFIX@/deploy/doctor.sh
+After=network-online.target kids-messenger-hardware.service
+Wants=network-online.target
+
+# Deliberately not BindsTo/PartOf the hardware unit. WhatsApp is an unofficial API on a
+# release candidate; a crash here must not take the buttons and lights with it. The bridge
+# reconnects to the hardware server on its own, which is the normal case anyway because
+# saving a setting restarts that process.
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@PREFIX@
+EnvironmentFile=@ETC_DIR@/environment
+ExecStart=@PREFIX@/node/bin/node dist/processes/whatsapp-bridge.js
+
+Restart=always
+# Longer than the hardware unit: a reconnect storm against WhatsApp is worse than being
+# down for five seconds.
+RestartSec=5
+TimeoutStopSec=10
+
+# Same tmpfs as the hardware server — inbound voice notes are downloaded here and the path
+# is handed over IPC, so the two must agree.
+RuntimeDirectory=kids-messenger
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+RuntimeDirectorySize=64M
+
+# Baileys plus sharp is the heavier of the two processes.
+MemoryHigh=192M
+MemoryMax=288M
+Environment=NODE_OPTIONS=--max-old-space-size=192
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# Writes the WhatsApp credentials under @DATA_DIR@/auth_info.
+ReadWritePaths=@DATA_DIR@
+PrivateTmp=no
+# No GPIO, no audio devices, ever.
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target

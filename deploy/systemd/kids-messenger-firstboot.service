@@ -1,0 +1,20 @@
+[Unit]
+# Applies Wi-Fi credentials left on the boot partition. Runs on every boot, not only the
+# first: rewriting /boot/firmware/kids-messenger-wifi.txt from any laptop is the only way
+# back onto the network when the device cannot reach the admin panel.
+Description=Kids WhatsApp Voice Messenger — apply Wi-Fi provisioning
+After=NetworkManager.service
+Wants=NetworkManager.service
+Before=kids-messenger-hardware.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@PREFIX@/deploy/wifi-apply.sh
+# The script already swallows its own failures; this makes sure a missing NetworkManager
+# cannot mark the boot degraded.
+SuccessExitStatus=0 1
+Environment=CONFIG_PATH=@DATA_DIR@/config.json
+
+[Install]
+WantedBy=multi-user.target

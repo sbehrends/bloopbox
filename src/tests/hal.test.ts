@@ -226,6 +226,28 @@ describe('simulator recording lifecycle', () => {
     await expect(pending).rejects.toThrow(/no audio/);
   });
 
+  it('keeps audio that arrived while the button was still held', async () => {
+    const { transport } = fakeTransport();
+    const hal = new SimulatorHal(transport, halOptions());
+    await hal.init();
+
+    const handle = await hal.startRecording(0);
+    /*
+     * A browser streams from the moment capture starts, a quarter of a second before
+     * anything is waiting for the result. Those chunks carry the container header and the
+     * first words; dropping them leaves a fragment no decoder will open, which reaches the
+     * child as "oops" on every single message.
+     */
+    hal.handleAudioChunk(handle.id, Buffer.from('early audio'));
+
+    const pending = hal.stopRecording(handle);
+    pending.catch(() => undefined);
+    await hal.handleAudioComplete(handle.id, 'audio/webm');
+
+    // These bytes are nonsense, so the transcode fails anyway — but not for want of audio.
+    await expect(pending).rejects.not.toThrow(/no audio/);
+  });
+
   it('tells the browser to discard a cancelled recording', async () => {
     const { transport, events } = fakeTransport();
     const hal = new SimulatorHal(transport, halOptions());

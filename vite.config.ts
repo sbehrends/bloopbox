@@ -24,6 +24,11 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/socket.io': { target: 'http://localhost:3000', ws: true },
+      /* Cues and recorded notes are served by the hardware server. Without these the
+         simulator plays nothing at all here: every `sim:play` 404s, the browser reports a
+         playback error, and a queue that cannot play never clears its light. */
+      '/sounds': 'http://localhost:3000',
+      '/audio': 'http://localhost:3000',
     },
   },
 });

@@ -173,8 +173,26 @@ window.addEventListener('keyup', (event) => {
  * ------------------------------------------------------------------ */
 
 let mediaStream: MediaStream | null = null;
-let recorder: MediaRecorder | null = null;
-let activeRecordingId: string | null = null;
+
+/**
+ * Captures in flight, keyed by recording id.
+ *
+ * A map rather than a single handle because captures overlap: the interpreter starts one on
+ * every press, so a second button going down while the first is still open — a tap over a
+ * held button, the silent-mode chord — leaves two live at once. A single `activeRecordingId`
+ * loses the older one, and an orphaned MediaRecorder never stops: it streams the room to the
+ * server for as long as the tab is open.
+ */
+type Capture = { readonly instance: MediaRecorder; cancelled: boolean };
+const captures = new Map<string, Capture>();
+
+/**
+ * Stops and cancels that arrived before their capture finished starting.
+ *
+ * `startCapture` awaits the microphone, so the server can answer a press we have not caught
+ * up with yet — a tap is discarded well inside that window.
+ */
+const preempted = new Map<string, 'stop' | 'cancel'>();
 
 /** Requested lazily: asking on page load would prompt before the user does anything. */
 async function getStream(): Promise<MediaStream> {
@@ -195,14 +213,19 @@ function pickMimeType(): string {
 async function startCapture(recordingId: string): Promise<void> {
   try {
     const stream = await getStream();
+
+    // The take may already be over — a tap is discarded inside the microphone's own latency.
+    const early = preempted.get(recordingId);
+    preempted.delete(recordingId);
+    if (early === 'cancel') return;
+
     const mimeType = pickMimeType();
     const instance = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-
-    activeRecordingId = recordingId;
-    recorder = instance;
+    const capture: Capture = { instance, cancelled: false };
+    captures.set(recordingId, capture);
 
     instance.addEventListener('dataavailable', (event) => {
-      if (event.data.size === 0) return;
+      if (event.data.size === 0 || capture.cancelled) return;
       void (async (): Promise<void> => {
         const chunk = await event.data.arrayBuffer();
         socket.emit('sim:audioChunk', { recordingId, chunk });
@@ -210,6 +233,8 @@ async function startCapture(recordingId: string): Promise<void> {
     });
 
     instance.addEventListener('stop', () => {
+      // A cancelled take is never delivered.
+      if (capture.cancelled) return;
       // Chunks are queued as microtasks above; let them flush before signalling completion.
       setTimeout(() => {
         socket.emit('sim:audioComplete', { recordingId, mimeType: instance.mimeType });
@@ -217,9 +242,10 @@ async function startCapture(recordingId: string): Promise<void> {
     });
 
     instance.start(250);
+    if (early === 'stop') stopCapture(recordingId);
   } catch (error: unknown) {
-    activeRecordingId = null;
-    recorder = null;
+    captures.delete(recordingId);
+    preempted.delete(recordingId);
     socket.emit('sim:audioError', {
       recordingId,
       reason: error instanceof Error ? error.message : 'microphone unavailable',
@@ -228,20 +254,24 @@ async function startCapture(recordingId: string): Promise<void> {
 }
 
 function stopCapture(recordingId: string): void {
-  if (activeRecordingId !== recordingId || !recorder) return;
-  if (recorder.state !== 'inactive') recorder.stop();
-  recorder = null;
-  activeRecordingId = null;
+  const capture = captures.get(recordingId);
+  if (!capture) {
+    preempted.set(recordingId, 'stop');
+    return;
+  }
+  captures.delete(recordingId);
+  if (capture.instance.state !== 'inactive') capture.instance.stop();
 }
 
 function cancelCapture(recordingId: string): void {
-  if (activeRecordingId !== recordingId || !recorder) return;
-  const instance = recorder;
-  recorder = null;
-  activeRecordingId = null;
-  // Detach the completion handler so a cancelled take is never delivered.
-  instance.onstop = null;
-  if (instance.state !== 'inactive') instance.stop();
+  const capture = captures.get(recordingId);
+  if (!capture) {
+    preempted.set(recordingId, 'cancel');
+    return;
+  }
+  captures.delete(recordingId);
+  capture.cancelled = true;
+  if (capture.instance.state !== 'inactive') capture.instance.stop();
 }
 
 /* ------------------------------------------------------------------ *

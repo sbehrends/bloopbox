@@ -37,7 +37,6 @@ export type SimulatorTransport = {
 
 type PendingCapture = {
   readonly handle: RecordingHandle;
-  readonly chunks: Buffer[];
   resolve: (result: RecordingResult) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
@@ -59,6 +58,15 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
   #ledStates: [boolean, boolean, boolean] = [false, false, false];
 
   readonly #captures = new Map<string, PendingCapture>();
+  /**
+   * Audio as it streams in, keyed by recording id.
+   *
+   * Separate from {@link #captures} because the browser starts sending the moment the button
+   * goes down, while the promise that consumes it is only created on `stopRecording` — a
+   * quarter of a second of speech, including MediaRecorder's header chunk, arrives before
+   * anything is waiting for it. Buffering from `startRecording` is what keeps it.
+   */
+  readonly #chunks = new Map<string, Buffer[]>();
   readonly #playbacks = new Map<string, PendingPlayback>();
 
   constructor(transport: SimulatorTransport, options: HalOptions) {
@@ -82,6 +90,7 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
       capture.reject(new Error('simulator disposed'));
     }
     this.#captures.clear();
+    this.#chunks.clear();
 
     for (const playback of this.#playbacks.values()) {
       clearTimeout(playback.timer);
@@ -119,6 +128,8 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
       startedAt: Date.now(),
     };
 
+    // Ready to receive before the browser can possibly answer.
+    this.#chunks.set(handle.id, []);
     this.#transport.sendStartCapture(handle.id, index);
     return Promise.resolve(handle);
   }
@@ -131,11 +142,12 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
     return new Promise<RecordingResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#captures.delete(handle.id);
+        this.#chunks.delete(handle.id);
         reject(new Error(`simulator: browser did not deliver audio for ${handle.id}`));
       }, SIMULATOR_TIMEOUT_MS);
       timer.unref();
 
-      this.#captures.set(handle.id, { handle, chunks: [], resolve, reject, timer });
+      this.#captures.set(handle.id, { handle, resolve, reject, timer });
       this.#transport.sendStopCapture(handle.id);
     });
   }
@@ -147,6 +159,7 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
       this.#captures.delete(handle.id);
       pending.reject(new Error('recording cancelled'));
     }
+    this.#chunks.delete(handle.id);
     this.#transport.sendCancelCapture(handle.id);
     await this.#deleteIfPresent(this.#rawPath(handle.id));
   }
@@ -193,9 +206,9 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
     this.emit('buttonUp', { index });
   }
 
-  /** Accumulates a chunk of captured audio. */
+  /** Accumulates a chunk of captured audio. Unknown ids are dropped, not buffered. */
   handleAudioChunk(recordingId: string, chunk: Buffer): void {
-    this.#captures.get(recordingId)?.chunks.push(chunk);
+    this.#chunks.get(recordingId)?.push(chunk);
   }
 
   /**
@@ -208,12 +221,14 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
 
     clearTimeout(pending.timer);
     this.#captures.delete(recordingId);
+    const chunks = this.#chunks.get(recordingId) ?? [];
+    this.#chunks.delete(recordingId);
 
     const rawPath = this.#rawPath(recordingId, extensionFor(mimeType));
     const outputPath = join(this.#recordingDirectory, `${recordingId}.ogg`);
 
     try {
-      const raw = Buffer.concat(pending.chunks);
+      const raw = Buffer.concat(chunks);
       if (raw.byteLength === 0) {
         throw new Error('browser delivered no audio');
       }
@@ -236,6 +251,7 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
 
   /** The browser could not capture (permission denied, no microphone). */
   handleAudioError(recordingId: string, reason: string): void {
+    this.#chunks.delete(recordingId);
     const pending = this.#captures.get(recordingId);
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -267,6 +283,8 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
 
   /** The last tab went away. */
   handleBrowserDisconnected(): void {
+    // Nothing will ever flush these, and the RAM disk is 512MB of the device's memory.
+    this.#chunks.clear();
     this.emit('unavailable', { reason: 'browser disconnected' });
   }
 

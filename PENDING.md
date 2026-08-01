@@ -371,6 +371,24 @@ Not work, but things that could bite.
   first. Pinned by `src/tests/adminAuth.test.ts` ("stands aside when configured is true but no
   hash was ever written"), which is the test to change if that ever exists.
 
+- **A send that fails is dropped, not retried — accepted, on purpose.** `#commitCapture` catches a
+  delivery failure, plays the "oops" cue and abandons the file for the purge. There is no outbound
+  queue and no retry on reconnect, so a message recorded while the box cannot reach WhatsApp is
+  gone. Verified on 2026-08-01 with the bridge stopped: the capture was made (`simrec-1.ogg`,
+  10.7 kB) and silently abandoned.
+
+  **Decision: leave it.** Inbound is worth recovering because the sender has already been told it
+  was delivered and nobody in the house knows it is missing. Outbound is different — the person
+  who recorded it is standing in front of the box, and a box that is restarting or has its error
+  lights on is something they can see. Persisting a child's audio across restarts to retry it later
+  also means writing their voice somewhere more durable than a RAM disk, which is a cost with no
+  matching benefit here.
+
+  Two smaller things this leaves, worth knowing rather than fixing: the failure is **not logged at
+  all**, so on a screenless device a lost message leaves no trace even under `bloopbox-debug on`;
+  and `Oops` is silenced in silent mode, so during quiet hours a failed send produces no sound and
+  no sent-flash — the LED error pattern is the only indication, and it was already on.
+
 - **The carry-on window leaves its own silence in the file.** `resumeGraceMs` keeps the microphone
   open after release, so every message carries up to that much trailing room noise, per gap and at
   the end — and that silence counts toward the `minRecordingMs` check, making it slightly laxer

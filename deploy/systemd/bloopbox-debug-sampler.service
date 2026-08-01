@@ -1,0 +1,32 @@
+[Unit]
+# Records what the device *is*, every 10s, as JSON Lines (deploy/debug-sampler.sh).
+#
+# Installed but never enabled: `bloopbox-debug on` starts it and sets a deadline, and the
+# sampler switches the whole mode off when that deadline passes. Deliberately not
+# WantedBy=multi-user.target — debug mode must not survive a reboot by accident and quietly
+# keep writing to the card for a month.
+Description=bloopbox — debug sampler
+Documentation=file://@PREFIX@/deploy/debug-mode.sh
+After=bloopbox-hardware.service
+
+[Service]
+Type=simple
+ExecStart=@PREFIX@/deploy/debug-sampler.sh
+
+# If it dies, it dies. A failed sampler is a lost timeline, not a broken device, and a
+# restart loop writing to the SD card is worse than no samples.
+Restart=no
+
+# Reads systemd's own accounting for the memory figures, which is the whole point of it.
+MemoryHigh=32M
+MemoryMax=48M
+
+NoNewPrivileges=yes
+ProtectHome=yes
+RestrictSUIDSGID=yes
+# Writes the trace, and `bloopbox-debug off` rewrites the environment file when the deadline
+# passes. Everything else stays read-only.
+ProtectSystem=strict
+ReadWritePaths=/var/log/bloopbox @ETC_DIR@
+PrivateTmp=no
+PrivateDevices=yes

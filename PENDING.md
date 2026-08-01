@@ -230,8 +230,10 @@ Not work, but things that could bite.
   the same way Bookworm's 1.6 does today, and the failure is a build error in CI rather than
   anything subtle.
 - **`MemoryMax` on the two units is a guess, not a measurement.** 128/192 MB for the hardware
-  server and 192/288 MB for the bridge, on a 512 MB device. Worth confirming against real
-  `systemd-cgtop` numbers once it runs on hardware, especially the bridge during a media download.
+  server and 192/288 MB for the bridge, on a 512 MB device. `bloopbox-debug on` samples
+  `MemoryCurrent` for every unit every 10s, so this is now a `jq` one-liner over
+  `/var/log/bloopbox/trace.jsonl` rather than a guess — see `docs/hardware-bringup.md`. Worth
+  doing especially for the bridge during a media download.
 - **Tests that depend on filesystem work must use `waitFor`, not a fixed `flush(n)`.**
   `deviceController.test.ts` runs on fake timers with `setImmediate` left real, because the
   commit path awaits `rm`. A fixed number of yields passed in isolation and failed

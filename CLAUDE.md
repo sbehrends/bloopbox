@@ -73,7 +73,7 @@ to `config.default.json` in RAM and every settings save fails. Set it when testi
 | `BRIDGE_TOKEN`                                   | `''`                  | Shared secret both processes must agree on        |
 | `HARDWARE_URL` / `PORT`                          | `localhost:3000`      | Where the bridge dials / where the server listens |
 | `FFMPEG_PATH`                                    | `ffmpeg`              |                                                   |
-| `LOG_LEVEL`                                      | `debug` in dev        | pino; `pino-pretty` in dev                        |
+| `LOG_LEVEL`                                      | `debug` in dev        | pino; `pino-pretty` in dev. On the device `bloopbox-debug on` flips it |
 | `NET_STATE_PATH`                                 | see `src/net/netState.ts` | What the root net agent publishes; absent in dev |
 | `ALSA_*`, `LED_ACTIVE_HIGH`, `BUTTON_ACTIVE_LOW` | see `gpioDriver.ts`   | Pi-only, unverified                               |
 

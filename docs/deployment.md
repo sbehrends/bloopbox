@@ -203,6 +203,15 @@ unless the device was never configured, in which case there is nothing to rejoin
 `sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user, and
 that `nmcli` and dnsmasq are installed.
 
+## When something is wrong
+
+`sudo bloopbox-debug on` makes the journal survive reboots (Pi OS keeps it in RAM by default,
+which loses exactly the logs that explain a restart), raises both daemons to debug level, and
+starts a 10s sampler writing `/var/log/bloopbox/trace.jsonl`. It expires after 24h on its own.
+Then `sudo bloopbox-diagnostics` bundles all of it — journals, trace, every `nmcli` view, the
+hardware inventory and a **redacted** config — into one tarball to send somewhere.
+[`hardware-bringup.md`](./hardware-bringup.md) has the details.
+
 ## The systemd units
 
 | Unit                 | Runs                                                       |

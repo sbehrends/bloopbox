@@ -275,13 +275,55 @@ things `PENDING.md` flags as unproven:
 
 ## The debugging kit
 
-Three commands, all installed on PATH by `install.sh`:
+Four commands, all installed on PATH by `install.sh`:
 
 | Command                      | What it is for                                                   |
 | ---------------------------- | ----------------------------------------------------------------- |
 | `sudo bloopbox-doctor`       | Is everything present and running? Run it at every gate.          |
+| `sudo bloopbox-debug on`     | Record enough to reconstruct what happened. Turn it on *first*.   |
 | `sudo bloopbox-diagnostics`  | Bundle the whole picture into one file to send somewhere.         |
 | `sudo bloopbox-hotspot-test` | Raise the hotspot on purpose, hold it, restore. Gate 3.           |
+
+### Debug mode — turn this on before gate 1
+
+```bash
+ssh bloop@bloopbox.local 'sudo bloopbox-debug on'          # 24h, then it turns itself off
+ssh bloop@bloopbox.local 'sudo bloopbox-debug on --hours 4'
+ssh bloop@bloopbox.local 'sudo bloopbox-debug status'
+```
+
+Three things, none of them on by default:
+
+1. **A persistent journal.** This is the important one. Raspberry Pi OS keeps the journal in
+   RAM, so **every log line is lost on reboot** — including the ones that explain the reboot.
+   During bring-up that is exactly backwards. Capped at 128 MB so it cannot fill the card.
+2. **`LOG_LEVEL=debug` on both daemons.** That turns on a full state timeline — every
+   observable change, so the LED behaviour can be replayed line by line afterwards — and the
+   **raw button edges, before debouncing**. A press the debouncer discards leaves no other
+   trace, and "I pressed it and nothing happened" is the report you will actually get.
+3. **A sampler**, every 10s, one JSON line per sample into `/var/log/bloopbox/trace.jsonl`:
+   memory for each unit, temperature, throttling, the network reading, the device's own
+   status, how many recordings are in the RAM disk.
+
+The sampler is what answers the questions the journal cannot. `MemoryHigh`/`MemoryMax` in the
+units are guesses (`PENDING.md` says so) — this measures them. Throttling in a sealed toy
+enclosure is a real risk on a Zero 2 W, and nothing else would tell you. And across a hotspot
+cycle it gives a minute-by-minute record of what the radio was doing.
+
+```bash
+# What the device thought it was doing, over time
+jq -r '[.ts, .status.state, .net.ssid // "-", .memHardware] | @tsv' /var/log/bloopbox/trace.jsonl
+
+# Peak memory of the hardware daemon, in MB — against MemoryMax=192M
+jq -s 'map(.memHardware // 0) | max / 1048576' /var/log/bloopbox/trace.jsonl
+```
+
+It expires on its own because it writes to the SD card, and `bloopbox-doctor` warns while it is
+on. Turning it **off keeps everything collected** — reading it is the point — and only
+`sudo bloopbox-debug off --purge` deletes the history and puts the journal back in RAM.
+
+Collect it before purging: `bloopbox-diagnostics` picks up the trace (last 4000 samples) and the
+previous boot's journal automatically.
 
 The diagnostics bundle is the one to reach for when something is wrong and the answer is not
 obvious. It collects the doctor's output, all four units' journals, every `nmcli` view, the

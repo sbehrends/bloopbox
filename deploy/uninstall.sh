@@ -36,7 +36,7 @@ step() { printf '\n==> %s\n' "$*"; }
 [[ "${EUID}" -eq 0 ]] || { echo "run this with sudo" >&2; exit 1; }
 
 step "stopping and disabling the services"
-for unit in bloopbox-hardware bloopbox-whatsapp bloopbox-firstboot bloopbox-net; do
+for unit in bloopbox-hardware bloopbox-whatsapp bloopbox-firstboot bloopbox-net bloopbox-debug-sampler; do
   systemctl disable --now "${unit}.service" 2>/dev/null || true
   rm -f "/etc/systemd/system/${unit}.service"
 done
@@ -46,7 +46,11 @@ rm -f /etc/systemd/system.conf.d/10-bloopbox-watchdog.conf
 step "removing the application"
 rm -rf "${PREFIX}" "${PREFIX}.new" "${PREFIX}.old"
 rm -f /usr/local/bin/bloopbox-doctor /usr/local/bin/bloopbox-diagnostics \
-      /usr/local/bin/bloopbox-hotspot-test
+      /usr/local/bin/bloopbox-hotspot-test /usr/local/bin/bloopbox-debug
+# Debug mode leaves state outside the app directory: a journald drop-in, the trace, and a
+# deadline file. None of it is wanted once bloopbox is gone.
+rm -f /etc/systemd/journald.conf.d/10-bloopbox-debug.conf
+rm -rf /var/log/bloopbox
 
 step "reverting the firmware configuration"
 for candidate in /boot/firmware/config.txt /boot/config.txt; do

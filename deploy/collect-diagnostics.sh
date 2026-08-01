@@ -66,7 +66,11 @@ capture 13-journal-whatsapp.txt journalctl -u bloopbox-whatsapp --since "${SINCE
 capture 14-journal-net.txt journalctl -u bloopbox-net --since "${SINCE}" --no-pager
 capture 15-journal-firstboot.txt journalctl -u bloopbox-firstboot --since "${SINCE}" --no-pager
 capture 16-journal-boot.txt journalctl -b --no-pager --priority=warning
-capture 17-api-status.txt curl -fsS --max-time 5 http://127.0.0.1:3000/api/status
+# Previous boots exist only if debug mode made the journal persistent. When it did, the boot
+# before the one you are looking at is usually the interesting one.
+capture 17-journal-previous-boot.txt journalctl -b -1 --no-pager --priority=warning
+capture 18-debug-status.txt bloopbox-debug status
+capture 19-api-status.txt curl -fsS --max-time 5 http://127.0.0.1:3000/api/status
 
 # ---- the network, which is what most of this is for ----
 capture 20-net-state.json cat /run/bloopbox-net/net-state.json
@@ -129,6 +133,17 @@ if [[ -r "${DATA_DIR}/config.json" && -x "${NODE}" ]]; then
 else
   echo "no readable ${DATA_DIR}/config.json (or no bundled node)" > "${OUT_DIR}/60-config-redacted.json"
 fi
+
+# ---- the debug-mode trace, if one was collected ----
+# Tail-limited: at 10s a sample this is ~8600 lines a day and the whole point of a bundle is
+# that it can be sent somewhere. The full file stays on the device if more is needed.
+DIAG_TRACE_LINES="${DIAG_TRACE_LINES:-4000}"
+for trace in /var/log/bloopbox/trace.jsonl /var/log/bloopbox/trace.jsonl.1; do
+  if [[ -r "${trace}" ]]; then
+    tail -n "${DIAG_TRACE_LINES}" "${trace}" > "${OUT_DIR}/70-$(basename "${trace}")"
+    say "included $(basename "${trace}") (last ${DIAG_TRACE_LINES} samples of $(wc -l < "${trace}" | tr -d ' '))"
+  fi
+done
 
 # The environment file carries BRIDGE_TOKEN. Keys only.
 if [[ -r "${ETC_DIR}/environment" ]]; then

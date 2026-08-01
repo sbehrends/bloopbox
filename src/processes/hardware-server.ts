@@ -406,6 +406,20 @@ async function main(): Promise<void> {
   // Push status to any tab whenever the device changes.
   controller.state.on('change', () => {
     transport.broadcastStatus(buildStatusPayload(routesContext));
+    // The whole observable state, on every change, at debug level. This is what
+    // `bloopbox-debug on` turns into a readable timeline of what the lights did and when —
+    // `src/core/` is I/O-free by design and will never log for itself, and on a device with
+    // no screen a reconstruction after the fact is the only way to see a timing bug.
+    log.debug(controller.state.snapshot(), 'state');
+  });
+
+  // The raw edges, before debouncing. A press the interpreter discards leaves no other
+  // trace, and "the button did nothing" is the report we will actually get.
+  hal.on('buttonDown', ({ index }) => {
+    log.debug({ index, edge: 'down' }, 'button');
+  });
+  hal.on('buttonUp', ({ index }) => {
+    log.debug({ index, edge: 'up' }, 'button');
   });
 
   // Show the boot chase, then let real status through.

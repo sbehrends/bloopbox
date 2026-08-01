@@ -286,6 +286,14 @@ else
   warn "network" "no running systemd — not checked"
 fi
 
+# Not a fault, but worth saying out loud: debug mode writes to the SD card, and a device left
+# in it for a month is a device wearing out for no reason. It expires on its own; this is the
+# reminder for the case where it did not.
+if [[ -f /etc/bloopbox/debug-until ]]; then
+  section "debug mode"
+  warn "debug mode is ON" "expires $(date -d "@$(cat /etc/bloopbox/debug-until)" 2>/dev/null || echo '?') — sudo bloopbox-debug off"
+fi
+
 printf '\n'
 if [[ "${FAILURES}" -gt 0 ]]; then
   printf '%s failed check(s), %s warning(s).\n' "${FAILURES}" "${WARNINGS}"

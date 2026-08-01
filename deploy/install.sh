@@ -200,10 +200,15 @@ mv "${STAGING}" "${PREFIX}"
 rm -rf "${PREFIX}.old"
 info "$(du -sh "${PREFIX}" | cut -f1) installed"
 
+# Debug mode's trace lives here. Created now, not by the sampler: its unit lists the path in
+# ReadWritePaths, and systemd refuses to start a unit whose ReadWritePaths does not exist.
+install -d -m 0755 /var/log/bloopbox
+
 ln -sf "${PREFIX}/deploy/doctor.sh" /usr/local/bin/bloopbox-doctor
 ln -sf "${PREFIX}/deploy/collect-diagnostics.sh" /usr/local/bin/bloopbox-diagnostics
 ln -sf "${PREFIX}/deploy/hotspot-test.sh" /usr/local/bin/bloopbox-hotspot-test
-info "bloopbox-doctor, bloopbox-diagnostics and bloopbox-hotspot-test are on PATH"
+ln -sf "${PREFIX}/deploy/debug-mode.sh" /usr/local/bin/bloopbox-debug
+info "bloopbox-doctor, -diagnostics, -hotspot-test and -debug are on PATH"
 
 step "writing ${ETC_DIR}/environment"
 install -d -m 0755 "${ETC_DIR}"
@@ -328,6 +333,7 @@ Installed.
   health check  sudo bloopbox-doctor
   diagnostics   sudo bloopbox-diagnostics        (a redacted bundle to send somewhere)
   hotspot test  sudo bloopbox-hotspot-test       (drops your ssh session on purpose)
+  debug mode    sudo bloopbox-debug on           (verbose logs that survive a reboot, 24h)
   logs          journalctl -u bloopbox-hardware -u bloopbox-whatsapp -u bloopbox-net -f
   config        ${DATA_DIR}/config.json   (saving from the admin panel restarts the daemon)
 

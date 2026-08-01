@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="bloopbox">
+  <title>bloopbox</title>
+  <!--
+    The Retro-Futurist Intercom mark, traced from the logo artwork (docs/BRAND.md).
+
+    Three concentric ring pairs read as one speech bubble with a tail: the big rings overlap
+    tightly so the silhouette closes up, while the three small "buttons" fan out evenly across
+    it. Left to right they are yellow, coral, teal — the same order as the ch-1/2/3 tokens and
+    the caps on the enclosure. (No double hyphens in here: XML forbids them inside a comment,
+    and a broken SVG fails as a silent broken-image icon on every page.)
+
+    Structure of every ring: a colour disc with a navy hairline, then a cream disc with a navy
+    hairline punched out of it. That leaves a colour band edged in navy with a cream interior,
+    and the cream is opaque, so a ring drawn later cleanly occludes the one behind it — which is
+    what makes the overlaps read. The interior is cream in both colour schemes: on cream it
+    disappears into the page and the mark is three rings, on navy the bubble lights up.
+
+    Also the favicon. Terse on purpose: Vite inlines this as a data URI where it fits.
+  -->
+  <g stroke="#1a2b48" stroke-width="1.1" stroke-linejoin="round">
+    <!-- Tail first, so the yellow ring's band closes over where it attaches. A hook, not a
+         petal: the left edge carries the ring's outer curve straight down to the point, and the
+         right edge runs back up to it in one diagonal. Solid, not hollow — the artwork's cream
+         notch is a few pixels wide at logo size and became a stray triangle at ours. -->
+    <path fill="#f7b733" d="M12.6 41 L13.2 52.5 Q13.4 54 14.8 53 L25.4 45.5 Q27.5 43.6 24 40.8 Z" />
+
+    <!-- Big rings. Coral last: it sits on top in the artwork. -->
+    <circle cx="20.8" cy="28.1" r="17" fill="#f7b733" />
+    <circle cx="20.8" cy="28.1" r="13.4" fill="#f7f4ef" />
+    <circle cx="43.4" cy="28.1" r="17" fill="#00a7e1" />
+    <circle cx="43.4" cy="28.1" r="13.4" fill="#f7f4ef" />
+    <circle cx="32" cy="28.1" r="17" fill="#ff6f61" />
+    <circle cx="32" cy="28.1" r="13.4" fill="#f7f4ef" />
+
+    <!-- The three buttons, above every ring so none of them is ever clipped. -->
+    <circle cx="17.2" cy="28.1" r="6.1" fill="#f7b733" />
+    <circle cx="17.2" cy="28.1" r="3.1" fill="#f7f4ef" />
+    <circle cx="32" cy="28.1" r="6.1" fill="#ff6f61" />
+    <circle cx="32" cy="28.1" r="3.1" fill="#f7f4ef" />
+    <circle cx="47.2" cy="28.1" r="6.1" fill="#00a7e1" />
+    <circle cx="47.2" cy="28.1" r="3.1" fill="#f7f4ef" />
+  </g>
+</svg>

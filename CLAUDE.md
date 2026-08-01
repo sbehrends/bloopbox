@@ -203,11 +203,12 @@ simulator transport), `src/audio/` (ffmpeg pipeline, cue playback, unread queue,
 `src/whatsapp/` (Baileys client + whitelist), `src/config/` (Zod schema + atomic ConfigManager),
 `src/net/` (reads what the root network agent publishes).
 
-### The three browser UIs
+### The four browser UIs
 
-`public/simulator/` (virtual device), `public/admin/` (parent settings) and `public/portal/`
-(first-boot setup over the hotspot) are plain TS + a shared `public/shared/base.css` — no
-framework. They are **outside `src/`** and compiled by Vite, not tsc:
+`public/simulator/` (virtual device), `public/admin/` (parent settings), `public/portal/`
+(first-boot setup over the hotspot) and `public/brand/` (the living brand kit) are plain TS on a
+shared design system in `public/shared/` — no framework. They are **outside `src/`** and compiled
+by Vite, not tsc:
 
 - Three tsconfigs. `tsconfig.json` typechecks `src/` + `scripts/` (node libs, no DOM);
   `tsconfig.web.json` typechecks `public/` with DOM libs and `types: []`, whitelisting only the
@@ -221,6 +222,37 @@ framework. They are **outside `src/`** and compiled by Vite, not tsc:
   where WebSocket is unreliable and storage is ephemeral, so it is plain `fetch` against
   `GET /api/wifi/scan` and `POST /api/wifi/join` and narrows every response by hand. Keep it
   that way: a dependency on Socket.io there is a page that hangs on a phone.
+
+### The design system in `public/shared/`
+
+`docs/BRAND.md` is the direction and the locked decisions; `/brand/` is the living kit, and it
+renders using the same two stylesheets the product pages do, so it cannot drift. Four layers:
+
+| File | Holds |
+| ---- | ----- |
+| `shared/tokens.css` | Palette, type scale, spacing, radii, motion. **The only file allowed to contain a colour literal.** |
+| `shared/base.css` | Every shared component as a CSS class — lockup, card, button, field, choice row, status, `.error-box`, kbd. |
+| `shared/dom.ts` | The DOM those classes expect: `card()`, `field()`, `checkboxField()`, `actionButton()`, `element()`. |
+| `shared/theme.ts` | `readToken()` + the channel token names, for code that cannot use a class. |
+| `shared/bloopbox-mark.svg` | The logo mark, for the `<img>` lockups. Unreadable below ~24px. |
+| `shared/bloopbox-favicon.svg` | A simpler drawing of the same mark, for `rel="icon"` only. |
+
+Rules that keep it honest:
+
+- **Nothing enters `base.css` unless two or more pages use it.** Page-local styling lives beside
+  its page (`admin/admin.css`, `simulator/simulator.css`, `portal/portal.css`, `brand/brand.css`).
+- **Reference the semantic token, not the brand one** — `var(--accent)`, not `var(--brand-teal)`.
+  Dark mode overrides only the semantic layer, which is why it is fifteen lines.
+- **The component layer is CSS, not JS, on purpose.** It is the only kind of component the portal
+  can share without taking a JS dependency a captive webview cannot be trusted with. `dom.ts` is
+  therefore optional: pure DOM, no fetch, no Socket.io, and the portal imports none of it. Verify
+  after touching the build: `dist/public/portal/index.html` must reference no shared JS chunk.
+- **The simulator's canvas reads tokens through `theme.ts`** rather than holding its own hexes —
+  `getComputedStyle` on `:root`, resolved once at load. A canvas cannot use a class, and this is
+  the only sanctioned way around that.
+- **`--ch-1/2/3` are yellow, coral, teal, in that order, because that is the order the buttons are
+  drawn in the logo mark.** Reordering them means redrawing both SVGs, or the box in the child's
+  room stops matching the picture of it. Nothing enforces this yet — see `PENDING.md`.
 
 ### Server surface
 

@@ -1,0 +1,430 @@
+/* Brand-kit-only styling: specimen furniture, swatch grids and the light-signature demo.
+
+   Nothing in here is allowed into shared/base.css unless a product page starts using it —
+   a design system that ships its own documentation to a Pi Zero is carrying dead weight. */
+
+.brand-shell {
+  max-width: 60rem;
+  margin: 0 auto;
+}
+
+.brand-intro {
+  max-width: 44rem;
+}
+
+section.band {
+  margin: var(--space-12) 0;
+}
+
+.band > h2 {
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--border);
+}
+
+.band-note {
+  max-width: 40rem;
+  margin: 0 0 var(--space-5);
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: var(--space-4);
+}
+
+.grid-wide {
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+}
+
+/* ---- colour ---- */
+
+.swatch {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.swatch-chip {
+  height: 5.5rem;
+  background: var(--chip);
+}
+
+.swatch-body {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.swatch-body h3 {
+  margin-bottom: 0;
+}
+
+/* Never uppercased: half of these are custom-property names, and those are case-sensitive. */
+.swatch-hex {
+  display: block;
+  margin: 0.1rem 0 var(--space-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.swatch-body p {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+/* ---- logo ---- */
+
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.tile {
+  /* Feeds base.css's .lockup-word, so the tile's ink applies without out-specifying the hero
+     lockup, which sets the same token closer to the wordmark. */
+  --lockup-ink: var(--tile-ink);
+
+  display: flex;
+  flex: 1 1 14rem;
+  align-items: center;
+  justify-content: center;
+  min-height: 9rem;
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--tile-bg);
+  color: var(--tile-ink);
+}
+
+.sizes {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-6);
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.sizes figure {
+  margin: 0;
+  text-align: center;
+}
+
+.sizes figcaption {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* ---- rules: do / don't ---- */
+
+.rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules li {
+  padding: var(--space-3) var(--space-4);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.rules li.dont {
+  border-left-color: var(--danger);
+}
+
+.rules strong {
+  display: block;
+  font-family: var(--font-display);
+}
+
+/* ---- type specimens ---- */
+
+.specimen {
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.specimen p {
+  margin: 0 0 var(--space-4);
+}
+
+.specimen p:last-child {
+  margin-bottom: 0;
+}
+
+.specimen .row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.specimen .row:last-child {
+  border-bottom: none;
+}
+
+.specimen .row code {
+  flex: none;
+  width: 12rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.display-voice {
+  font-family: var(--font-display);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display);
+}
+
+/* ---- component demos ---- */
+
+.demo {
+  padding: var(--space-5);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+
+.demo + .demo {
+  margin-top: var(--space-4);
+}
+
+.demo-label {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.demo-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ---- light signature ---- */
+
+/* The product's real voice is three lamps in a dark room, so the kit shows the patterns
+   rather than describing them. The authority is the LED ladder in CLAUDE.md and the
+   animator in src/core — these are a picture of it, not a second implementation. */
+
+.ladder {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rung {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.rung:last-child {
+  border-bottom: none;
+}
+
+.rung-text {
+  flex: 1 1 18rem;
+}
+
+.rung-text strong {
+  display: block;
+  font-family: var(--font-display);
+}
+
+.rung-text span {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.leds {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  /* A dark plate: these read as lamps, not as swatches. */
+  background: var(--device-edge);
+}
+
+.led {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--led);
+  opacity: 0.16;
+}
+
+.leds .led:nth-child(1) {
+  --led: var(--ch-1);
+}
+
+.leds .led:nth-child(2) {
+  --led: var(--ch-2);
+}
+
+.leds .led:nth-child(3) {
+  --led: var(--ch-3);
+}
+
+.led.solid {
+  opacity: 1;
+  box-shadow: 0 0 12px var(--led);
+}
+
+@keyframes led-on-off {
+  0%,
+  49.9% {
+    opacity: 1;
+    box-shadow: 0 0 12px var(--led);
+  }
+  50%,
+  100% {
+    opacity: 0.16;
+    box-shadow: none;
+  }
+}
+
+/* Boot chase: each lamp takes a third of the cycle, in order. */
+@keyframes led-chase {
+  0%,
+  30% {
+    opacity: 1;
+    box-shadow: 0 0 12px var(--led);
+  }
+  30.1%,
+  100% {
+    opacity: 0.16;
+    box-shadow: none;
+  }
+}
+
+/* Hotspot: 150ms on / 150ms off / 150ms on, then dark to 2s. */
+@keyframes led-double-pulse {
+  0%,
+  7.5% {
+    opacity: 1;
+    box-shadow: 0 0 12px var(--led);
+  }
+  7.6%,
+  15% {
+    opacity: 0.16;
+    box-shadow: none;
+  }
+  15.1%,
+  22.5% {
+    opacity: 1;
+    box-shadow: 0 0 12px var(--led);
+  }
+  22.6%,
+  100% {
+    opacity: 0.16;
+    box-shadow: none;
+  }
+}
+
+/* Silent mode: a 0.1s pulse every 4s. A rhythm, not another rate — see CLAUDE.md. */
+@keyframes led-heartbeat {
+  0%,
+  2.5% {
+    opacity: 1;
+    box-shadow: 0 0 12px var(--led);
+  }
+  2.6%,
+  100% {
+    opacity: 0.16;
+    box-shadow: none;
+  }
+}
+
+.p-boot .led {
+  animation: led-chase 1.2s infinite;
+}
+
+.p-boot .led:nth-child(2) {
+  animation-delay: 0.4s;
+}
+
+.p-boot .led:nth-child(3) {
+  animation-delay: 0.8s;
+}
+
+.p-connecting .led {
+  animation: led-on-off 1s infinite;
+}
+
+.p-hotspot .led {
+  animation: led-double-pulse 2s infinite;
+}
+
+.p-unread .led:nth-child(1) {
+  animation: led-on-off 1.6s infinite;
+}
+
+.p-silent .led:nth-child(1),
+.p-silent .led:nth-child(3) {
+  animation: led-heartbeat 4s infinite;
+}
+
+/* A brand kit that flashes at someone who asked it not to has failed its own voice test. */
+@media (prefers-reduced-motion: reduce) {
+  .led {
+    animation: none !important;
+    opacity: 1;
+    box-shadow: 0 0 12px var(--led);
+  }
+}
+
+/* ---- token table ---- */
+
+.tokens {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.tokens th,
+.tokens td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tokens th {
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.tokens code {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}

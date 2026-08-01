@@ -1,0 +1,31 @@
+/* Simulator-only styling. The device itself is drawn on the canvas — see main.ts, which reads
+   the same --device-* and --ch-* tokens this file does, so the enclosure cannot drift from the
+   brand while the two live in different languages. */
+
+.device-canvas {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+  /* Matches the panel the canvas paints, so a fractional-pixel edge does not show a seam. */
+  background: var(--device-body);
+  box-shadow: var(--shadow);
+  /* A physical control panel: nothing here is text to select or a page to pan. */
+  touch-action: none;
+  user-select: none;
+}
+
+.injector {
+  margin-top: var(--space-8);
+}
+
+.injector-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.injector-buttons button {
+  font-size: var(--text-sm);
+}

@@ -14,6 +14,10 @@ export default defineConfig({
         admin: resolve(root, 'admin/index.html'),
         simulator: resolve(root, 'simulator/index.html'),
         portal: resolve(root, 'portal/index.html'),
+        /* The brand kit ships with the device on purpose: it is static HTML with no JS, it
+           loads the same two stylesheets the other three pages do, and a style guide that
+           is not built alongside what it documents is a style guide that rots. */
+        brand: resolve(root, 'brand/index.html'),
       },
     },
   },

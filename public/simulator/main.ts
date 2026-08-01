@@ -1,4 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
+import { element } from '../shared/dom.ts';
+import { CHANNEL_OFF_TOKENS, CHANNEL_TOKENS, readToken } from '../shared/theme.ts';
 
 /**
  * Virtual device front-end (PRODUCT.md §5).
@@ -7,6 +9,10 @@ import { io, type Socket } from 'socket.io-client';
  * renders whatever LED states the server sends, and captures/plays audio. It makes no
  * decisions about LED patterns or timing — those live in src/core on the server, so what
  * you see here is exactly what the GPIO driver would receive.
+ *
+ * The enclosure it paints is the Retro-Futurist Intercom from docs/BRAND.md, drawn from the
+ * --device-* and --ch-* tokens in shared/tokens.css. A canvas cannot use a class, so this is
+ * the one place the design system has to be read rather than applied.
  */
 
 type ButtonIndex = 0 | 1 | 2;
@@ -17,7 +23,41 @@ const BUTTON_INDICES: readonly ButtonIndex[] = [0, 1, 2];
 const BUTTON_LABELS = ['Button 1 · Left', 'Button 2 · Centre', 'Button 3 · Right'] as const;
 
 /** Matches the physical layout: 60mm arcade buttons in a row. */
-const BUTTON_RADIUS = 74;
+const BUTTON_RADIUS = 68;
+
+const TAU = Math.PI * 2;
+/** The moulded shell inside the canvas, and the darker top panel carrying the grille. */
+const PANEL_INSET = 8;
+const PANEL_TOP = 74;
+const PANEL_RADIUS = 30;
+
+/**
+ * The enclosure's colours, resolved once at load.
+ *
+ * Deliberately not re-read on a theme change: a physical object in a child's room does not
+ * repaint itself because the parent switched their laptop to dark mode, and tokens.css keeps
+ * these outside its dark-mode block for the same reason.
+ */
+type Triple = readonly [string, string, string];
+
+/** A fixed triple, so a lens lookup by ButtonIndex is a string and never `string | undefined`. */
+function readTriple(tokens: Triple, fallbacks: Triple): Triple {
+  return [
+    readToken(tokens[0], fallbacks[0]),
+    readToken(tokens[1], fallbacks[1]),
+    readToken(tokens[2], fallbacks[2]),
+  ];
+}
+
+const device = {
+  body: readToken('--device-body', '#e6dac3'),
+  bodyTop: readToken('--device-body-top', '#d8c6a5'),
+  edge: readToken('--device-edge', '#12203a'),
+  ink: readToken('--device-ink', '#1a2b48'),
+  display: readToken('--font-display', 'system-ui, sans-serif'),
+  lens: readTriple(CHANNEL_TOKENS, ['#f7b733', '#ff6f61', '#00a7e1']),
+  lensOff: readTriple(CHANNEL_OFF_TOKENS, ['#c4b58c', '#c39b93', '#8fa9b4']),
+} as const;
 
 const socket: Socket = io({ transports: ['websocket', 'polling'] });
 
@@ -36,7 +76,123 @@ const injectorRoot = document.querySelector<HTMLDivElement>('#injector');
 
 function buttonCentre(index: number, width: number, height: number): { x: number; y: number } {
   const gap = width / (BUTTON_COUNT + 1);
-  return { x: gap * (index + 1), y: height / 2 - 10 };
+  // Centred in what is left of the panel below the grille, not in the canvas.
+  return { x: gap * (index + 1), y: PANEL_TOP + (height - PANEL_TOP - PANEL_INSET) / 2 - 12 };
+}
+
+/** The shell: rounded body, darker top panel, hard navy edge. */
+function drawShell(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  const inner = new Path2D();
+  inner.roundRect(
+    PANEL_INSET,
+    PANEL_INSET,
+    width - PANEL_INSET * 2,
+    height - PANEL_INSET * 2,
+    PANEL_RADIUS,
+  );
+
+  // Clipped rather than filled per shape, so the top strip picks up the shell's own corners.
+  ctx.save();
+  ctx.clip(inner);
+  ctx.fillStyle = device.body;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = device.bodyTop;
+  ctx.fillRect(0, 0, width, PANEL_TOP);
+  ctx.restore();
+
+  ctx.strokeStyle = device.edge;
+  ctx.lineWidth = 3;
+  ctx.stroke(inner);
+  ctx.beginPath();
+  ctx.moveTo(PANEL_INSET, PANEL_TOP);
+  ctx.lineTo(width - PANEL_INSET, PANEL_TOP);
+  ctx.stroke();
+}
+
+/** Speaker holes on the left of the top panel, wordmark on the right. */
+function drawTopPanel(ctx: CanvasRenderingContext2D, width: number): void {
+  ctx.save();
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = device.edge;
+  for (let row = 0; row < 2; row++) {
+    for (let hole = 0; hole < 12; hole++) {
+      ctx.beginPath();
+      ctx.arc(46 + hole * 18, 28 + row * 18, 3.5, 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  ctx.fillStyle = device.ink;
+  ctx.font = `800 26px ${device.display}`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('bloopbox', width - 34, PANEL_TOP / 2);
+}
+
+/** One arcade button: navy bezel, colour-coded lens, glossy cap. */
+function drawButton(ctx: CanvasRenderingContext2D, index: ButtonIndex): void {
+  if (!canvas) return;
+  const { x, y } = buttonCentre(index, canvas.width, canvas.height);
+  const lit = ledStates[index] ?? false;
+  const held = heldButtons.has(index);
+  // A pressed button sits deeper in its bezel, which is the whole feel of the thing.
+  const radius = held ? BUTTON_RADIUS - 5 : BUTTON_RADIUS;
+
+  ctx.beginPath();
+  ctx.arc(x, y, BUTTON_RADIUS + 10, 0, TAU);
+  ctx.fillStyle = device.edge;
+  ctx.fill();
+
+  const lens = lit ? device.lens[index] : device.lensOff[index];
+
+  if (lit) {
+    // A soft glow makes fast patterns (the 0.1s silent-mode pulse) legible on screen.
+    ctx.save();
+    ctx.shadowColor = lens;
+    ctx.shadowBlur = 38;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, TAU);
+    ctx.fillStyle = lens;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, TAU);
+  ctx.fillStyle = lens;
+  ctx.fill();
+
+  // Translucent moulded cap: a highlight up and left of centre.
+  const gloss = ctx.createRadialGradient(
+    x - radius * 0.35,
+    y - radius * 0.4,
+    radius * 0.05,
+    x,
+    y,
+    radius,
+  );
+  gloss.addColorStop(0, `rgba(255, 255, 255, ${held ? '0.18' : '0.42'})`);
+  gloss.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = gloss;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, TAU);
+  ctx.fill();
+
+  ctx.strokeStyle = device.edge;
+  ctx.lineWidth = held ? 5 : 3;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, TAU);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.globalAlpha = 0.72;
+  ctx.fillStyle = device.ink;
+  ctx.font = `600 15px ${device.display}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(BUTTON_LABELS[index] ?? '', x, y + BUTTON_RADIUS + 40);
+  ctx.restore();
 }
 
 function draw(): void {
@@ -45,46 +201,9 @@ function draw(): void {
   if (!ctx) return;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  for (const index of BUTTON_INDICES) {
-    const { x, y } = buttonCentre(index, canvas.width, canvas.height);
-    const lit = ledStates[index] ?? false;
-    const held = heldButtons.has(index);
-    const radius = held ? BUTTON_RADIUS - 4 : BUTTON_RADIUS;
-
-    // Bezel.
-    ctx.beginPath();
-    ctx.arc(x, y, radius + 8, 0, Math.PI * 2);
-    ctx.fillStyle = '#0d0d14';
-    ctx.fill();
-
-    // Lens. Lit is the LED being on, which is the whole point of the simulator.
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = lit ? '#ffd54a' : '#2a2a34';
-    ctx.fill();
-
-    if (lit) {
-      // A soft glow makes fast patterns (0.1s flashes) legible on screen.
-      ctx.shadowColor = '#ffd54a';
-      ctx.shadowBlur = 34;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    }
-
-    ctx.strokeStyle = held ? '#ffffff' : '#43434f';
-    ctx.lineWidth = held ? 4 : 3;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.fillStyle = '#8b8b99';
-    ctx.font = '600 14px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(BUTTON_LABELS[index] ?? '', x, y + radius + 32);
-  }
+  drawShell(ctx, canvas.width, canvas.height);
+  drawTopPanel(ctx, canvas.width);
+  for (const index of BUTTON_INDICES) drawButton(ctx, index);
 }
 
 /* ------------------------------------------------------------------ *
@@ -430,9 +549,8 @@ const INJECTORS: readonly { label: string; run: () => void }[] = [
 
 if (injectorRoot) {
   for (const injector of INJECTORS) {
-    const button = document.createElement('button');
+    const button = element('button', undefined, injector.label);
     button.type = 'button';
-    button.textContent = injector.label;
     button.addEventListener('click', injector.run);
     injectorRoot.append(button);
   }

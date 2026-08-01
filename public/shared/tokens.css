@@ -1,0 +1,140 @@
+/* bloopbox design tokens — the brand made machine-readable.
+   `docs/BRAND.md` is the prose; this file is the only place a colour literal lives.
+
+   Three layers, in order:
+     1. brand      — the five palette colours, exactly as the brand sheet states them.
+     2. semantic   — what a colour is *for* (`--bg`, `--danger`). Rules reference these only.
+     3. channel    — per-button identity, because the buttons are colour-coded (§Overview).
+
+   Everything a page can style is here, so the brand kit at /brand/ can show the real thing
+   rather than a picture of it. */
+
+:root {
+  /* ---- 1. brand palette ---- */
+  --brand-teal: #00a7e1; /* main accent — energetic, modern connection */
+  --brand-yellow: #f7b733; /* secondary — joy, warmth, classic arcade cue */
+  --brand-coral: #ff6f61; /* tertiary — fun, approachability */
+  --brand-navy: #1a2b48; /* primary text — trusted, stable */
+  --brand-cream: #f7f4ef; /* base — soft on the eyes, never stark white */
+
+  /* ---- 2. semantic, light (default) ---- */
+  --bg: var(--brand-cream);
+  --surface: #fffdfa;
+  --surface-sunken: #f0ebe1;
+  --border: #e0d9cb;
+  --border-strong: #c9bfab;
+  --text: var(--brand-navy);
+  --muted: #5b6b84;
+  --accent: var(--brand-teal);
+  /* Teal is too light to carry text on cream (2.5:1). This is the same hue, darkened until
+     it passes AA — use it for links and any accent-coloured wording. */
+  --accent-ink: #0a6e8f;
+  --accent-soft: #dff1fa;
+  /* The shadow under a pressed-in control — the tactile part of the brand, in CSS. */
+  --accent-deep: #0284b4;
+  /* Navy on teal is 4.6:1; white on teal is 2.9:1 and fails. Hence navy. */
+  --on-accent: var(--brand-navy);
+  --warm: var(--brand-yellow);
+  --pop: var(--brand-coral);
+  --danger: #b03a31;
+  --danger-soft: #fbe9e6;
+  --focus: var(--brand-teal);
+  --shadow: 0 1px 2px rgb(26 43 72 / 6%), 0 10px 24px -14px rgb(26 43 72 / 22%);
+
+  /* ---- 3. button channels ---- */
+  /* Button 1 left, 2 centre, 3 right — the order the three buttons run in the logo mark, so the
+     simulator, the brand kit and the enclosure agree. Taken from the artwork, which reads
+     yellow, coral, teal from left to right; do not reorder these without redrawing the mark. */
+  --ch-1: var(--brand-yellow);
+  --ch-2: var(--brand-coral);
+  --ch-3: var(--brand-teal);
+
+  /* ---- the physical device, as drawn by the simulator ---- */
+  /* Deliberately outside the dark-mode block below: an object in a child's room does not
+     change colour because the parent's laptop is in dark mode. */
+  --device-body: #e6dac3;
+  --device-body-top: #d8c6a5;
+  --device-edge: #12203a;
+  --device-ink: #1a2b48;
+  /* An unlit lens: the channel colour dulled toward warm grey, the way a real translucent
+     cap looks with the LED off. Same order as the channels above. */
+  --ch-1-off: #c4b58c;
+  --ch-2-off: #c39b93;
+  --ch-3-off: #8fa9b4;
+
+  /* ---- type ---- */
+  /* The brand asks for a chunky rounded geometric sans. `ui-rounded` is SF Pro Rounded on
+     Apple platforms — exactly that, for zero bytes — and the named fallbacks cover anyone
+     who happens to have them. No webfont: this is served off a Pi Zero over its own hotspot,
+     and a blocked font swap on the setup page is a page a parent stares at. See BRAND.md. */
+  --font-display:
+    ui-rounded, 'SF Pro Rounded', 'Nunito', 'Quicksand', 'Varela Round',
+    'Hiragino Maru Gothic ProN', system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', monospace;
+
+  --text-xs: 0.78rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-display: 2.25rem;
+
+  --weight-body: 400;
+  --weight-medium: 600;
+  --weight-display: 800;
+  /* Chunky letterforms sit tighter than body text does, and the wordmark is tighter still —
+     the artwork's letters very nearly touch. */
+  --tracking-display: -0.02em;
+  --tracking-wordmark: -0.035em;
+  --tracking-label: 0.06em;
+
+  /* ---- space, shape, motion ---- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  /* One parent, standing up, holding a child. Nothing tappable goes below this. */
+  --tap: 3rem;
+
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+/* Dark: the same brand after dark, not a second brand. Only the semantic layer moves —
+   the accents keep their exact hex, because all three are bright enough on deep navy. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131a2c;
+    --surface: #1c2438;
+    --surface-sunken: #101627;
+    --border: #2e3852;
+    --border-strong: #45516f;
+    --text: #f1eee7;
+    --muted: #99a6c0;
+    --accent-ink: #4fc8f0;
+    --accent-soft: #1a3145;
+    --danger: #ff9b92;
+    --danger-soft: #38222a;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 10px 24px -14px rgb(0 0 0 / 60%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+  }
+}

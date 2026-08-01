@@ -4,10 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Set up your bloopbox</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23ffd54a'/%3E%3C/svg%3E"
-    />
+    <meta name="theme-color" content="#f7f4ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#131a2c" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="../shared/bloopbox-favicon.svg" />
     <link rel="stylesheet" href="../shared/base.css" />
     <link rel="stylesheet" href="./portal.css" />
   </head>
@@ -19,14 +18,25 @@
       webview, which is a stripped browser with no persistent storage, unreliable WebSocket
       support and a habit of closing itself the moment the network changes. Everything here is
       one page, plain fetch, and no Socket.io.
+
+      It wears the brand through shared/base.css and nothing else — no shared JS, by design.
     -->
-    <main class="portal-shell">
+    <main class="shell shell-narrow">
       <header>
-        <h1>bloopbox</h1>
+        <h1 class="lockup">
+          <img
+            class="lockup-mark"
+            src="../shared/bloopbox-mark.svg"
+            alt=""
+            width="40"
+            height="40"
+          />
+          <span class="lockup-word">bloopbox</span>
+        </h1>
         <p class="lede">Let's get this on your Wi-Fi.</p>
       </header>
 
-      <section id="step-network" class="step">
+      <section id="step-network" class="card step">
         <h2>1 · Your Wi-Fi</h2>
         <div id="networks" class="networks" role="radiogroup" aria-label="Networks in range">
           <p class="muted">Looking for networks…</p>
@@ -46,7 +56,7 @@
         </label>
       </section>
 
-      <section id="step-passphrase" class="step" hidden>
+      <section id="step-passphrase" class="card step" hidden>
         <h2>2 · Wi-Fi password</h2>
         <label class="field">
           <span id="passphrase-label">Password for your network</span>
@@ -58,7 +68,7 @@
         </label>
       </section>
 
-      <section id="step-admin" class="step" hidden>
+      <section id="step-admin" class="card step" hidden>
         <h2 id="admin-heading">3 · A password for the settings page</h2>
         <p class="muted" id="admin-hint">
           Only you should be able to change who the buttons call. At least 6 characters — write it
@@ -70,11 +80,11 @@
         </label>
       </section>
 
-      <p id="error" class="error" hidden></p>
+      <p id="error" class="error-box" hidden></p>
 
-      <button type="button" id="submit" class="primary" disabled>Connect</button>
+      <button type="button" id="submit" class="primary btn-block" disabled>Connect</button>
 
-      <section id="done" class="step done" hidden>
+      <section id="done" class="card step done" hidden>
         <h2>Nearly there</h2>
         <p>
           The box is joining <strong id="done-ssid"></strong> now. It will leave this hotspot, so
@@ -86,8 +96,10 @@
           <li>Open <strong id="done-address">http://bloopbox.local/admin/</strong> to finish.</li>
         </ol>
         <p class="muted">
-          If the lights go back to double-pulsing, the box could not join and the setup hotspot is
-          back. Rejoin it and try again — usually a mistyped password.
+          If the lights go back to double-pulsing —
+          <span class="pulse-demo" aria-hidden="true"><span></span><span></span><span></span></span>
+          — the box could not join and the setup hotspot is back. Rejoin it and try again — usually
+          a mistyped password.
         </p>
       </section>
     </main>

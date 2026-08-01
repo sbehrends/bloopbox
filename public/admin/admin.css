@@ -1,0 +1,46 @@
+/* Admin-panel-only styling: the per-button contact rows and the WhatsApp pairing block.
+   Everything else the panel renders comes from shared/base.css. */
+
+.contact {
+  padding: var(--space-4) 0 var(--space-4) var(--space-4);
+  margin-bottom: var(--space-4);
+  /* Each row wears its button's colour, so "Button 2" is recognisable before it is read.
+     The channel is set per row by admin/main.ts. */
+  border-left: 4px solid var(--channel, var(--border-strong));
+  border-bottom: 1px solid var(--border);
+}
+
+.contact:last-of-type {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.contact h3 {
+  color: var(--text);
+}
+
+.pairing h3 {
+  margin: var(--space-5) 0 var(--space-1);
+  font-size: var(--text-base);
+}
+
+/* White plate behind the code: scanners need the quiet zone and true contrast, whatever the
+   page's theme happens to be. */
+.qr-image {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  margin: var(--space-2) 0;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+}
+
+.pair-code {
+  margin: var(--space-2) 0 0;
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  letter-spacing: 0.16em;
+}

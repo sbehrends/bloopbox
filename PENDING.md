@@ -132,9 +132,53 @@ already had to be read out of `dist/audio/soundFiles.js` at runtime to stop it d
 Worth considering: compile the checks into `dist/` (a `dist/doctor.js` the bash wrapper calls) so
 there is one implementation and the device runs the same code CI does.
 
+### The display face is a system stack, not the brand's own letterform
+
+`docs/BRAND.md` asks for a custom ultra-bold rounded geometric sans. `--font-display` starts with
+`ui-rounded`, which is SF Pro Rounded on Apple platforms — that letterform for zero bytes — and
+falls back to Nunito / Quicksand / Varela Round / `system-ui`. **On a plain Android phone or a
+Linux desktop, the brand's most distinctive typographic asset is absent** and the headings render
+in the system UI face.
+
+Deliberate for now: the portal is served from a Pi over its own hotspot, and a font that arrives
+late is a page a parent stares at. Revisit only with a subsetted self-hosted WOFF2 (Latin, the two
+weights actually used), `font-display: swap`, and a before/after measurement of the portal's first
+paint on a real phone over the hotspot — not on localhost, where the cost is invisible.
+
+### The mark is drawn twice, and nothing enforces that they agree
+
+`public/shared/bloopbox-mark.svg` (three concentric ring pairs, for 24px and up) and
+`public/shared/bloopbox-favicon.svg` (three solid discs, for browser tabs) are separate hand-drawn
+files sharing no code. They have to agree on five colours and on the left-to-right button order —
+**yellow, coral, teal** — and today the only thing keeping them in step is the comment in each and
+`/brand/`, which renders both side by side.
+
+Cheap guard if this ever drifts: a test that parses both SVGs and asserts the `fill` values appear
+in the same order, and that both match `--ch-1/2/3` in `tokens.css`. Three assertions, no browser.
+Not written yet because `src/tests` has no fixture that reads `public/`.
+
+### The brand kit ships to the device and is not behind the admin gate
+
+`/brand/` is a Vite entry, so it lands in `dist/public/` and is served by the hardware server like
+any other page — about 7 KB gzipped of static HTML, no JS. It contains no secrets, so being
+ungated is not a leak, but it is a page a parent could stumble into. Options if that ever matters:
+drop the entry from `vite.config.ts` for release builds, or move it behind `requireAdmin`. Left
+shipping on purpose: a style guide that is not built alongside what it documents rots.
+
 ## Verification gaps
 
 These are things built but not proven. Not bugs — just claims that have not been tested.
+
+### The brand implementation has only been seen in headless Chrome on macOS
+
+Every page was screenshotted in both colour schemes and the layouts hold, but that is one engine
+on one platform. Unverified: `ui-rounded` resolving anywhere other than Apple (see above), the
+in-SVG `prefers-color-scheme` inversion of `bloopbox-mark.svg` in a captive-portal webview (iOS
+`SFSafariViewController` and Android's `CustomTabs` both render SVG through the system engine, but
+neither has been tried), `ctx.roundRect` on whatever browser a parent has, and the `.choice` row's
+`aria-checked` styling under a real screen reader.
+
+None of this blocks anything: the fallbacks are all "looks plainer", not "does not work".
 
 ### Browser microphone capture
 

@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Brand kit — bloopbox</title>
+    <meta name="theme-color" content="#f7f4ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#131a2c" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="../shared/bloopbox-favicon.svg" />
+    <link rel="stylesheet" href="../shared/base.css" />
+    <link rel="stylesheet" href="./brand.css" />
+  </head>
+  <body>
+    <!--
+      The living brand kit.
+
+      It has no stylesheet of its own for anything the product uses: every swatch, button and
+      field below is the real shared/tokens.css and shared/base.css, rendered by the same
+      browser that renders the admin panel. So it cannot drift from the product — if it looks
+      right here it is right there, and if someone changes a token this page changes with it.
+
+      Static HTML, no JS. docs/BRAND.md is the prose companion.
+    -->
+    <main class="brand-shell">
+      <header class="page-head">
+        <h1 class="lockup">
+          <img
+            class="lockup-mark"
+            src="../shared/bloopbox-mark.svg"
+            alt=""
+            width="40"
+            height="40"
+          />
+          <span class="lockup-word">bloopbox</span>
+          <span class="lockup-tag">Brand kit</span>
+        </h1>
+      </header>
+
+      <p class="lede brand-intro">Retro-Futurist Intercom — bold, playful, tactile, screenless.</p>
+      <p class="brand-intro muted">
+        A screenless box with three lit arcade buttons, for a two-year-old and the people who love
+        them. The brand has to reassure a parent that the technology is playful rather than complex,
+        and it has to be legible to a child who cannot read. Which is why the real work happens in
+        colour, shape and light, not in words.
+      </p>
+      <p class="brand-intro muted">
+        This page loads <code>shared/tokens.css</code> and <code>shared/base.css</code> — the same
+        two files the setup portal, the admin panel and the simulator load. It is the design system,
+        not a picture of it.
+      </p>
+
+      <!-- ---------------------------------------------------------- -->
+      <section class="band">
+        <h2>1 · Logo system</h2>
+        <p class="band-note">
+          Three concentric ring pairs, overlapping into a single speech bubble with a tail. The
+          rings cluster tightly so the silhouette closes into one shape; the three small buttons fan
+          out evenly across it. It carries the device's technical side (a message, a voice) and its
+          physical one (three big tactile buttons) in one form, and the buttons are in the order
+          they sit on the enclosure: <strong>yellow, coral, teal</strong>.
+        </p>
+
+        <div class="sizes">
+          <figure>
+            <img src="../shared/bloopbox-mark.svg" alt="bloopbox mark at 96 pixels" width="96" />
+            <figcaption>mark 96px — hero</figcaption>
+          </figure>
+          <figure>
+            <img src="../shared/bloopbox-mark.svg" alt="bloopbox mark at 40 pixels" width="40" />
+            <figcaption>mark 40px — in-page</figcaption>
+          </figure>
+          <figure>
+            <img src="../shared/bloopbox-mark.svg" alt="bloopbox mark at 20 pixels" width="20" />
+            <figcaption>mark 20px — too small</figcaption>
+          </figure>
+          <figure>
+            <img
+              src="../shared/bloopbox-favicon.svg"
+              alt="bloopbox favicon at 32 pixels"
+              width="32"
+            />
+            <figcaption>favicon 32px</figcaption>
+          </figure>
+          <figure>
+            <img
+              src="../shared/bloopbox-favicon.svg"
+              alt="bloopbox favicon at 16 pixels"
+              width="16"
+            />
+            <figcaption>favicon 16px</figcaption>
+          </figure>
+        </div>
+        <p class="band-note">
+          <strong>The mark stops working below about 24px</strong> — rings, bands and holes all
+          collapse into one blur, as the third figure shows. So there is a second drawing,
+          <code>bloopbox-favicon.svg</code>, and it is the only one allowed: three solid discs and
+          the tail, which is what survives in a browser tab. It is a different job, not a variant.
+          Change the colours or the button order in one and change them in the other.
+        </p>
+
+        <h3>Lockups</h3>
+        <div class="tiles">
+          <div class="tile" style="--tile-bg: var(--brand-cream); --tile-ink: var(--brand-navy)">
+            <span class="lockup lockup-hero">
+              <img class="lockup-mark" src="../shared/bloopbox-mark.svg" alt="" />
+              <span class="lockup-word">bloopbox</span>
+            </span>
+          </div>
+        </div>
+        <p class="band-note">
+          The <strong>hero lockup</strong>: mark above, amber wordmark below, as the artwork draws
+          it. Display sizes only — amber on cream is 1.6:1, which is right for a logotype and wrong
+          for anything that has to be read as text.
+        </p>
+
+        <h3>Chrome lockups</h3>
+        <div class="tiles">
+          <div class="tile" style="--tile-bg: var(--brand-cream); --tile-ink: var(--brand-navy)">
+            <span class="lockup">
+              <img class="lockup-mark" src="../shared/bloopbox-mark.svg" alt="" width="40" />
+              <span class="lockup-word">bloopbox</span>
+            </span>
+          </div>
+          <div class="tile" style="--tile-bg: var(--brand-teal); --tile-ink: var(--brand-navy)">
+            <span class="lockup">
+              <img class="lockup-mark" src="../shared/bloopbox-mark.svg" alt="" width="40" />
+              <span class="lockup-word">bloopbox</span>
+              <span class="lockup-tag">Setup</span>
+            </span>
+          </div>
+        </div>
+        <p class="band-note">
+          Beside the mark, at chrome size, the wordmark is <strong>navy</strong> and the tag chip
+          says which page you are on — the wordmark itself never changes to say "bloopbox Admin". It
+          is always lowercase and always set, never drawn, so it stays selectable and scales with
+          the type scale.
+        </p>
+        <p class="band-note">
+          There is no reversed asset: the ring interiors are opaque cream, so on cream the mark
+          reads as three rings and on navy the bubble lights up. Same file, both themes, nothing to
+          keep in step.
+        </p>
+
+        <ul class="rules">
+          <li>
+            <strong>Do</strong> keep clear space around the mark equal to the width of one button.
+          </li>
+          <li>
+            <strong>Do</strong> put the mark on cream, navy or teal — the three backgrounds it is
+            drawn to survive.
+          </li>
+          <li><strong>Do</strong> use the favicon drawing below 24px, and the mark above it.</li>
+          <li class="dont">
+            <strong>Don't</strong> recolour or reorder the buttons. Left to right is yellow, coral,
+            teal, and that is which physical button each one is.
+          </li>
+          <li class="dont">
+            <strong>Don't</strong> use the amber wordmark on cream at text sizes. Navy in chrome,
+            amber only in the hero lockup.
+          </li>
+          <li class="dont">
+            <strong>Don't</strong> set the wordmark in a system serif or capitalise it. Rounded,
+            heavy, lowercase.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ---------------------------------------------------------- -->
+      <section class="band">
+        <h2>2 · Colour</h2>
+        <p class="band-note">
+          Five colours, no more. Cream instead of white because the admin panel gets read at 6am;
+          navy instead of black because the whole product is trying not to feel like equipment.
+        </p>
+
+        <div class="grid">
+          <article class="swatch" style="--chip: var(--brand-teal)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Electric Teal</h3>
+              <code class="swatch-hex">#00a7e1</code>
+              <p>Main accent. Primary buttons, selection, focus. Also Button 3, on the right.</p>
+            </div>
+          </article>
+          <article class="swatch" style="--chip: var(--brand-yellow)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Sunny Yellow</h3>
+              <code class="swatch-hex">#f7b733</code>
+              <p>Secondary. Button 1, on the left. Joy, warmth, the classic arcade cue.</p>
+            </div>
+          </article>
+          <article class="swatch" style="--chip: var(--brand-coral)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Coral Pink</h3>
+              <code class="swatch-hex">#ff6f61</code>
+              <p>
+                Tertiary. Button 2, in the centre. Never used for errors — that is a different red.
+              </p>
+            </div>
+          </article>
+          <article class="swatch" style="--chip: var(--brand-navy)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Deep Navy</h3>
+              <code class="swatch-hex">#1a2b48</code>
+              <p>All body text, every bezel and edge. Trusted, stable communication.</p>
+            </div>
+          </article>
+          <article class="swatch" style="--chip: var(--brand-cream)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Soft Cream</h3>
+              <code class="swatch-hex">#f7f4ef</code>
+              <p>The base every page sits on, and the enclosure's own colour.</p>
+            </div>
+          </article>
+        </div>
+
+        <h3>Contrast, decided once</h3>
+        <p class="band-note">
+          Teal is a beautiful accent and a bad ink: on cream it manages 2.5:1, so it never carries
+          wording. Two derived tokens settle it for good —
+          <code>--accent-ink</code> (#0a6e8f, 5.1:1 on cream) for accent-coloured text and links,
+          and <code>--on-accent</code> (navy, 4.6:1 on teal) for text sitting on a teal button.
+          White on teal fails at 2.9:1 and is never used.
+        </p>
+
+        <h3>The three channels</h3>
+        <p class="band-note">
+          Button 1 left, 2 centre, 3 right — yellow, coral, teal, taken straight from the mark and
+          colour-coded on the enclosure, so the same colours identify a button everywhere else: the
+          contact rows in the admin panel, the lenses in the simulator, the lamps below. A channel
+          colour never means anything other than "this button".
+        </p>
+        <div class="grid">
+          <article class="swatch" style="--chip: var(--ch-1)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Button 1 · Left</h3>
+              <code class="swatch-hex">--ch-1</code>
+            </div>
+          </article>
+          <article class="swatch" style="--chip: var(--ch-2)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Button 2 · Centre</h3>
+              <code class="swatch-hex">--ch-2</code>
+            </div>
+          </article>
+          <article class="swatch" style="--chip: var(--ch-3)">
+            <div class="swatch-chip"></div>
+            <div class="swatch-body">
+              <h3>Button 3 · Right</h3>
+              <code class="swatch-hex">--ch-3</code>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- -->
+      <section class="band">
+        <h2>3 · Typography</h2>
+        <p class="band-note">
+          The brand asks for a chunky rounded geometric sans. <code>ui-rounded</code> is SF Pro
+          Rounded on Apple platforms — exactly that letterform, for zero bytes — with Nunito,
+          Quicksand and Varela Round as named fallbacks and <code>system-ui</code> underneath. No
+          webfont on purpose: the setup page is served from a Pi Zero over its own hotspot, and a
+          font that arrives late is a page a parent stares at.
+        </p>
+
+        <div class="specimen">
+          <p class="display-voice" style="font-size: var(--text-display); line-height: 1.1">
+            bloopbox, play, pause, talk…
+          </p>
+          <div class="row">
+            <code>--text-display / 800</code>
+            <span class="display-voice" style="font-size: var(--text-display)">Hold to send</span>
+          </div>
+          <div class="row">
+            <code>--text-2xl / 800</code>
+            <span class="display-voice" style="font-size: var(--text-2xl)">Tap to play</span>
+          </div>
+          <div class="row">
+            <code>--text-lg / 800</code>
+            <span class="display-voice" style="font-size: var(--text-lg)">1 · Your Wi-Fi</span>
+          </div>
+          <div class="row">
+            <code>h2 — label voice</code>
+            <h2 style="margin: 0">Quiet hours</h2>
+          </div>
+          <div class="row">
+            <code>--text-base — body</code>
+            <span>
+              A quick brown fox jumps over the lazy dog. Body copy is set in the system UI face: it
+              is the one thing on the page that has to stay comfortable at length.
+            </span>
+          </div>
+          <div class="row">
+            <code>--text-sm — muted</code>
+            <span class="muted">Hard ceiling — this sits near a child's ears.</span>
+          </div>
+          <div class="row">
+            <code>--font-mono</code>
+            <span style="font-family: var(--font-mono)">ABCD-EFGH · 15551234567</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- -->
+      <section class="band">
+        <h2>4 · Components</h2>
+        <p class="band-note">
+          Everything below is live markup using <code>shared/base.css</code>. Controls have travel:
+          a hard bottom edge that collapses when they go down, because the product they configure is
+          a box of arcade buttons. Press one.
+        </p>
+
+        <div class="demo">
+          <p class="demo-label">button · button.primary · button.link-button · :disabled</p>
+          <div class="demo-row">
+            <button type="button" class="primary">Save contacts</button>
+            <button type="button">Refresh pairing status</button>
+            <button type="button" class="link-button">Can't see it? Type the name instead</button>
+            <button type="button" disabled>Saving…</button>
+          </div>
+        </div>
+
+        <div class="demo">
+          <p class="demo-label">button.primary.btn-block — one action, the page's whole point</p>
+          <button type="button" class="primary btn-block">Connect</button>
+        </div>
+
+        <div class="demo">
+          <p class="demo-label">.field · .field-label · .field-hint · .checkbox</p>
+          <label class="field">
+            <span class="field-label">Speaker volume (%)</span>
+            <input type="number" value="70" min="0" max="100" />
+            <span class="field-hint">Never exceeds the cap below.</span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" checked />
+            <span>Show password</span>
+          </label>
+        </div>
+
+        <div class="demo">
+          <p class="demo-label">.choice — a whole row is the tap target, never a pea-sized radio</p>
+          <div role="radiogroup" aria-label="Example networks" style="display: grid; gap: 0.5rem">
+            <button type="button" class="choice" role="radio" aria-checked="true">
+              <span class="choice-name">Casa Behrends</span>
+              <span class="choice-meta">🔒 ▮▮▮▯</span>
+            </button>
+            <button type="button" class="choice" role="radio" aria-checked="false">
+              <span class="choice-name">Vecino-2.4G</span>
+              <span class="choice-meta">🔒 ▮▮▯▯</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="demo">
+          <p class="demo-label">.card · .status · .status.error · .error-box · kbd</p>
+          <section class="card">
+            <h2>Audio</h2>
+            <p class="status">ready · silent · simulator</p>
+            <p class="status error">Device did not come back — check that the server is running.</p>
+          </section>
+          <p class="error-box">That settings password was not right.</p>
+          <p class="hint">
+            Hold <kbd>1</kbd>+<kbd>3</kbd> for three seconds to toggle silent mode.
+          </p>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- -->
+      <section class="band">
+        <h2>5 · Light signature</h2>
+        <p class="band-note">
+          The device has no screen, so light is its entire vocabulary — this is the most important
+          page in the kit. The ladder is per-LED and first match wins; the authority is
+          <code>src/core</code> and the ladder in <code>CLAUDE.md</code>, and these lamps are a
+          picture of it. Solid is the language of error. Nothing here has a chime attached, because
+          the hotspot can come up at 3am when the router dies.
+        </p>
+
+        <ul class="ladder">
+          <li class="rung">
+            <span class="leds p-boot"
+              ><span class="led"></span><span class="led"></span><span class="led"></span
+            ></span>
+            <span class="rung-text">
+              <strong>Booting</strong>
+              <span>A chase, left to right. Held for 2.6s or nobody would ever see it.</span>
+            </span>
+          </li>
+          <li class="rung">
+            <span class="leds p-connecting"
+              ><span class="led"></span><span class="led"></span><span class="led"></span
+            ></span>
+            <span class="rung-text">
+              <strong>Connecting</strong>
+              <span>All three together, slowly. Something is happening and it is not done.</span>
+            </span>
+          </li>
+          <li class="rung">
+            <span class="leds p-hotspot"
+              ><span class="led"></span><span class="led"></span><span class="led"></span
+            ></span>
+            <span class="rung-text">
+              <strong>Setup hotspot is up</strong>
+              <span>
+                A double-pulse: 150ms on, off, on, then dark. Ranks above the Wi-Fi error, because
+                "setup is waiting for you" is the part a parent can act on.
+              </span>
+            </span>
+          </li>
+          <li class="rung">
+            <span class="leds"
+              ><span class="led solid"></span><span class="led solid"></span
+              ><span class="led solid"></span
+            ></span>
+            <span class="rung-text">
+              <strong>Wi-Fi is down</strong>
+              <span>All three solid. Solid means error, always, and nothing else does.</span>
+            </span>
+          </li>
+          <li class="rung">
+            <span class="leds"
+              ><span class="led solid"></span><span class="led solid"></span
+              ><span class="led"></span
+            ></span>
+            <span class="rung-text">
+              <strong>WhatsApp is unlinked</strong>
+              <span>Lamps 1 and 2 solid — the same language, a different word.</span>
+            </span>
+          </li>
+          <li class="rung">
+            <span class="leds p-unread"
+              ><span class="led"></span><span class="led"></span><span class="led"></span
+            ></span>
+            <span class="rung-text">
+              <strong>A message is waiting</strong>
+              <span>
+                That button blinks, 0.8s on, 0.8s off, in its own colour. Tap it to hear it.
+              </span>
+            </span>
+          </li>
+          <li class="rung">
+            <span class="leds p-silent"
+              ><span class="led"></span><span class="led"></span><span class="led"></span
+            ></span>
+            <span class="rung-text">
+              <strong>Silent mode, idle</strong>
+              <span>
+                A 0.1s pulse every 4s on the outer two. A heartbeat rather than another blink rate —
+                people tell a heartbeat from a blink across a room, and cannot tell 0.5s from 1.5s.
+              </span>
+            </span>
+          </li>
+          <li class="rung">
+            <span class="leds"
+              ><span class="led"></span><span class="led"></span><span class="led"></span
+            ></span>
+            <span class="rung-text">
+              <strong>Idle, nothing to say</strong>
+              <span>Dark. A box in a child's bedroom at night is allowed to be dark.</span>
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ---------------------------------------------------------- -->
+      <section class="band">
+        <h2>6 · Voice</h2>
+        <p class="band-note">
+          Every word in the product is read by a parent, usually while a child is pulling at their
+          sleeve. Say what is happening, in the order it matters, and never make them diagnose
+          anything.
+        </p>
+        <ul class="rules">
+          <li>
+            <strong>Plain and warm</strong>
+            "Let's get this on your Wi-Fi." Not "Network configuration".
+          </li>
+          <li>
+            <strong>Say what will happen</strong>
+            "This page will stop working — that is what success looks like."
+          </li>
+          <li>
+            <strong>Name the real cause</strong>
+            "That settings password was not right", not "Unauthorized" — the generic message sends a
+            parent looking at the wrong field.
+          </li>
+          <li class="dont">
+            <strong>No baby talk to adults</strong>
+            The child never reads a word of this. The parent is a competent adult in a hurry.
+          </li>
+          <li class="dont">
+            <strong>No jargon on the portal</strong>
+            No "PSK", no "SSID" alone, no "captive portal". Cards, steps, and the name of their
+            network.
+          </li>
+          <li class="dont">
+            <strong>No cheerful blame</strong>
+            "Oops! Something went wrong" tells nobody anything. Print what the device said.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ---------------------------------------------------------- -->
+      <section class="band">
+        <h2>7 · Tokens</h2>
+        <p class="band-note">
+          The full list lives in <code>public/shared/tokens.css</code>, which is the only file in
+          the repository allowed to contain a colour literal. Reference the semantic name, never the
+          brand name — <code>var(--accent)</code>, not <code>var(--brand-teal)</code> — so dark mode
+          and any future retheme stay one file's problem.
+        </p>
+        <div class="table-scroll">
+          <table class="tokens">
+            <thead>
+              <tr>
+                <th>Token</th>
+                <th>Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>--bg</code> <code>--surface</code> <code>--surface-sunken</code></td>
+                <td>Page, raised card, recessed input</td>
+              </tr>
+              <tr>
+                <td><code>--text</code> <code>--muted</code></td>
+                <td>Body ink, and secondary ink that still passes AA (4.7:1)</td>
+              </tr>
+              <tr>
+                <td><code>--border</code> <code>--border-strong</code></td>
+                <td>Divider, and the edge a control's travel is drawn with</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>--accent</code> <code>--accent-ink</code> <code>--accent-deep</code>
+                  <code>--accent-soft</code> <code>--on-accent</code>
+                </td>
+                <td>Teal as fill, as text, as pressed edge, as tint, and what sits on it</td>
+              </tr>
+              <tr>
+                <td><code>--warm</code> <code>--pop</code></td>
+                <td>Yellow and coral, for emphasis that is not an action</td>
+              </tr>
+              <tr>
+                <td><code>--danger</code> <code>--danger-soft</code></td>
+                <td>Error ink and its background. Never coral — coral is a brand accent</td>
+              </tr>
+              <tr>
+                <td><code>--ch-1…3</code> <code>--ch-1-off…3-off</code></td>
+                <td>The three buttons, lit and unlit</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>--device-body</code> <code>--device-body-top</code>
+                  <code>--device-edge</code> <code>--device-ink</code>
+                </td>
+                <td>
+                  The enclosure the simulator paints. Outside the dark-mode block: a physical object
+                  does not repaint itself because a laptop did
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>--font-display</code> <code>--font-body</code> <code>--font-mono</code>
+                </td>
+                <td>Rounded chunky for headings and controls, system UI for prose</td>
+              </tr>
+              <tr>
+                <td><code>--text-xs … --text-display</code></td>
+                <td>Seven steps. If a size is not here, it is not a size</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>--tracking-display</code> <code>--tracking-wordmark</code>
+                  <code>--tracking-label</code>
+                </td>
+                <td>Headings, the wordmark (tighter still), and small-caps labels (looser)</td>
+              </tr>
+              <tr>
+                <td><code>--space-1 … --space-12</code></td>
+                <td>4px-based spacing</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>--radius-sm</code> <code>--radius-md</code> <code>--radius-lg</code>
+                  <code>--radius-pill</code>
+                </td>
+                <td>8 / 12 / 18 / pill. Nothing in this brand has a sharp corner</td>
+              </tr>
+              <tr>
+                <td><code>--tap</code></td>
+                <td>3rem. The floor for anything a standing parent has to hit</td>
+              </tr>
+              <tr>
+                <td><code>--dur</code> <code>--dur-fast</code> <code>--ease</code></td>
+                <td>Motion, and zero under <code>prefers-reduced-motion</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="band">
+        <p class="muted">
+          <a href="/simulator/">Simulator</a> · <a href="/admin/">Settings</a> ·
+          <a href="/portal/">Setup portal</a>
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

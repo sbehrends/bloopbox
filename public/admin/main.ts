@@ -1,4 +1,15 @@
 import { io, type Socket } from 'socket.io-client';
+import {
+  actionButton,
+  card,
+  checkbox,
+  checkboxField,
+  element,
+  field,
+  numberInput,
+  textInput,
+} from '../shared/dom.ts';
+import { CHANNEL_TOKENS } from '../shared/theme.ts';
 
 /**
  * Admin panel (PRODUCT.md §3).
@@ -6,6 +17,9 @@ import { io, type Socket } from 'socket.io-client';
  * Deliberately plain: forms plus fetch. Every write goes through PUT /api/config, which
  * validates against the same Zod schema the device uses, so the UI cannot persist anything
  * the daemon would reject.
+ *
+ * Its widgets come from shared/dom.ts and its styling from shared/base.css — the panel adds
+ * only what is specific to it (admin.css) and nothing that looks like a private button.
  */
 
 type ButtonKey = 'button1' | 'button2' | 'button3';
@@ -106,58 +120,6 @@ function describeApiError(detail: unknown): string | null {
 }
 
 /* ------------------------------------------------------------------ *
- * Rendering helpers
- * ------------------------------------------------------------------ */
-
-function element<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function field(labelText: string, input: HTMLElement, hint?: string): HTMLLabelElement {
-  const label = element('label', 'field');
-  label.append(element('span', 'field-label', labelText), input);
-  if (hint) label.append(element('span', 'field-hint', hint));
-  return label;
-}
-
-function textInput(value: string, attrs: Partial<HTMLInputElement> = {}): HTMLInputElement {
-  const input = element('input');
-  input.type = 'text';
-  input.value = value;
-  Object.assign(input, attrs);
-  return input;
-}
-
-function numberInput(value: number, min: number, max: number): HTMLInputElement {
-  const input = element('input');
-  input.type = 'number';
-  input.valueAsNumber = value;
-  input.min = String(min);
-  input.max = String(max);
-  return input;
-}
-
-function checkbox(checked: boolean): HTMLInputElement {
-  const input = element('input');
-  input.type = 'checkbox';
-  input.checked = checked;
-  return input;
-}
-
-function card(title: string): HTMLElement {
-  const section = element('section', 'card');
-  section.append(element('h2', undefined, title));
-  return section;
-}
-
-/* ------------------------------------------------------------------ *
  * Sections
  * ------------------------------------------------------------------ */
 
@@ -201,9 +163,12 @@ function renderContacts(
     ),
   );
 
-  for (const key of BUTTON_KEYS) {
+  for (const [index, key] of BUTTON_KEYS.entries()) {
     const contact = config.contacts[key];
     const row = element('div', 'contact');
+    // The buttons are colour-coded on the enclosure (§Overview); the row wears the same colour
+    // so a parent matches the form to the thing in front of the child without reading it.
+    row.style.setProperty('--channel', `var(${CHANNEL_TOKENS[index] ?? '--border-strong'})`);
     row.append(element('h3', undefined, BUTTON_LABELS[key]));
 
     const name = textInput(contact.name, { maxLength: 24 });
@@ -243,7 +208,7 @@ function renderContacts(
       row.append(field('Or choose a group', picker));
     }
 
-    row.append(field('Enabled', enabled));
+    row.append(checkboxField('Enabled', enabled));
     inputs.set(key, { name, target, enabled });
     section.append(row);
   }
@@ -317,7 +282,7 @@ function renderQuietHours(config: ConfigView, onSave: SaveFn): HTMLElement {
   end.value = config.quietHours.endTime;
 
   section.append(
-    field('Enabled', enabled),
+    checkboxField('Enabled', enabled),
     field('Start', start),
     field('End', end, 'May cross midnight, e.g. 20:00 to 07:00.'),
     saveButton('Save quiet hours', () =>
@@ -529,28 +494,9 @@ function renderWhatsApp(status: StatusView): HTMLElement {
 
 type SaveFn = (patch: unknown) => Promise<void>;
 
+/** The panel's flavour of the shared action button: a failure lands on the status line. */
 function saveButton(label: string, run: () => Promise<void>): HTMLButtonElement {
-  const button = element('button', 'primary', label);
-  button.type = 'button';
-  button.addEventListener('click', () => {
-    void (async (): Promise<void> => {
-      button.disabled = true;
-      const original = button.textContent;
-      try {
-        await run();
-        button.textContent = 'Saved';
-      } catch (error: unknown) {
-        button.textContent = 'Failed';
-        reportError(error);
-      } finally {
-        setTimeout(() => {
-          button.textContent = original;
-          button.disabled = false;
-        }, 1200);
-      }
-    })();
-  });
-  return button;
+  return actionButton(label, run, reportError);
 }
 
 /**

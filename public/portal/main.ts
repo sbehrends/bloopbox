@@ -150,16 +150,16 @@ function renderNetworks(networks: ScannedNetwork[]): void {
   for (const network of networks) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'network';
+    button.className = 'choice';
     button.setAttribute('role', 'radio');
     button.setAttribute('aria-checked', 'false');
 
     const name = document.createElement('span');
-    name.className = 'name';
+    name.className = 'choice-name';
     name.textContent = network.ssid;
 
     const meta = document.createElement('span');
-    meta.className = 'meta';
+    meta.className = 'choice-meta';
     meta.textContent = `${network.secure ? '🔒 ' : ''}${bars(network.signal)}`;
 
     button.append(name, meta);

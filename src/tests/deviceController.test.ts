@@ -270,6 +270,42 @@ describe('receiving', () => {
     expect(controller.queue.count(1)).toBe(1);
   });
 
+  it('counts a note once even when it arrives by two routes', () => {
+    /*
+     * The boot scan restores a note from disk, then the bridge reconnects and flushes the
+     * delivery it buffered while the daemon was down. One note, two arrivals — and before the
+     * count followed the queue, the button claimed two messages and played one.
+     */
+    const note = {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    };
+
+    expect(controller.restoreUnread(1, note)).toBe(true);
+    controller.handleIncoming(1, note);
+
+    expect(controller.state.unreadCount(1)).toBe(1);
+    expect(controller.queue.count(1)).toBe(1);
+  });
+
+  it('does not chime for a redelivered note', () => {
+    const note = {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    };
+
+    controller.handleIncoming(1, note);
+    const cuesAfterFirst = hal.playSequence().length;
+    controller.handleIncoming(1, note);
+
+    // WhatsApp redelivers ids on its own; a second chime announces nothing.
+    expect(hal.playSequence()).toHaveLength(cuesAfterFirst);
+  });
+
   it('plays the queue on a tap and clears the light when it drains', async () => {
     for (const id of ['m1', 'm2']) {
       controller.handleIncoming(1, {

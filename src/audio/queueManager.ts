@@ -77,10 +77,19 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
   }
 
   /** Adds a newly received note to the back of the queue. */
-  enqueue(index: ButtonIndex, note: QueuedNote): void {
-    // Ignore duplicates: WhatsApp can redeliver the same message id.
-    if (this.#queues[index].some((queued) => queued.messageId === note.messageId)) return;
+  /**
+   * Adds a note to a contact's queue. Returns false if it was already there.
+   *
+   * The answer matters to the caller, not just to this queue: the unread count and the notify
+   * cue are the caller's, and both would otherwise fire for a note the child cannot hear
+   * twice. WhatsApp redelivers message ids on its own, and since boot recovery a note can
+   * legitimately reach the queue by two routes at once — restored from disk, then delivered
+   * again by a bridge flushing what it buffered while the daemon was down.
+   */
+  enqueue(index: ButtonIndex, note: QueuedNote): boolean {
+    if (this.#queues[index].some((queued) => queued.messageId === note.messageId)) return false;
     this.#queues[index].push(note);
+    return true;
   }
 
   /**

@@ -140,7 +140,8 @@ export class DeviceController {
    * produces one sound rather than a pile-up.
    */
   handleIncoming(index: ButtonIndex, note: QueuedNote): void {
-    this.restoreUnread(index, note);
+    // A redelivery, or one the boot scan already restored: nothing new to announce.
+    if (!this.restoreUnread(index, note)) return;
 
     // A courtesy, and silenced at night.
     if (shouldPlayCue(AudioCue.Notify, this.state.silentMode)) {
@@ -155,11 +156,17 @@ export class DeviceController {
    * silent: nothing has *arrived*, and a box that chimed its way through the backlog every
    * time it restarted would teach a parent to distrust the sound. The blinking LED is the
    * right signal — it says "there is something waiting", which is exactly true.
+   *
+   * Returns false if the note was already queued, so the unread count follows the queue rather
+   * than counting arrivals. Both can happen to one note: the boot scan restores it from disk,
+   * and then the bridge reconnects and flushes the delivery it buffered while the daemon was
+   * down. The queue holds one; the count must say one.
    */
-  restoreUnread(index: ButtonIndex, note: QueuedNote): void {
-    this.queue.enqueue(index, note);
+  restoreUnread(index: ButtonIndex, note: QueuedNote): boolean {
+    if (!this.queue.enqueue(index, note)) return false;
     this.#pathsByMessageId.set(note.messageId, note.path);
     this.state.addUnread(index);
+    return true;
   }
 
   /** Files still queued for playback, which the purge must not delete. */

@@ -1,0 +1,39 @@
+[Unit]
+# Publishes NetworkManager's view of the Wi-Fi for the unprivileged daemon to read
+# (deploy/net-agent.sh). Root, because nothing else in this product may be.
+Description=bloopbox — network state agent
+Documentation=file://@PREFIX@/deploy/doctor.sh
+After=NetworkManager.service
+Wants=NetworkManager.service
+# Not Before= the hardware unit: the daemon treats a missing reading as "unknown" and boots
+# perfectly well without one, so making it wait would buy nothing and could hold up the
+# buttons.
+
+[Service]
+Type=simple
+ExecStart=@PREFIX@/deploy/net-agent.sh
+
+Restart=always
+RestartSec=5
+
+# Its own directory, root-owned and world-readable, deliberately separate from the daemon's
+# /run/bloopbox: this unit must never end up owning the recordings tmpfs.
+RuntimeDirectory=bloopbox-net
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+
+# A polling shell script. It reads nmcli and writes one small file.
+MemoryHigh=32M
+MemoryMax=48M
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+PrivateTmp=no
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target

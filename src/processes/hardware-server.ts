@@ -24,6 +24,7 @@ import { SimulatorHal } from '../hal/simulatorDriver.ts';
 import type { Hal } from '../hal/types.ts';
 import { BRIDGE_NAMESPACE, type WhatsAppConnectionState } from '../ipc/events.ts';
 import { childLogger } from '../logger.ts';
+import { NetStateWatcher } from '../net/netState.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
 import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
@@ -118,7 +119,18 @@ async function main(): Promise<void> {
   const link: { current: BridgeLink | null } = { current: null };
   let whatsappState: WhatsAppConnectionState = 'connecting';
   let whatsappQr: string | null = null;
-  let wifiDown = false;
+
+  /**
+   * Wi-Fi health, from two sources that must not fight.
+   *
+   * `wifiObserved` is what `deploy/net-agent.sh` publishes; `wifiOverride` is the
+   * simulator's injector. The override wins while it is set, so a browser can still stage
+   * an outage on a machine where the real answer is "unknown", and clearing it hands
+   * control back to the agent rather than pinning a stale value.
+   */
+  let wifiObserved = false;
+  let wifiOverride: boolean | null = null;
+  const isWifiDown = (): boolean => wifiOverride ?? wifiObserved;
 
   const controller = new DeviceController({
     hal,
@@ -143,7 +155,7 @@ async function main(): Promise<void> {
       transport.broadcastStatus(buildStatusPayload(routesContext));
       return;
     }
-    if (wifiDown) {
+    if (isWifiDown()) {
       controller.setStatus(DeviceStatus.WifiError);
     } else if (whatsappState === 'connected') {
       controller.setStatus(DeviceStatus.Ready);
@@ -208,7 +220,7 @@ async function main(): Promise<void> {
     controller,
     recordingDirectory: RECORDING_DIRECTORY,
     whatsapp: () => ({ state: whatsappState, qr: whatsappQr }),
-    wifiConnected: () => !wifiDown,
+    wifiConnected: () => !isWifiDown(),
     unlinkWhatsApp: () => {
       link.current?.unlink();
     },
@@ -263,7 +275,9 @@ async function main(): Promise<void> {
         rebootDevice();
       },
       injectWifiFailure: (down) => {
-        wifiDown = down;
+        // Latched until something clears it: the agent's own reading must not silently
+        // undo what a tester just staged.
+        wifiOverride = down;
         log.info({ down }, 'injected wifi state');
         refreshStatus();
       },
@@ -274,7 +288,8 @@ async function main(): Promise<void> {
       },
       injectWhatsAppConnected: () => {
         whatsappState = 'connected';
-        wifiDown = false;
+        // Hands Wi-Fi back to the agent rather than pinning it up.
+        wifiOverride = null;
         log.info('injected whatsapp connected');
         refreshStatus();
       },
@@ -292,6 +307,32 @@ async function main(): Promise<void> {
     },
   });
 
+  /* ---- network observation ---- */
+
+  /**
+   * Reads what the root agent publishes about the Wi-Fi (see `deploy/net-agent.sh`).
+   *
+   * Absent on a dev machine, and that is the point: no reading means *unknown*, which the
+   * watcher reports as "not down". The error pattern only ever comes from a fresh reading
+   * that explicitly says the network is gone.
+   */
+  const netWatcher = new NetStateWatcher({
+    onWifiDownChange: (down) => {
+      wifiObserved = down;
+      log.info({ down, ssid: netWatcher.last?.ssid ?? null }, 'wifi state changed');
+      refreshStatus();
+    },
+    onAgentHealthChange: (healthy) => {
+      if (healthy) {
+        log.info('network agent is publishing');
+      } else {
+        // Not an outage: we simply stop knowing. Logged because on the device it means the
+        // net agent unit is down, which doctor.sh also checks for.
+        log.warn('no fresh reading from the network agent — wifi state is unknown');
+      }
+    },
+  });
+
   /* ---- start ---- */
 
   await hal.init().catch((error: unknown) => {
@@ -300,6 +341,7 @@ async function main(): Promise<void> {
   });
   await controller.start();
   purger.start();
+  await netWatcher.start();
 
   // Push status to any tab whenever the device changes.
   controller.state.on('change', () => {
@@ -326,6 +368,7 @@ async function main(): Promise<void> {
     log.info({ reason }, 'shutting down');
 
     void (async (): Promise<void> => {
+      netWatcher.stop();
       purger.stop();
       await purger.whenIdle();
       await controller.stop();

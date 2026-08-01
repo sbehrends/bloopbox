@@ -74,6 +74,7 @@ to `config.default.json` in RAM and every settings save fails. Set it when testi
 | `HARDWARE_URL` / `PORT`                          | `localhost:3000`      | Where the bridge dials / where the server listens |
 | `FFMPEG_PATH`                                    | `ffmpeg`              |                                                   |
 | `LOG_LEVEL`                                      | `debug` in dev        | pino; `pino-pretty` in dev                        |
+| `NET_STATE_PATH`                                 | see `src/net/netState.ts` | What the root net agent publishes; absent in dev |
 | `ALSA_*`, `LED_ACTIVE_HIGH`, `BUTTON_ACTIVE_LOW` | see `gpioDriver.ts`   | Pi-only, unverified                               |
 
 ## Toolchain: TypeScript 7 + oxlint (do not swap in ESLint)
@@ -177,6 +178,15 @@ Two decoupled Node processes (systemd units on the Pi):
 contract lives in `src/ipc/events.ts` and is the single source of truth for both sides. Process 1
 never imports Baileys; Process 2 never touches GPIO or audio devices.
 
+**Networking sits outside both.** The daemons run unprivileged under `ProtectSystem=strict` and
+cannot talk to NetworkManager. A third unit, `bloopbox-net.service`, runs `deploy/net-agent.sh` as
+root and publishes what `nmcli` says to `/run/bloopbox-net/net-state.json`; `src/net/netState.ts`
+reads it and that is the **only** way the daemon learns whether Wi-Fi is up. A missing, stale or
+unparseable reading means *unknown*, which is reported as "not down" — never invent an outage from
+missing information, or every dev machine lights the error pattern. Requests in the other
+direction (bring the AP up, join a network) will go through a separate `/run/bloopbox`
+file with a strictly validated action, so each directory has exactly one writer; see `PENDING.md`.
+
 **HAL:** all physical I/O — buttons, LEDs, _and audio in/out_ — sits behind `src/hal/types.ts`.
 Drivers: `simulatorDriver` (browser over Socket.io), `gpioDriver` (real Pi), `mockDriver` (tests,
 records every `setLed` call with a timestamp).
@@ -186,7 +196,8 @@ makes the timing behavior unit-testable with fake timers. Keep it that way.
 
 Supporting layers: `src/server/` (Express routes, admin auth, the `/bridge` Socket.io link,
 simulator transport), `src/audio/` (ffmpeg pipeline, cue playback, unread queue, 48 h purge),
-`src/whatsapp/` (Baileys client + whitelist), `src/config/` (Zod schema + atomic ConfigManager).
+`src/whatsapp/` (Baileys client + whitelist), `src/config/` (Zod schema + atomic ConfigManager),
+`src/net/` (reads what the root network agent publishes).
 
 ### The two browser UIs
 

@@ -9,51 +9,6 @@ Ordered roughly by priority within each group.
 
 ## Features
 
-### Recover from a broken config
-
-**Problem.** `/data/config.json` can end up invalid — a truncated write on power loss, a
-hand-edit over SSH, or a schema change that a future build rejects. Today
-`ConfigManager.load()` handles this safely but _quietly_: it falls back to
-`config.default.json` in RAM and the device boots into onboarding. Three things are missing.
-
-1. **The bad file stays on disk.** Every subsequent boot repeats the fallback, so the parent's
-   real settings — contacts, quiet hours, volume cap — are silently ignored indefinitely.
-2. **Nothing tells anyone.** The reason is written to the log (`fallbackReason`) and nowhere
-   else. On a device with no screen, a parent sees a messenger that has forgotten who Mom is
-   and has no way to find out why.
-3. **There is nothing to roll back to.** A config that validated five minutes ago is gone.
-
-**Proposed work.**
-
-- Keep a **last-known-good copy**. After a successful load _and_ after every successful write,
-  copy the validated file to `/data/config.json.bak`. On a failed load, try the backup before
-  falling back to shipped defaults, so a corrupt write costs the last change rather than
-  everything.
-- **Quarantine rather than discard.** Move the rejected file to
-  `/data/config.broken-<timestamp>.json` so it can be inspected over SSH, and so the fallback
-  is not silently repeated forever. Cap how many are kept.
-- **Surface it.** Add a `configHealth` field to `/api/status`
-  (`ok` | `restored-from-backup` | `using-defaults`) with the validation errors, and show a
-  banner in the admin panel. This is the part that turns a silent failure into a fixable one.
-- **Signal it on the hardware.** `PRODUCT.md` §6 has no pattern for "config is broken". Pick
-  one that cannot be confused with the Wi-Fi or WhatsApp errors, and add it to the LED priority
-  ladder in `CLAUDE.md`.
-- **Recovery without the network.** If Wi-Fi credentials are among what broke, the admin panel
-  is unreachable until the AP hotspot comes up. Consider a hardware factory reset — holding all
-  three buttons for ~10s, with an unmistakable confirmation pattern so it cannot happen by
-  accident in a toddler's hands.
-
-**Acceptance.** Tests in `src/tests/config.test.ts` covering: corrupt file with a valid backup
-restores the backup; corrupt file with no backup falls back to defaults _and_ quarantines the
-bad file; the quarantine directory does not grow without bound; `configHealth` reports each
-case. Plus a manual pass corrupting `data/config.json` by hand and confirming the admin banner.
-
-**Why it matters.** Every other failure on this device is recoverable by a parent — replug it,
-rescan the QR. A broken config is currently the one state that looks like normal operation
-while quietly ignoring everything they configured.
-
----
-
 ### AP hotspot / captive portal for onboarding
 
 **Problem.** `PRODUCT.md` §First Boot has the device come up as an access point serving a captive
@@ -65,14 +20,81 @@ So the first-boot story is currently: the parent supplies Wi-Fi **before** first
 `bloopbox-wifi.txt` on the boot partition, or the image is built with `--wifi-ssid`. A
 device that cannot reach the network cannot be configured over the network either.
 
-**Proposed work.** A `hostapd` + `dnsmasq` profile (or NetworkManager's own AP mode, which is
-already installed) brought up when no known network associates within ~30 s, serving the existing
-admin UI as a captive portal, and torn down once real credentials are accepted. The routes exist:
-`POST /api/onboard` and the guard that stands aside while `system.configured` is false.
+It used to be worse: `wifiDown` was never computed at all — initialised to `false` with the
+simulator's injector as its only writer, so the Wi-Fi Error rung of the LED ladder could not fire
+on a real device. Milestone 1 below fixed that; the rest of this item is still open.
+
+**Agreed design.**
+
+_NetworkManager's own AP mode, not `hostapd` + `dnsmasq`._ NM is already installed and is already
+what `deploy/wifi-apply.sh` drives; `hostapd` means marking `wlan0` unmanaged and handing it back,
+which is the part of every Pi captive-portal recipe that breaks. An NM profile with
+`802-11-wireless.mode ap` + `ipv4.method shared` gives DHCP, DNS and `10.42.0.1` for free, and
+teardown is `nmcli con down`. `shared` needs `dnsmasq-base` — one more entry in
+`RUNTIME_PACKAGES`.
+
+_Root does networking, the daemon does UI, they talk through files in `/run`._ **Built** — see
+`deploy/net-agent.sh`, `bloopbox-net.service` and `src/net/netState.ts`. The hardware daemon runs
+unprivileged under `ProtectSystem=strict`, so it cannot run `nmcli` and should not be able to. The
+root agent polls every 5 s and publishes `/run/bloopbox-net/net-state.json`. Still to come: the
+scan list and last join error in that document, and the other direction —
+`/run/bloopbox/net-request.json`, written by the daemon, carrying a **strictly enum-validated**
+action (`ap-up` | `ap-down` | `join {ssid, psk}`), never evaluated as shell. One writer per
+directory, so the agent can never end up owning the recordings tmpfs. The agent should also keep a
+fallback of its own — unassociated, unconfigured and no requests for ~5 min raises the AP anyway —
+so a crashed daemon cannot strand the device.
+
+_Decision logic in TS._ `src/core/networkSupervisor.ts`: pure, takes observations plus timings,
+emits intents, tested on fake timers like `buttonInterpreter`. Bash stays a dumb executor.
+
+_When the AP comes up._ Unconfigured: 20 s of no association. Configured: 3 min — a flat 30 s
+would pop a hotspot into the house every time the router reboots. While it is up, rescan every
+60 s and drop the AP to rejoin if the known SSID reappears. This deliberately deviates from §6's
+"opens AP hotspot after 30s"; the LED row records the behaviour, this records the why.
+
+_The AP is open, with no passphrase and no confirmation step._ A fixed passphrase would be
+published in this repo, so its security value is zero while its UX cost is real; deriving one from
+the CPU serial is worse, because the SSID has to carry the same serial to be identifiable and
+would therefore hand out the passphrase. Accepted risk: while the AP is up on an **unconfigured**
+device the admin guard is already standing aside (by design — onboarding has to be able to set the
+first password), so anyone in radio range can complete onboarding. The window is short, the device
+holds nothing yet, and hardening is deferred. If it needs hardening later, the answer is physical
+presence — require a button press within N seconds to accept `POST /api/onboard` and
+`POST /api/wifi/join` — not a shared secret. Note that path depends on the buttons, which is the
+one subsystem never run on hardware, so it should not gate setup until bring-up proves a press
+registers.
+
+_The portal is its own UI._ `public/portal/`, a third Vite entry: scan list → SSID + passphrase →
+admin password → "joining". Not the admin panel — iOS/Android captive browsers are stripped
+webviews with unreliable WebSocket and ephemeral storage. Everything else (WhatsApp QR, contacts,
+timings) happens afterwards on the home LAN, which is fine because pairing needs internet anyway.
+
+Mechanics: port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` and a second listener on the
+same Express app (3000 stays the API/bridge port) rather than nftables rules that have to be torn
+down; wildcard DNS through `/etc/NetworkManager/dnsmasq-shared.d/bloopbox.conf`
+(`address=/#/10.42.0.1`) — ⚠️ unverified, confirm NM honours that directory before relying on it,
+fallback is `hostapd` + `dnsmasq` after all; and a catch-all that 302s unknown hosts to the portal
+while the AP is up, deliberately **failing** Android's `generate_204` and Apple's
+`hotspot-detect.html`, since answering them correctly is what suppresses the sign-in popup.
+
+_Handoff._ One radio, so AP and STA are sequential — no concurrent AP+STA on `brcmfmac`. A join
+writes `config.wifi` and calls `requestRestart()`, so `wifi-apply.sh` stays the single place
+credentials become a connection. The parent's page dies when the AP drops, so the portal must say
+so first, and the LEDs (AP double-pulse → `CONNECTING` blink → `READY`) are the only feedback
+channel across the switch. On failure the agent re-raises the AP within ~30 s with `lastError` in
+the state file.
+
+**Milestones.** ~~(1) observation only — net-agent, state file, real `wifiDown`, doctor checks~~
+**done**. (2) AP up/down — profile, `networkSupervisor.ts`, tests, the LED rung. (3) portal —
+`public/portal/`, port 80, probe catch-all, join and fallback. (4) packaging — `dnsmasq-base`,
+boot README, `smoke-test-release.sh` with a stubbed `nmcli` on PATH.
 
 **Why it matters.** It is the difference between a device a parent can set up and one that needs
 a laptop and a card reader. Today the recovery path is physical — pull the card, edit a text
 file — which is documented but is not what the spec promises.
+
+Radio behaviour cannot be tested in a container, so milestones 2 and 3 land as verification gaps
+until they run on a Pi, the same as the GPIO driver.
 
 ### Read-only root filesystem needs /data on its own partition
 

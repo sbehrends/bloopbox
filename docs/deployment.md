@@ -65,7 +65,7 @@ What it does:
 - installs the app to `/opt/bloopbox`, staged and swapped so a failed copy cannot leave
   half an application behind
 - writes `/etc/bloopbox/environment` with a **generated** `BRIDGE_TOKEN`
-- installs and enables both systemd units
+- installs and enables the systemd units
 - appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups and the watchdog
 - restarts the services
 
@@ -154,19 +154,45 @@ The boot-partition file wins over `config.json` when both are present. The conne
 fallback if the new network turns out to be wrong.
 
 There is still **no AP / captive-portal fallback** — `PRODUCT.md` §First Boot describes one and
-it is not built. Editing the file on the boot partition is the recovery path today. See
-`PENDING.md`.
+it is not built. Editing the file on the boot partition is the recovery path today, and stays the
+escape hatch afterwards. The design is agreed and written up in `PENDING.md`: NetworkManager AP
+mode (not `hostapd`), an open network, the root `bloopbox-net.service` below doing the privileged
+work while the unprivileged daemon serves a portal UI, the two talking through files in `/run`.
+
+## How the device knows whether Wi-Fi is up
+
+The hardware daemon runs as `bloopbox` under `ProtectSystem=strict`; it cannot talk to
+NetworkManager and should not be able to. So [`deploy/net-agent.sh`](../deploy/net-agent.sh) runs
+as root from `bloopbox-net.service`, polls `nmcli` every 5s and publishes one small JSON document:
+
+```
+/run/bloopbox-net/net-state.json   root writes, everyone reads   (the agent)
+/run/bloopbox/net-request.json     daemon writes, root reads     (not yet built — the AP work)
+```
+
+Two directories, one writer each. That is deliberate: the agent must never end up owning
+`/run/bloopbox`, which is the recordings tmpfs the daemon has to be able to write.
+
+The daemon reads it through `src/net/netState.ts` and turns it into the Wi-Fi Error LED pattern.
+The rule there is worth knowing before debugging a device that "won't show the error": a missing
+file, an unparseable one, a reading older than 30s, or an agent that found no `nmcli` all mean
+**unknown**, and unknown is reported as "not down". Only a fresh reading that explicitly says the
+network is gone lights the LEDs. Inventing an outage from missing information would light all
+three LEDs on any dev machine and on any device whose agent died.
+
+`sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user.
 
 ## The systemd units
 
-| Unit                 | Runs                             |
-| -------------------- | -------------------------------- |
-| `bloopbox-hardware`  | GPIO, LEDs, audio, API, admin UI |
-| `bloopbox-whatsapp`  | The Baileys bridge               |
-| `bloopbox-firstboot` | Wi-Fi provisioning, oneshot      |
+| Unit                 | Runs                                                       |
+| -------------------- | ---------------------------------------------------------- |
+| `bloopbox-hardware`  | GPIO, LEDs, audio, API, admin UI                           |
+| `bloopbox-whatsapp`  | The Baileys bridge                                         |
+| `bloopbox-firstboot` | Wi-Fi provisioning, oneshot                                |
+| `bloopbox-net`       | Publishes the Wi-Fi state as root, for the daemon to read  |
 
 ```bash
-journalctl -u bloopbox-hardware -u bloopbox-whatsapp -f
+journalctl -u bloopbox-hardware -u bloopbox-whatsapp -u bloopbox-net -f
 systemctl restart bloopbox-hardware
 ```
 

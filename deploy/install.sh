@@ -29,7 +29,7 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
-Installs bloopbox and its two systemd services.
+Installs bloopbox and its systemd services.
 
 Usage: sudo ./install.sh [options]
 
@@ -164,8 +164,10 @@ if [[ "${SYSTEMD_RUNNING}" == true ]]; then
   step "stopping the running services"
   # Before the directory swap, not after: node resolves some imports lazily (the GPIO
   # driver, socket.io transports), and pulling node_modules out from under a live process
-  # crashes it in a way that looks like a bug in the new version.
-  for unit in bloopbox-hardware bloopbox-whatsapp; do
+  # crashes it in a way that looks like a bug in the new version. The net agent is stopped
+  # for a blunter reason — bash reads a script as it runs it, so swapping the directory
+  # under net-agent.sh feeds it garbage.
+  for unit in bloopbox-hardware bloopbox-whatsapp bloopbox-net; do
     if systemctl is-active --quiet "${unit}.service" 2>/dev/null; then
       systemctl stop "${unit}.service"
       info "${unit}: stopped"
@@ -251,7 +253,7 @@ fi
 if [[ "${HAS_SYSTEMCTL}" == true ]]; then
   # Works offline too: inside a mounted image systemctl just writes the symlinks.
   systemctl enable bloopbox-hardware.service bloopbox-whatsapp.service \
-                   bloopbox-firstboot.service >/dev/null
+                   bloopbox-firstboot.service bloopbox-net.service >/dev/null
   info "enabled at boot"
 else
   warn "no systemctl here — the unit files are installed but nothing is enabled"
@@ -301,10 +303,11 @@ if [[ "${NO_START}" == true ]]; then
 elif [[ "${SYSTEMD_RUNNING}" != true ]]; then
   info "no running systemd (installing into an image?) — enabled only"
 else
+  systemctl restart bloopbox-net.service
   systemctl restart bloopbox-hardware.service
   systemctl restart bloopbox-whatsapp.service
   sleep 2
-  for unit in bloopbox-hardware bloopbox-whatsapp; do
+  for unit in bloopbox-net bloopbox-hardware bloopbox-whatsapp; do
     if systemctl is-active --quiet "${unit}.service"; then
       info "${unit}: active"
     else

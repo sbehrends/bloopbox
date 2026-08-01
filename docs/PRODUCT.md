@@ -226,7 +226,10 @@ All lighting indicators rely strictly on binary digital states (HIGH/LOW) with s
 | **Silent Mode Transition** | `[ 1 ] ➔ [ 2 ] ➔ [ 3 ]` | **Single Slow Chasing Pass**<br>
 
 <br>_(One full left-to-right pass: 0.5s per step)_ | Immediate feedback when manually entering or exiting Silent Mode (Hold B1+B3 for 3 sec). |
-| **Wi-Fi Error** | `[ 1 ] [ 2 ] [ 3 ]` | **ALL 3 LIGHTS SOLID ON** | Network disconnected. (Opens AP Hotspot after 30s). |
+| **Wi-Fi Error** | `[ 1 ] [ 2 ] [ 3 ]` | **ALL 3 LIGHTS SOLID ON** | Network disconnected, and no setup hotspot up (yet). |
+| **Setup Hotspot (AP Mode)** | `[ 1 ] + [ 2 ] + [ 3 ]` | **Synchronized Double-Pulse**<br>
+
+<br>_(All 3: ON 0.15s, OFF 0.15s, ON 0.15s, then OFF for the rest of a 2s period)_ | The open `bloopbox` setup network is up and the captive portal is waiting. Rhythm rather than another rate, because it has to be told apart from Connecting across a room; solid-on stays the language of error. Raised after 20s of no association when unconfigured, 3 min once configured. |
 | **WhatsApp Error** | `[ 1 ] [ 2 ] [   ]` | **LIGHTS 1 & 2 SOLID ON** | Wi-Fi connected, but WhatsApp session unlinked or waiting for QR scan. |
 | **Unread Message** | `[ X ]` _(Assigned contact)_ | **Single Button Blinking**<br>
 

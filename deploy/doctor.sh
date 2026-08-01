@@ -42,6 +42,10 @@ section() { printf '\n%s\n' "$1"; }
 # Values the daemons actually run with, not the defaults.
 CONFIG_PATH=/data/config.json
 RECORDING_DIR=/run/bloopbox
+# Published by deploy/net-agent.sh, read by src/net/netState.ts. The age limit is that
+# module's NET_STATE_MAX_AGE_MS; keep the two in step.
+NET_STATE_FILE=/run/bloopbox-net/net-state.json
+NET_STATE_MAX_AGE_SECONDS=30
 if [[ -r "${ETC_DIR}/environment" ]]; then
   # shellcheck disable=SC1091
   source "${ETC_DIR}/environment"
@@ -205,7 +209,7 @@ fi
 
 section "services"
 if [[ -d /run/systemd/system ]]; then
-  for unit in bloopbox-hardware bloopbox-whatsapp; do
+  for unit in bloopbox-hardware bloopbox-whatsapp bloopbox-net; do
     state="$(systemctl is-active "${unit}.service" 2>/dev/null || true)"
     enabled="$(systemctl is-enabled "${unit}.service" 2>/dev/null || true)"
     if [[ "${state}" == "active" ]]; then
@@ -230,6 +234,48 @@ if [[ -d /run/systemd/system ]]; then
   fi
 else
   warn "services" "no running systemd"
+fi
+
+section "network"
+# What the daemon is allowed to know about the Wi-Fi. It runs unprivileged and cannot ask
+# NetworkManager itself, so a missing or stale reading here means the LEDs cannot report a
+# Wi-Fi outage at all — the daemon treats "no reading" as "unknown", never as an error.
+#
+# Guarded like the services section: in a container (scripts/smoke-test-release.sh) there is
+# no NetworkManager and no agent to publish, and that is not a fault in the release.
+if [[ -d /run/systemd/system ]]; then
+  if command -v nmcli >/dev/null 2>&1; then
+    ACTIVE_SSID="$(nmcli -t -f active,ssid dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
+    if [[ -n "${ACTIVE_SSID}" ]]; then
+      pass "wifi" "associated with ${ACTIVE_SSID}"
+    else
+      warn "wifi" "not associated with any network"
+    fi
+  else
+    fail "nmcli" "not installed — wifi-apply.sh and the net agent both need it"
+  fi
+
+  if [[ -r "${NET_STATE_FILE}" ]]; then
+    # Freshness, not content: a file that stopped updating is the failure mode that matters,
+    # and it is indistinguishable from a healthy one by eye.
+    AGE_SECONDS=$(( $(date +%s) - $(stat -c %Y "${NET_STATE_FILE}" 2>/dev/null || echo 0) ))
+    if [[ "${AGE_SECONDS}" -le "${NET_STATE_MAX_AGE_SECONDS}" ]]; then
+      pass "net state" "published ${AGE_SECONDS}s ago"
+    else
+      fail "net state" "${NET_STATE_FILE} is ${AGE_SECONDS}s old — is bloopbox-net running?"
+    fi
+
+    as_service_user test -r "${NET_STATE_FILE}"
+    case "$?" in
+      0) pass "net state readable" "by ${SERVICE_USER}" ;;
+      127) warn "net state readable" "$(stat -c '%A %U:%G' "${NET_STATE_FILE}") (cannot test as ${SERVICE_USER} here)" ;;
+      *) fail "net state readable" "${SERVICE_USER} cannot read ${NET_STATE_FILE}" ;;
+    esac
+  else
+    fail "net state" "${NET_STATE_FILE} is missing — is bloopbox-net running?"
+  fi
+else
+  warn "network" "no running systemd — not checked"
 fi
 
 printf '\n'

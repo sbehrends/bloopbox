@@ -27,7 +27,17 @@ let stopping = false;
 function start(): void {
   child = spawn('node', ['--import', 'tsx', ENTRY], {
     stdio: 'inherit',
-    env: { ...process.env, SIMULATOR_MODE: process.env['SIMULATOR_MODE'] ?? 'true' },
+    env: {
+      ...process.env,
+      SIMULATOR_MODE: process.env['SIMULATOR_MODE'] ?? 'true',
+      /*
+       * The captive portal listens on :80 on the device, which no laptop will allow without
+       * root. Moving it here keeps the portal reachable in development — at
+       * http://localhost:8080/portal/ — and keeps a pointless EACCES warning out of every
+       * dev boot, which is how people learn to ignore warnings.
+       */
+      PORTAL_PORT: process.env['PORTAL_PORT'] ?? '8080',
+    },
   });
 
   child.on('exit', (code, signal) => {

@@ -75,6 +75,7 @@ to `config.default.json` in RAM and every settings save fails. Set it when testi
 | `FFMPEG_PATH`                                    | `ffmpeg`              |                                                   |
 | `LOG_LEVEL`                                      | `debug` in dev        | pino; `pino-pretty` in dev. On the device `bloopbox-debug on` flips it |
 | `NET_STATE_PATH`                                 | see `src/net/netState.ts` | What the root net agent publishes; absent in dev |
+| `PORTAL_PORT`                                    | `80` (dev: `8080`)    | Captive-portal listener; 0 disables it            |
 | `ALSA_*`, `LED_ACTIVE_HIGH`, `BUTTON_ACTIVE_LOW` | see `gpioDriver.ts`   | Pi-only, unverified                               |
 
 ## Toolchain: TypeScript 7 + oxlint (do not swap in ESLint)

@@ -256,6 +256,11 @@ individual (`voice note sent`, kinds `group` and `individual`), a voice note **r
 (`voice note accepted`), playback of both from a simulator tap, the unread counts clearing, and
 the recordings being purged from the RAM disk afterwards.
 
+Also verified, after the fix that made it possible: messages sent while **both** daemons were off
+arrive when the bridge reconnects, from WhatsApp's own queue rather than from anything of ours —
+which is the only mechanism that survives a power cut, since `/run` is tmpfs. Two notes sent to a
+dark box, two `voice note accepted` on reconnect, unread counts `[2,0,0]`.
+
 Still not run: `requestPairingCode` actually returning a code, and a note from a number nobody
 assigned being dropped — the negative case, which is the one the safety boundary exists for.
 Group membership as permission is also only half-checked: the group note came from the account

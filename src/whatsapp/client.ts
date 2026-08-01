@@ -15,7 +15,7 @@ import {
   type WASocket,
 } from 'baileys';
 import type { Logger } from 'pino';
-import { recordingName } from '../audio/recovery.ts';
+import { RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
 
@@ -66,6 +66,45 @@ export type VoiceNote = {
   /** The raw message, for marking read. */
   readonly raw: WAMessage;
 };
+
+/**
+ * Whether a `messages.upsert` batch is one this device should act on.
+ *
+ * `notify` is a message arriving while we are connected. **`append` is what Baileys uses for
+ * the queue WhatsApp held while we were offline** — `messages-recv.js` picks the type with
+ * `node.attrs.offline ? 'append' : 'notify'` — which is precisely the case this product exists
+ * for: the box spends nights, journeys and power cuts switched off, and the messages sent
+ * during those hours are the ones a child most wants when it comes back.
+ *
+ * This used to drop everything but `notify`, on the belief that `append` meant history
+ * backfill. It does not: a history sync arrives on `messaging-history.set`, never here. The
+ * cost of that mistake was every message sent while the box was off, discarded in silence.
+ *
+ * `append` is bounded by age rather than accepted outright, because the other two things
+ * Baileys sends this way are a plaintext newsletter (the whitelist drops those anyway) and a
+ * placeholder resend, which can carry something old. The window is the same one boot recovery
+ * uses, and for the same reason — both are the box catching up after being away, and one rule
+ * is easier to reason about than two.
+ *
+ * An unknown age fails closed. A message that cannot say when it was sent cannot be shown to
+ * be recent, and replaying something old at a child is worse than missing it.
+ */
+export function shouldHandleUpsert(type: string, ageMs: number | null): boolean {
+  if (type === 'notify') return true;
+  if (ageMs === null) return false;
+  return ageMs <= RECOVERY_MAX_AGE_MS;
+}
+
+/** How long ago a message was sent, or null if it does not say. */
+export function messageAgeMs(
+  message: Pick<WAMessage, 'messageTimestamp'>,
+  now: number = Date.now(),
+): number | null {
+  const seconds = Number(message.messageTimestamp ?? 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  // Clamp: a message stamped in the future is not evidence of anything, but it is not stale.
+  return Math.max(0, now - seconds * 1000);
+}
 
 export type GroupSummary = { readonly id: string; readonly subject: string };
 
@@ -240,10 +279,11 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     });
 
     socket.ev.on('messages.upsert', ({ messages, type }) => {
-      // `notify` is a live message; `append` is history backfill we do not want to replay.
-      if (type !== 'notify') return;
-      // Resolving a LID can touch the auth store, so this is async; failures are logged inside.
-      for (const message of messages) void this.#handleMessage(message);
+      for (const message of messages) {
+        if (!shouldHandleUpsert(type, messageAgeMs(message))) continue;
+        // Resolving a LID can touch the auth store, so this is async; failures logged inside.
+        void this.#handleMessage(message);
+      }
     });
   }
 

@@ -196,6 +196,7 @@ join_network() {
 consume_request() {
   [[ -r "${REQUEST_FILE}" ]] || return 0
   local action= ssid= psk=
+  local -a parsed=()
   if [[ -x "${NODE}" ]]; then
     # Three lines out, never eval'd: action, ssid, psk. The action is matched against a fixed
     # list below; the other two only ever become arguments to nmcli.
@@ -290,38 +291,39 @@ LAST_ERROR=
 while [[ "${running}" == true ]]; do
   consume_request
 
-  # Not while hosting the hotspot: the radio cannot do both, and the list captured just
-  # before it went up is the one the portal should be showing anyway.
-  if [[ "${ap_active:-false}" != true && $(( $(date +%s) - SCAN_AT )) -ge "${SCAN_INTERVAL_SECONDS}" ]]; then
-    refresh_scan yes
-  fi
-
   ssid=
   signal=null
   online=false
   ap_active=false
 
-  # The active Wi-Fi AP, if any: `active:ssid:signal`, one line per scanned network.
-  active_line="$(nmcli -t -f active,ssid,signal dev wifi 2>/dev/null | awk -F: '$1=="yes"{print; exit}')"
-  if [[ -n "${active_line}" ]]; then
-    ssid="$(echo "${active_line}" | cut -d: -f2)"
-    candidate="$(echo "${active_line}" | cut -d: -f3)"
-    [[ "${candidate}" =~ ^[0-9]+$ ]] && signal="${candidate}"
+  # Whether we are hosting comes first, and not for tidiness: the scan below is guarded on
+  # it, and a guard reading last time round's answer would rescan on the very first poll of
+  # an agent that started while the hotspot was already up — which is a rescan on an
+  # interface in AP mode, the one thing this radio cannot do.
+  #
+  # In AP mode the radio is "connected" to a network it is itself hosting, which is not being
+  # online. The profile name is the reliable tell.
+  active_profiles="$(nmcli -t -f NAME,TYPE con show --active 2>/dev/null)"
+  [[ "${active_profiles}" == *"${AP_CONNECTION}:"* ]] && ap_active=true
+
+  # The list captured just before the hotspot went up is the one the portal should show.
+  if [[ "${ap_active}" != true && $(( $(date +%s) - SCAN_AT )) -ge "${SCAN_INTERVAL_SECONDS}" ]]; then
+    refresh_scan yes
   fi
 
-  # Associated is not the same as usable: NetworkManager reports `connected` only once the
-  # device has an address. Anything short of that is an outage as far as the LEDs care.
-  wifi_state="$(nmcli -t -f TYPE,STATE dev status 2>/dev/null | awk -F: '$1=="wifi"{print $2; exit}')"
-  [[ "${wifi_state}" == "connected" ]] && online=true
+  if [[ "${ap_active}" != true ]]; then
+    # The associated AP, if any: `active:ssid:signal`, one line per network in the last scan.
+    active_line="$(nmcli -t -f active,ssid,signal dev wifi 2>/dev/null | awk -F: '$1=="yes"{print; exit}')"
+    if [[ -n "${active_line}" ]]; then
+      ssid="$(echo "${active_line}" | cut -d: -f2)"
+      candidate="$(echo "${active_line}" | cut -d: -f3)"
+      [[ "${candidate}" =~ ^[0-9]+$ ]] && signal="${candidate}"
+    fi
 
-  # In AP mode the radio is "connected" to a network it is itself hosting, which is not
-  # being online. The profile name is the reliable tell; the mode is the cross-check.
-  active_profiles="$(nmcli -t -f NAME,TYPE con show --active 2>/dev/null)"
-  if [[ "${active_profiles}" == *"${AP_CONNECTION}:"* ]]; then
-    ap_active=true
-    online=false
-    ssid=
-    signal=null
+    # Associated is not the same as usable: NetworkManager reports `connected` only once the
+    # device has an address. Anything short of that is an outage as far as the LEDs care.
+    wifi_state="$(nmcli -t -f TYPE,STATE dev status 2>/dev/null | awk -F: '$1=="wifi"{print $2; exit}')"
+    [[ "${wifi_state}" == "connected" ]] && online=true
   fi
 
   if [[ -n "${ssid}" ]]; then
@@ -336,7 +338,15 @@ while [[ "${running}" == true ]]; do
     last_error_json=null
   fi
 
-  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active},\"apSsid\":$(json_string "${AP_SSID}"),\"scan\":${SCAN_JSON},\"scanAgeSeconds\":$(( $(date +%s) - SCAN_AT )),\"lastError\":${last_error_json}}"
+  # Zero when nothing has been scanned yet, not epoch-minus-nothing: an age of 1.7 billion
+  # seconds beside an empty list is a puzzle, and the empty list already says everything.
+  if [[ "${SCAN_AT}" -eq 0 ]]; then
+    scan_age=0
+  else
+    scan_age=$(( $(date +%s) - SCAN_AT ))
+  fi
+
+  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active},\"apSsid\":$(json_string "${AP_SSID}"),\"scan\":${SCAN_JSON},\"scanAgeSeconds\":${scan_age},\"lastError\":${last_error_json}}"
 
   # Backgrounded so a SIGTERM lands during the sleep rather than after it.
   sleep "${POLL_SECONDS}" &

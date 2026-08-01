@@ -64,13 +64,24 @@ const passphrase = requiredInput('passphrase');
 const passphraseLabel = required('passphrase-label');
 const showPassphrase = requiredInput('show-passphrase');
 const adminStep = required('step-admin');
+const adminHeading = required('admin-heading');
+const adminHint = required('admin-hint');
+const adminLabel = required('admin-label');
 const adminPassword = requiredInput('admin-password');
 const submit = required('submit');
 const errorBox = required('error');
 const doneStep = required('done');
 
-/** True until the device has been set up once; drives whether an admin password is asked for. */
-let needsAdminPassword = true;
+/**
+ * Whether the settings password being asked for is a *new* one.
+ *
+ * Both cases need the field, for opposite reasons. A fresh device is choosing a password, and
+ * the box needs it to protect its settings afterwards. A device that has been set up already
+ * is being asked to *prove* who is at the keyboard: it will only accept a network change with
+ * the existing password, or anyone in range of a box whose router died could move it onto
+ * their own network.
+ */
+let choosingPassword = true;
 let selected: ScannedNetwork | null = null;
 let manual = false;
 
@@ -99,10 +110,13 @@ function refresh(): void {
   const secure = manual || (selected?.secure ?? true);
 
   passphraseStep.hidden = ssid.length === 0 || !secure;
-  adminStep.hidden = ssid.length === 0 || !needsAdminPassword;
+  adminStep.hidden = ssid.length === 0;
 
   const passphraseOk = !secure || passphrase.value.length === 0 || passphrase.value.length >= 8;
-  const adminOk = !needsAdminPassword || adminPassword.value.length >= 6;
+  // A new password has a minimum; an existing one is whatever it is, and only the box can say.
+  const adminOk = choosingPassword
+    ? adminPassword.value.length >= 6
+    : adminPassword.value.length > 0;
   const blocked = ssid.length === 0 || !passphraseOk || !adminOk;
   submit.toggleAttribute('disabled', blocked);
 }
@@ -186,16 +200,34 @@ async function loadScan(): Promise<void> {
   }
 }
 
+function applyPasswordMode(): void {
+  if (choosingPassword) {
+    adminHeading.textContent = '3 · A password for the settings page';
+    adminHint.textContent =
+      'Only you should be able to change who the buttons call. At least 6 characters — write it down somewhere.';
+    adminLabel.textContent = 'Settings password';
+    adminPassword.autocomplete = 'new-password';
+  } else {
+    adminHeading.textContent = '3 · Your settings password';
+    adminHint.textContent =
+      'This box has been set up before, so it will only change networks for someone who knows its password.';
+    adminLabel.textContent = 'Settings password';
+    adminPassword.autocomplete = 'current-password';
+  }
+}
+
 async function loadStatus(): Promise<void> {
   try {
     const response = await fetch('/api/status');
     const body: unknown = await response.json();
-    needsAdminPassword = field(body, 'configured') !== true;
+    choosingPassword = field(body, 'configured') !== true;
   } catch {
-    // Assume the harder path. Asking for a password the device already has is a nuisance;
-    // failing to ask for one it lacks leaves it permanently unprotected.
-    needsAdminPassword = true;
+    // Assume the fresh-device path. Asking someone to choose a password the box already has
+    // fails loudly and recoverably; asking for an existing one on a box that has none cannot
+    // succeed at all.
+    choosingPassword = true;
   }
+  applyPasswordMode();
   refresh();
 }
 
@@ -208,16 +240,33 @@ async function connect(): Promise<void> {
   showError(null);
 
   const body: Record<string, string> = { ssid, psk: passphrase.value };
-  if (needsAdminPassword) body['adminPassword'] = adminPassword.value;
+  if (choosingPassword) body['adminPassword'] = adminPassword.value;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (!choosingPassword) {
+    // HTTP Basic, which is what the device's admin guard speaks. The user part is ignored by
+    // the daemon; only the password is checked.
+    headers['Authorization'] = `Basic ${btoa(`admin:${adminPassword.value}`)}`;
+  }
 
   try {
     const response = await fetch('/api/wifi/join', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        // Worth its own message: the generic one would send a parent looking at their Wi-Fi
+        // passphrase, which is not the field that is wrong.
+        showError('That settings password was not right.');
+        adminPassword.value = '';
+        adminPassword.focus();
+        submit.removeAttribute('disabled');
+        submit.textContent = 'Connect';
+        return;
+      }
       const failure: unknown = await response.json().catch(() => null);
       const message = asText(field(failure, 'error'));
       showError(message.length > 0 ? message : 'The box would not accept that.');

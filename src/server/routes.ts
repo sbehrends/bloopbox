@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { basename, resolve } from 'node:path';
 import { toString as qrToString } from 'qrcode';
 import { ALL_AUDIO_CUES } from '../audio/cues.ts';
@@ -152,14 +152,30 @@ export function createApiRouter(context: RoutesContext): Router {
   /* ---- setup portal ---- */
 
   /**
+   * Open while the device is being set up, admin-gated the rest of the time.
+   *
+   * Setup has two shapes, not one: a device that has never been configured, and a configured
+   * device that has lost its network and is offering the hotspot as a way back in. In both,
+   * the portal needs to work before any password has been typed. On a home network, with no
+   * hotspot up, there is no reason for anyone to be asking.
+   */
+  const duringSetup: RequestHandler = (req, res, next) => {
+    const unconfigured = !context.config.current.system.configured;
+    if (unconfigured || context.netState()?.apActive === true) {
+      next();
+      return;
+    }
+    void admin(req, res, next);
+  };
+
+  /**
    * Networks the device can see, for the portal's picker.
    *
-   * Ungated for the same reason `POST /onboard` is: while the device is unconfigured the
-   * admin guard stands aside, and this is one of the things the portal needs before a
-   * password can exist. It leaks the names of nearby networks to anyone already on the
-   * hotspot, which is the same list their own phone is showing them.
+   * It names the networks around the family's home, which is why it is not simply public —
+   * though anyone standing close enough to join the hotspot is already seeing that list on
+   * their own phone.
    */
-  router.get('/wifi/scan', (_req, res) => {
+  router.get('/wifi/scan', duringSetup, (_req, res) => {
     const state = context.netState();
     if (state === null) {
       // No agent, which on a dev machine is normal. An empty list plus a flag beats a 500:
@@ -185,8 +201,10 @@ export function createApiRouter(context: RoutesContext): Router {
    * never arrive.
    *
    * `admin` stands aside while unconfigured (see auth.ts), which is exactly the first-boot
-   * case; afterwards a parent needs their password, or physical recovery through the boot
-   * partition.
+   * case. Afterwards it is enforced **even over the hotspot**, and deliberately: a configured
+   * device that lost its router will offer a hotspot to whoever is in range, and without the
+   * password that would be an invitation to move somebody else's device onto your network.
+   * The portal collects the settings password for this case and sends it as Basic auth.
    */
   router.post('/wifi/join', admin, async (req: Request, res: Response) => {
     const ssid = readString(req.body, 'ssid', 32);

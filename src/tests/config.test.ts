@@ -422,8 +422,34 @@ describe('targets — a button points at a person or a group', () => {
     expect(parseTarget('  15551234567  ')?.jid).toBe('15551234567@s.whatsapp.net');
   });
 
+  it('strips the two spellings of "dial internationally"', () => {
+    // The case that prompted this: 00 + country code is 15 digits, so the old digits-only
+    // pattern accepted it whole and built 005491155555555@s.whatsapp.net — a JID that
+    // validates, saves, and silently reaches nobody.
+    expect(parseTarget('005491155555555')?.jid).toBe('5491155555555@s.whatsapp.net');
+    expect(parseTarget('+5491155555555')?.jid).toBe('5491155555555@s.whatsapp.net');
+  });
+
+  it('accepts a number written the way a contacts app shows it', () => {
+    for (const written of [
+      '+54 9 11 5555-5555',
+      '0054 9 11 5555 5555',
+      '(0054) 9.11.5555.5555',
+      '+54–9–11–5555–5555', // en dashes, which is what a phone keyboard often inserts
+    ]) {
+      expect(parseTarget(written)?.jid).toBe('5491155555555@s.whatsapp.net');
+    }
+  });
+
+  it('rejects a national number rather than guessing its country', () => {
+    // A leading 0 that survives is a *trunk* prefix, so the country code is missing. Guessing
+    // one would point the button at a stranger, which is worse than refusing the save.
+    expect(parseTarget('01155555555')).toBeNull();
+    expect(parseTarget('0 11 5555 5555')).toBeNull();
+  });
+
   it('rejects anything that is neither', () => {
-    for (const bad of ['', '  ', '123', 'not-a-number', 'name@example.com', '+1 555 123 4567']) {
+    for (const bad of ['', '  ', '123', 'not-a-number', 'name@example.com', '+', '00']) {
       expect(parseTarget(bad)).toBeNull();
     }
   });

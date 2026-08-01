@@ -50,8 +50,14 @@ const timeOfDaySchema = z
 export const TARGET_KINDS = ['individual', 'group'] as const;
 export type TargetKind = (typeof TARGET_KINDS)[number];
 
-/** Bare digits (what a parent types) or a full user JID. */
-const INDIVIDUAL_PATTERN = /^\d{7,15}(@s\.whatsapp\.net)?$/;
+/** What a JID's user part must look like once every dialling convention is stripped off. */
+const BARE_DIGITS = /^\d{7,15}$/;
+
+/** The suffix WhatsApp gives an individual, as opposed to a group. */
+const USER_SUFFIX = '@s.whatsapp.net';
+
+/** Separators people paste along with a number: "+54 9 11 5555-5555", "(011) 5555.5555". */
+const PHONE_PUNCTUATION = /[\s().\- ‐-―]/g;
 /**
  * Group JIDs are `<id>@g.us`, where the id is usually `<creator>-<timestamp>` but is opaque.
  * Nobody types one from memory, so the admin panel offers a picker fed by the bridge.
@@ -60,25 +66,53 @@ const GROUP_PATTERN = /^[\w.-]{5,}@g\.us$/;
 
 export type ParsedTarget = { readonly kind: TargetKind; readonly jid: string };
 
+/**
+ * Reduces however a parent wrote a phone number to the bare digits of a JID.
+ *
+ * A JID's user part is E.164 digits and nothing else — no `+`, no separators, and no way to
+ * tell a good number from a bad one by looking. That makes a wrong-but-plausible target the
+ * worst failure this config has: it validates, it saves, the panel shows the button
+ * configured, and the button is silently dead in both directions on a device with no screen.
+ * So anything that is unambiguously a dialling convention is removed, and anything genuinely
+ * ambiguous is rejected rather than guessed at.
+ *
+ * Removed, because neither can ever appear in a JID:
+ *   - separators — spaces, dashes of every Unicode flavour, dots, parentheses
+ *   - one leading `+` or `00`, the two spellings of "dial internationally"
+ *
+ * Rejected, not guessed:
+ *   - a remaining leading `0`, which is a *national* trunk prefix. `01155555555` is missing
+ *     its country code, and inventing one would produce a number that reaches a stranger.
+ *     Country codes never begin with 0, so a surviving leading zero is always a mistake.
+ */
+function normalisePhone(value: string): string | null {
+  const withoutSuffix = value.endsWith(USER_SUFFIX) ? value.slice(0, -USER_SUFFIX.length) : value;
+  const stripped = withoutSuffix.replace(PHONE_PUNCTUATION, '');
+  let bare = stripped;
+  if (bare.startsWith('+')) bare = bare.slice(1);
+  else if (bare.startsWith('00')) bare = bare.slice(2);
+  if (!BARE_DIGITS.test(bare)) return null;
+  if (bare.startsWith('0')) return null;
+  return bare;
+}
+
 /** Normalises a configured target into a JID, or null if it is unusable. */
 export function parseTarget(raw: string): ParsedTarget | null {
   const value = raw.trim();
   if (value.length === 0) return null;
   if (GROUP_PATTERN.test(value)) return { kind: 'group', jid: value };
-  if (INDIVIDUAL_PATTERN.test(value)) {
-    return {
-      kind: 'individual',
-      jid: value.includes('@') ? value : `${value}@s.whatsapp.net`,
-    };
-  }
-  return null;
+  const digits = normalisePhone(value);
+  if (digits === null) return null;
+  return { kind: 'individual', jid: `${digits}${USER_SUFFIX}` };
 }
 
 const targetSchema = z
   .string()
   .max(128)
   .refine((value) => value.length === 0 || parseTarget(value) !== null, {
-    error: 'must be a phone number (7-15 digits) or a group id ending in @g.us',
+    error:
+      'must be a phone number with its country code (7-15 digits; +, 00, spaces and dashes ' +
+      'are fine, a leading 0 without a country code is not) or a group id ending in @g.us',
   });
 
 /**

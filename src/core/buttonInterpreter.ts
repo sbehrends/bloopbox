@@ -36,6 +36,12 @@ export type ButtonInterpreterEvents = {
    * This is when the "pop" cue plays — see the note on cue timing below.
    */
   captureConfirmed: [{ index: ButtonIndex }];
+  /**
+   * The button came back down inside the resume window: the *same* take is carrying on,
+   * not a new one. No capture is started and no cue plays — the microphone never stopped
+   * and the LED never went out.
+   */
+  captureResumed: [{ index: ButtonIndex; gapMs: number }];
   /** Keep the audio and send it. */
   captureCommit: [{ index: ButtonIndex; durationMs: number; reachedMaxDuration: boolean }];
   /** Throw the audio away. */
@@ -63,6 +69,7 @@ export type ButtonInterpreterOptions = {
 
 type ActivePress = {
   readonly index: ButtonIndex;
+  /** When the *first* press of this take began. A resume carries it forward. */
   readonly startedAt: number;
   /** Fires at `recordThresholdMs` to confirm this is a recording. */
   confirmTimer: NodeJS.Timeout | null;
@@ -71,6 +78,22 @@ type ActivePress = {
   confirmed: boolean;
   /** Set when the chord claimed this press, so release does nothing. */
   swallowed: boolean;
+};
+
+/**
+ * A confirmed recording whose button is currently *up*, waiting out `resumeGraceMs`.
+ *
+ * The capture is still open the whole time — pressing the same button again resumes it.
+ * Only when this window expires does the take commit.
+ */
+type PendingCommit = {
+  readonly index: ButtonIndex;
+  readonly startedAt: number;
+  /** When the button came up. The window itself is not held time, so it is not counted. */
+  readonly releasedAt: number;
+  graceTimer: NodeJS.Timeout | null;
+  /** Inherited from the press: the max-duration ceiling keeps running across the window. */
+  maxTimer: NodeJS.Timeout | null;
 };
 
 /**
@@ -84,12 +107,22 @@ type ActivePress = {
  * So the pop is deferred to `recordThresholdMs`, when the press is unambiguously a
  * recording. Visual feedback (LED solid) still fires immediately, so the child always
  * gets instant acknowledgement that the device noticed them.
+ *
+ * The resume window (`timings.resumeGraceMs`).
+ *
+ * A confirmed recording does not commit the moment the button comes up. For a short window
+ * it stays open, and pressing the same button again continues the same take: a toddler
+ * whose grip slips mid-sentence can carry on rather than shipping half a message. Nothing
+ * new has to be learned, because the existing signals already say it — the LED stays solid
+ * (ladder rule 1 holds while `recording` is set) and the "whoosh" still marks the send.
  */
 export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
   readonly #timings: ButtonTimings;
   readonly #maxRecordingMs: number;
   readonly #hasUnread: (index: ButtonIndex) => boolean;
   readonly #active = new Map<ButtonIndex, ActivePress>();
+  /** Confirmed recordings waiting out their resume window. */
+  readonly #pending = new Map<ButtonIndex, PendingCommit>();
   #comboTimer: NodeJS.Timeout | null = null;
 
   constructor(options: ButtonInterpreterOptions) {
@@ -113,8 +146,28 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     return this.#active.has(index);
   }
 
+  /** True while a released recording on this button is still open to being continued. */
+  hasPendingCommit(index: ButtonIndex): boolean {
+    return this.#pending.has(index);
+  }
+
   handleButtonDown(index: ButtonIndex): void {
     if (this.#active.has(index)) return; // Already down; ignore repeat edges.
+
+    const resuming = this.#pending.get(index);
+
+    /*
+     * A *different* button starting a press means the child has moved on: commit whatever
+     * is waiting out its window rather than leaving two takes open at once. This also keeps
+     * the silent-mode chord out of the resume path entirely — by the time both outer
+     * buttons are down, no window is left open behind them.
+     */
+    this.#closeWindowsExcept(index);
+
+    if (resuming) {
+      this.#resume(resuming);
+      return;
+    }
 
     const press: ActivePress = {
       index,
@@ -139,8 +192,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       // Only arm the auto-commit once we know this is a real recording.
       press.maxTimer = setTimeout(
         () => {
-          press.maxTimer = null;
-          this.#finish(index, true);
+          this.#maxDurationReached(index);
         },
         // Already recordThresholdMs into the press, so only the remainder is left.
         Math.max(0, this.#maxRecordingMs - recordThresholdMs),
@@ -163,17 +215,147 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       return;
     }
 
+    const { resumeGraceMs } = this.#timings;
+    if (press.confirmed && resumeGraceMs > 0) {
+      this.#openWindow(press, resumeGraceMs);
+      return;
+    }
+
     this.#finish(index, false);
   }
 
-  /** Drops all in-flight presses without emitting intents — used on shutdown or reset. */
+  /**
+   * Drops all in-flight presses and open windows without emitting intents — used on
+   * shutdown or reset. Any capture still open is the caller's to tear down, exactly as it
+   * has always been for a press that was mid-flight.
+   */
   reset(): void {
     for (const press of this.#active.values()) {
       this.#clearTimers(press);
       this.emit('pressVisualOff', { index: press.index });
     }
     this.#active.clear();
+
+    for (const pending of this.#pending.values()) {
+      this.#clearPendingTimers(pending);
+    }
+    this.#pending.clear();
+
     this.#disarmCombo();
+  }
+
+  /* ---- the resume window ---- */
+
+  /**
+   * Holds a confirmed recording open after release, in case the button comes back down.
+   *
+   * `pressVisualOff` still fires — the press really is over — but the LED stays lit anyway,
+   * because the capture is still running and the recording rule outranks it. That is the
+   * whole signal: solid means "still listening".
+   */
+  #openWindow(press: ActivePress, resumeGraceMs: number): void {
+    const { index } = press;
+
+    if (press.confirmTimer !== null) {
+      clearTimeout(press.confirmTimer);
+      press.confirmTimer = null;
+    }
+    this.#active.delete(index);
+    this.emit('pressVisualOff', { index });
+
+    const pending: PendingCommit = {
+      index,
+      startedAt: press.startedAt,
+      releasedAt: Date.now(),
+      graceTimer: null,
+      maxTimer: press.maxTimer,
+    };
+    pending.graceTimer = setTimeout(() => {
+      pending.graceTimer = null;
+      this.#commitPending(pending, false);
+    }, resumeGraceMs);
+
+    this.#pending.set(index, pending);
+  }
+
+  /** Takes an open window back over as a live press. Same take, so no new capture. */
+  #resume(pending: PendingCommit): void {
+    const { index } = pending;
+    this.#pending.delete(index);
+    if (pending.graceTimer !== null) {
+      clearTimeout(pending.graceTimer);
+      pending.graceTimer = null;
+    }
+
+    this.#active.set(index, {
+      index,
+      // Carried forward, so the take is measured from the first press.
+      startedAt: pending.startedAt,
+      confirmTimer: null,
+      // The ceiling is not restarted: pumping the button must not extend a recording.
+      maxTimer: pending.maxTimer,
+      confirmed: true,
+      swallowed: false,
+    });
+
+    this.emit('pressVisualOn', { index });
+    this.emit('captureResumed', { index, gapMs: Date.now() - pending.releasedAt });
+
+    this.#maybeArmCombo();
+  }
+
+  /** Commits every open window except the one this button might be about to resume. */
+  #closeWindowsExcept(index: ButtonIndex): void {
+    // Deleting from a Map mid-iteration is well defined: the iterator skips removed entries.
+    for (const pending of this.#pending.values()) {
+      if (pending.index === index) continue;
+      this.#commitPending(pending, false);
+    }
+  }
+
+  #commitPending(pending: PendingCommit, reachedMaxDuration: boolean): void {
+    // Guard against a timer that fired after the window was already taken over or closed.
+    if (this.#pending.get(pending.index) !== pending) return;
+
+    this.#pending.delete(pending.index);
+    this.#clearPendingTimers(pending);
+
+    this.emit('captureCommit', {
+      index: pending.index,
+      // Time actually held, first press to final release — the window itself is not speech.
+      durationMs: pending.releasedAt - pending.startedAt,
+      reachedMaxDuration,
+    });
+  }
+
+  /**
+   * The recording ceiling fired. It bounds RAM-disk use, so it applies whether the button
+   * is currently held or the take is waiting out its resume window.
+   */
+  #maxDurationReached(index: ButtonIndex): void {
+    const press = this.#active.get(index);
+    if (press) {
+      press.maxTimer = null;
+      this.#finish(index, true);
+      return;
+    }
+
+    const pending = this.#pending.get(index);
+    if (pending) {
+      pending.maxTimer = null;
+      this.#commitPending(pending, true);
+    }
+  }
+
+  #clearPendingTimers(pending: PendingCommit): void {
+    if (pending.graceTimer !== null) {
+      clearTimeout(pending.graceTimer);
+      pending.graceTimer = null;
+    }
+    if (pending.maxTimer !== null) {
+      clearTimeout(pending.maxTimer);
+      pending.maxTimer = null;
+    }
   }
 
   #finish(index: ButtonIndex, reachedMaxDuration: boolean): void {

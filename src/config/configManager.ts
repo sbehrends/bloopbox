@@ -282,6 +282,7 @@ function mergeButtons(
     debounceMs: pick(patched?.debounceMs, base.debounceMs),
     recordThresholdMs: pick(patched?.recordThresholdMs, base.recordThresholdMs),
     minRecordingMs: pick(patched?.minRecordingMs, base.minRecordingMs),
+    resumeGraceMs: pick(patched?.resumeGraceMs, base.resumeGraceMs),
     silentComboMs: pick(patched?.silentComboMs, base.silentComboMs),
   };
 }

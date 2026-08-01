@@ -304,10 +304,10 @@ by press duration and unread state:
 | < `debounceMs`                   | either         | ignored (debounce)                                           |
 | `debounceMs`–`recordThresholdMs` | yes            | play that contact's queue                                    |
 | `debounceMs`–`recordThresholdMs` | no             | "oops" double-beep, nothing sent                             |
-| ≥ `recordThresholdMs`            | either         | record and send on release (capped at `maxRecordingSeconds`) |
+| ≥ `recordThresholdMs`            | either         | record; on release it stays open for `resumeGraceMs` (below), then sends (capped at `maxRecordingSeconds`) |
 
 **These are config, not constants.** They live in `config.buttons` (defaults 150 / 500 / 500 /
-3000 ms) and are editable from the admin panel — finding the right feel by editing source and
+400 / 3000 ms) and are editable from the admin panel — finding the right feel by editing source and
 rebuilding was far too slow. `DEFAULT_BUTTON_TIMINGS` in `src/config/schema.ts` is the single
 source of truth, derived from the schema's own field defaults.
 
@@ -321,6 +321,38 @@ diagnose:
   can leave a long hold with almost no audio in it.
 
 `ButtonInterpreter` takes `timings` as a constructor option and holds them for its lifetime.
+
+### A released recording stays open for a moment (`resumeGraceMs`)
+
+A toddler's grip slips. Committing on the release edge means half a sentence ships and there is no
+way to continue it, so a **confirmed** recording is held open for `resumeGraceMs` (400 ms) after
+the button comes up; pressing the same button again inside that window resumes the _same_ take.
+
+The capture is never stopped across the gap — one handle, one file, no concatenation, and no
+driver-side work at all. The gap's room noise lands in the message, which is what a paused speaker
+actually sounds like and is bounded by the window. Stitching separate segments together was the
+alternative and is disproportionate for that.
+
+Rules, all locked by `src/tests/button.test.ts`:
+
+- Only a **confirmed** press opens a window. A tap never does, so tap-to-play is untouched.
+- `maxRecordingSeconds` is **not** restarted by a resume — the timer is carried across, so pumping
+  the button cannot grow a file in the RAM disk. If it fires mid-window, the take commits there.
+- A **different** button going down commits whatever is waiting, rather than leaving two takes
+  open. That also keeps the silent-mode chord out of this path entirely.
+- `reset()` drops an open window silently, exactly as it already dropped an in-flight press.
+- `resumeGraceMs: 0` restores commit-on-release. The cost of the feature is that every message
+  sends this much later, so the number is deliberately small.
+- The reported `durationMs` is time actually held (first press to final release); the trailing
+  window is not speech and is not counted.
+
+No cue marks the resume, and none is needed: the LED never goes out. `pressVisualOff` still fires
+on release, but ladder rule 1 (`recording` is still set) keeps the LED solid, so **solid means
+"still listening"** and the whoosh still means "gone".
+
+Relatedly, `#commitCapture` finalises the capture **before** playing the whoosh. The cue comes out
+of a speaker sitting next to the microphone; playing it first recorded it into the tail of every
+message.
 
 ### Adding a config section without breaking existing devices
 

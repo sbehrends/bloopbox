@@ -28,6 +28,7 @@ type ConfigView = {
     debounceMs: number;
     recordThresholdMs: number;
     minRecordingMs: number;
+    resumeGraceMs: number;
     silentComboMs: number;
   };
 };
@@ -339,6 +340,7 @@ function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
   const debounce = numberInput(config.buttons.debounceMs, 0, 2000);
   const threshold = numberInput(config.buttons.recordThresholdMs, 100, 10_000);
   const minRecording = numberInput(config.buttons.minRecordingMs, 0, 10_000);
+  const resumeGrace = numberInput(config.buttons.resumeGraceMs, 0, 3000);
   const combo = numberInput(config.buttons.silentComboMs, 500, 15_000);
 
   /** Shows the resulting press windows, so the numbers are not abstract. */
@@ -346,14 +348,17 @@ function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
   const refreshSummary = (): void => {
     const d = debounce.valueAsNumber;
     const t = threshold.valueAsNumber;
+    const g = resumeGrace.valueAsNumber;
+    const tail = g > 0 ? ` · then ${String(g)}ms to carry on before it sends` : '';
     summary.textContent =
       d < t
         ? `Under ${String(d)}ms: ignored · ${String(d)}–${String(t)}ms: tap to play · ` +
-          `over ${String(t)}ms: record`
+          `over ${String(t)}ms: record${tail}`
         : 'Debounce must be below the record threshold, or tapping to play is impossible.';
   };
   debounce.addEventListener('input', refreshSummary);
   threshold.addEventListener('input', refreshSummary);
+  resumeGrace.addEventListener('input', refreshSummary);
   refreshSummary();
 
   section.append(
@@ -369,6 +374,12 @@ function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
       minRecording,
       'Recordings with less actual audio than this are discarded rather than sent.',
     ),
+    field(
+      'Carry-on window (ms)',
+      resumeGrace,
+      'After letting go, pressing the same button again this soon continues the same ' +
+        'message instead of sending it — for when a small hand slips. 0 sends immediately.',
+    ),
     field('Silent-mode chord (ms)', combo, 'How long to hold Button 1 + Button 3 together.'),
     summary,
     saveButton('Save button timings', () =>
@@ -377,6 +388,7 @@ function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
           debounceMs: debounce.valueAsNumber,
           recordThresholdMs: threshold.valueAsNumber,
           minRecordingMs: minRecording.valueAsNumber,
+          resumeGraceMs: resumeGrace.valueAsNumber,
           silentComboMs: combo.valueAsNumber,
         },
       }),

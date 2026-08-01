@@ -20,8 +20,9 @@ The **Screenless WhatsApp Voice Messenger** is an offline, screen-free IoT appli
 
 1. Child holds assigned button $\rightarrow$ High short "Pop" chime plays (unless in Silent Mode), button LED turns **Solid ON**.
 2. Child speaks into the microphone.
-3. Child releases button $\rightarrow$ Upward "Whoosh" chime plays, LED flashes 3x rapidly $\rightarrow$ Voice note converts to `.ogg` (Opus codec, `ptt: true`) and ships to WhatsApp.
-4. Short press ($<1.0\text{s}$) triggers an "Oops/Cancel" double-beep sound, drops the clip, and sends nothing.
+3. Child releases button $\rightarrow$ the recording is **not** sent yet. It stays open for a short **carry-on window** (`buttons.resumeGraceMs`, 400 ms by default) and the LED stays **Solid ON**. Pressing the _same_ button again inside that window continues the same message instead of starting a new one, so a grip that slips mid-sentence costs nothing. Nothing new to learn: solid means "still listening".
+4. The window expires $\rightarrow$ Upward "Whoosh" chime plays, LED flashes 3x rapidly $\rightarrow$ Voice note converts to `.ogg` (Opus codec, `ptt: true`) and ships to WhatsApp. The chime plays _after_ the capture is finalised, so it is never recorded into the message it is announcing.
+5. Short press ($<1.0\text{s}$) triggers an "Oops/Cancel" double-beep sound, drops the clip, and sends nothing. A tap never opens a carry-on window.
 
 - **Receiving a Message:**
 
@@ -199,6 +200,7 @@ Setting `SIMULATOR_MODE=true` activates a virtual 2D browser canvas rendering th
 
 - **HAL Interface Tests:** Verifies correct digital output patterns across all system states.
 - **Button Debounce & Timing:** Validates that presses $<300\text{ms}$ are ignored, and presses $<1.0\text{s}$ trigger the "Cancel" double-beep tone.
+- **Carry-on Window:** Validates that a release followed by a press inside `resumeGraceMs` continues the same capture rather than starting a second one, and that repeating it cannot push a recording past `maxRecordingSeconds`.
 - **Sequential Audio Queue:** Verifies FIFO playback ordering when multiple voice notes arrive from the same contact.
 - **Configuration Manager:** Asserts fallback to `config.default.json` and tests atomic writing to `/data/config.json`.
 - **Audio Storage Purge:** Validates auto-deletion of temporary audio files older than 48 hours.

@@ -197,6 +197,16 @@ export class DeviceController {
       }
     });
 
+    /*
+     * Back inside the resume window. The capture was never stopped, so there is nothing to
+     * restart and deliberately no cue: the child hears silence and sees the same solid LED,
+     * which is exactly what "keep talking" should look like. Re-asserting the recording
+     * state is belt and braces — nothing clears it until the take commits.
+     */
+    this.#interpreter.on('captureResumed', ({ index }) => {
+      this.state.setRecording(index);
+    });
+
     this.#interpreter.on('captureCommit', ({ index }) => {
       void this.#commitCapture(index);
     });
@@ -258,10 +268,12 @@ export class DeviceController {
 
     if (!handle) return;
 
-    if (shouldPlayCue(AudioCue.Whoosh, this.state.silentMode)) {
-      await this.#safeCue(AudioCue.Whoosh);
-    }
-
+    /*
+     * Finalise the capture *before* the "whoosh". The cue comes out of a speaker sitting
+     * next to the microphone, so playing it first records it into the tail of every
+     * message. It also means a take rejected below for being too short now gets only the
+     * "oops" rather than a send sound followed by a failure sound.
+     */
     let path: string;
     let durationMs: number;
     try {
@@ -287,6 +299,10 @@ export class DeviceController {
         await this.#safeCue(AudioCue.Oops);
       }
       return;
+    }
+
+    if (shouldPlayCue(AudioCue.Whoosh, this.state.silentMode)) {
+      await this.#safeCue(AudioCue.Whoosh);
     }
 
     try {

@@ -161,6 +161,12 @@ browser with speakers that playback runs at the right speed.
 
 Not work, but things that could bite.
 
+- **The carry-on window leaves its own silence in the file.** `resumeGraceMs` keeps the microphone
+  open after release, so every message carries up to that much trailing room noise, per gap and at
+  the end — and that silence counts toward the `minRecordingMs` check, making it slightly laxer
+  than it looks. Both are accepted trade-offs of not stitching segments together (see `CLAUDE.md`).
+  Worth revisiting once it has been heard on real hardware: if 400 ms of tail is audible enough to
+  annoy, the fix is trimming at encode time, not restructuring the capture.
 - **Baileys is pinned to a release candidate** (`7.0.0-rc14`, which is what the `latest` tag
   points at). It is an unofficial WhatsApp API surface and can break from WhatsApp's side at any
   time. `legacy` (6.7.24) is the fallback if the RC proves unstable. See the Baileys 7 notes in

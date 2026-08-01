@@ -7,8 +7,11 @@ import { AudioCue } from '../audio/cues.ts';
 import { ConfigManager, DEFAULT_TEMPLATE_PATH } from '../config/configManager.ts';
 import { configSchema, DEFAULT_BUTTON_TIMINGS, type DeviceConfig } from '../config/schema.ts';
 
-const { recordThresholdMs: RECORD_THRESHOLD_MS, minRecordingMs: MIN_RECORDING_MS } =
-  DEFAULT_BUTTON_TIMINGS;
+const {
+  recordThresholdMs: RECORD_THRESHOLD_MS,
+  minRecordingMs: MIN_RECORDING_MS,
+  resumeGraceMs: RESUME_GRACE_MS,
+} = DEFAULT_BUTTON_TIMINGS;
 
 import { DeviceController, type OutboundRequest } from '../core/deviceController.ts';
 import { DeviceStatus } from '../core/deviceState.ts';
@@ -107,13 +110,18 @@ async function waitFor(predicate: () => boolean, label: string, attempts = 500):
   throw new Error(`waitFor timed out waiting for: ${label}`);
 }
 
-/** Presses and releases a button, holding for `holdMs` of fake time. */
+/**
+ * Presses and releases a button, holding for `holdMs` of fake time.
+ *
+ * The wait after release clears the resume window: a recording is not committed the moment
+ * the button comes up, so anything asserting on a send has to let that window expire.
+ */
 async function press(index: 0 | 1 | 2, holdMs: number): Promise<void> {
   hal.pressButton(index);
   await vi.advanceTimersByTimeAsync(holdMs);
   hal.releaseButton(index);
   // Let the capture/commit chain settle, including its filesystem work.
-  await vi.advanceTimersByTimeAsync(50);
+  await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
   await flush();
 }
 
@@ -182,8 +190,53 @@ describe('recording and sending', () => {
     expect(controller.state.recording).toBe(0);
 
     hal.releaseButton(0);
-    await vi.advanceTimersByTimeAsync(50);
+    // Still solid through the resume window — the capture has not stopped yet.
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS - 50);
+    expect(controller.state.recording).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(100);
     expect(controller.state.recording).toBeNull();
+  });
+});
+
+describe('the resume window', () => {
+  it('carries on the same recording when the button comes back in time', async () => {
+    hal.fixedDurationMs = 3000;
+    const start = vi.spyOn(hal, 'startRecording');
+    const stop = vi.spyOn(hal, 'stopRecording');
+
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 400);
+    hal.releaseButton(0);
+
+    // The grip slipped: nothing has stopped and nothing has been sent.
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS - 100);
+    expect(controller.state.recording).toBe(0);
+    expect(stop).not.toHaveBeenCalled();
+
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(800);
+    hal.releaseButton(0);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+    await waitFor(() => sent.length > 0, 'the resumed recording to be sent');
+
+    // One capture, one file, one message — and one pop, not one per grip.
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(1);
+    expect(hal.cueSequence().filter((cue) => cue === AudioCue.Pop)).toHaveLength(1);
+  });
+
+  it('does not open a window for a tap', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+
+    await press(0, 300);
+    // A second tap after the window would have elapsed is its own press, never a resume.
+    await press(0, 300);
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(sent).toHaveLength(0);
+    expect(hal.cueSequence()).toEqual([AudioCue.Oops, AudioCue.Oops]);
   });
 });
 
@@ -336,7 +389,7 @@ describe('config is snapshot, not watched', () => {
     expect(controller.state.recording).toBe(0);
 
     hal.releaseButton(0);
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
     await flush();
   });
 
@@ -356,7 +409,7 @@ describe('config is snapshot, not watched', () => {
     expect(rebuilt.state.recording).toBe(0);
 
     hal.releaseButton(0);
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
     await flush();
     await rebuilt.stop();
   });

@@ -172,6 +172,16 @@ const buttonTimingsSchema = z
      * from the threshold above: a slow microphone start can leave a long hold nearly empty.
      */
     minRecordingMs: z.number().int().min(0).max(10_000).default(500),
+    /**
+     * How long after release a recording stays open, waiting to be continued.
+     *
+     * Small hands slip. Without this, a grip that fails mid-sentence ships half a message
+     * and the child has no way to carry on. Pressing the same button again inside this
+     * window resumes the *same* take rather than starting a new one. The cost is that every
+     * message sends this much later, so it is deliberately short. 0 disables it entirely:
+     * the recording commits the instant the button comes up.
+     */
+    resumeGraceMs: z.number().int().min(0).max(3000).default(400),
     /** How long Button 1 + Button 3 must be held together to toggle silent mode. */
     silentComboMs: z.number().int().min(500).max(15_000).default(3000),
   })

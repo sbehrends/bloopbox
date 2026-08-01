@@ -41,6 +41,7 @@
     "debounceMs": 150,
     "recordThresholdMs": 500,
     "minRecordingMs": 500,
+    "resumeGraceMs": 400,
     "silentComboMs": 3000
   }
 }

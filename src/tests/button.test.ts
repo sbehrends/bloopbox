@@ -11,9 +11,14 @@ type Recorded = { event: string; payload?: unknown };
 
 const { debounceMs: DEBOUNCE_MS, recordThresholdMs: RECORD_THRESHOLD_MS } = DEFAULT_BUTTON_TIMINGS;
 const SILENT_COMBO_MS = DEFAULT_BUTTON_TIMINGS.silentComboMs;
+const RESUME_GRACE_MS = DEFAULT_BUTTON_TIMINGS.resumeGraceMs;
 
 /** Comfortably inside the tap window: past debounce, short of the record threshold. */
 const TAP_MS = Math.round((DEBOUNCE_MS + RECORD_THRESHOLD_MS) / 2);
+
+/** How many times one event was emitted. */
+const counts = (log: Recorded[], event: string): number =>
+  log.filter((entry) => entry.event === event).length;
 
 function setup(
   options: {
@@ -33,6 +38,7 @@ function setup(
   const track = [
     'captureStart',
     'captureConfirmed',
+    'captureResumed',
     'captureCommit',
     'captureCancel',
     'playQueue',
@@ -73,6 +79,7 @@ describe('configurable timings', () => {
       debounceMs: 150,
       recordThresholdMs: 500,
       minRecordingMs: 500,
+      resumeGraceMs: 400,
       silentComboMs: 3000,
     });
     // A tap window must exist between them or tap-to-play is unreachable.
@@ -205,6 +212,8 @@ describe('hold — at or beyond the record threshold', () => {
 
     vi.advanceTimersByTime(2000);
     interpreter.handleButtonUp(1);
+    // Committing waits out the resume window; see the block below.
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
 
     expect(names()).toContain('captureCommit');
     expect(names()).not.toContain('captureCancel');
@@ -221,6 +230,7 @@ describe('hold — at or beyond the record threshold', () => {
     interpreter.handleButtonDown(1);
     vi.advanceTimersByTime(1500);
     interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
 
     expect(names()).toContain('captureCommit');
     expect(names()).not.toContain('playQueue');
@@ -244,6 +254,184 @@ describe('hold — at or beyond the record threshold', () => {
     interpreter.handleButtonUp(0);
 
     expect(log.filter((e) => e.event === 'captureCommit')).toHaveLength(1);
+  });
+});
+
+describe('the resume window — letting go by accident', () => {
+  it('does not commit the instant the button comes up', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+
+    expect(names()).not.toContain('captureCommit');
+    expect(interpreter.hasPendingCommit(0)).toBe(true);
+  });
+
+  it('commits once the window expires with nothing more', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+
+    vi.advanceTimersByTime(RESUME_GRACE_MS - 1);
+    expect(names()).not.toContain('captureCommit');
+
+    vi.advanceTimersByTime(1);
+    expect(names()).toContain('captureCommit');
+    expect(interpreter.hasPendingCommit(0)).toBe(false);
+  });
+
+  it('continues the same take when the button comes back in time', () => {
+    const { interpreter, log, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+
+    vi.advanceTimersByTime(RESUME_GRACE_MS - 100);
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1000);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    expect(names()).toContain('captureResumed');
+    // One take: the capture never restarted, so no second start and no second pop.
+    expect(counts(log, 'captureStart')).toBe(1);
+    expect(counts(log, 'captureConfirmed')).toBe(1);
+    expect(counts(log, 'captureCommit')).toBe(1);
+    expect(names()).not.toContain('captureCancel');
+  });
+
+  it('measures the take from the first press, without counting the window', () => {
+    const { interpreter, find } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+
+    vi.advanceTimersByTime(200);
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1000);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    // 1500 held + 200 gap + 1000 held. The trailing window is not speech, so it is not counted.
+    expect(find('captureCommit')?.payload).toMatchObject({ index: 0, durationMs: 2700 });
+  });
+
+  it('reports how long the gap was, for the log', () => {
+    const { interpreter, find } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(250);
+    interpreter.handleButtonDown(0);
+
+    expect(find('captureResumed')?.payload).toMatchObject({ index: 0, gapMs: 250 });
+  });
+
+  it('commits on release when the window is disabled', () => {
+    const { interpreter, names } = setup({ timings: { resumeGraceMs: 0 } });
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+
+    expect(names()).toContain('captureCommit');
+    expect(interpreter.hasPendingCommit(0)).toBe(false);
+  });
+
+  it('never opens a window for a tap', () => {
+    const { interpreter, log, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(0);
+    expect(interpreter.hasPendingCommit(0)).toBe(false);
+
+    // A second tap is its own press, not a continuation of the first.
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(0);
+
+    expect(names()).not.toContain('captureResumed');
+    expect(counts(log, 'captureStart')).toBe(2);
+    expect(names()).not.toContain('captureCommit');
+  });
+
+  it('still hits the recording ceiling while the window is open', () => {
+    const { interpreter, find } = setup({
+      maxRecordingSeconds: 5,
+      timings: { resumeGraceMs: 2000 },
+    });
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(4000);
+    interpreter.handleButtonUp(0);
+
+    // The ceiling lands at 5s, inside the 2s window this release opened.
+    vi.advanceTimersByTime(1000);
+    expect(find('captureCommit')?.payload).toMatchObject({ reachedMaxDuration: true });
+  });
+
+  it('cannot be pumped past the recording ceiling', () => {
+    const { interpreter, log, find } = setup({ maxRecordingSeconds: 3 });
+
+    // Three grips with gaps between them. If a resume restarted the ceiling, the last one
+    // would push the commit out to well past 3s.
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(600);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(200);
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(600);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(200);
+    interpreter.handleButtonDown(0);
+
+    vi.advanceTimersByTime(1399);
+    expect(counts(log, 'captureCommit')).toBe(0);
+
+    // 3s after the very first press, exactly.
+    vi.advanceTimersByTime(1);
+    expect(counts(log, 'captureCommit')).toBe(1);
+    expect(find('captureCommit')?.payload).toMatchObject({ reachedMaxDuration: true });
+
+    vi.advanceTimersByTime(5000);
+    expect(counts(log, 'captureCommit')).toBe(1);
+  });
+
+  it('commits the waiting take when a different button is pressed', () => {
+    const { interpreter, log, find } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+
+    // The child has moved on to another contact: do not leave two takes open at once.
+    vi.advanceTimersByTime(100);
+    interpreter.handleButtonDown(1);
+
+    expect(find('captureCommit')?.payload).toMatchObject({ index: 0 });
+    expect(interpreter.hasPendingCommit(0)).toBe(false);
+    expect(counts(log, 'captureStart')).toBe(2);
+  });
+
+  it('reset() drops an open window without sending', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(1500);
+    interpreter.handleButtonUp(0);
+    interpreter.reset();
+    vi.advanceTimersByTime(10_000);
+
+    expect(names()).not.toContain('captureCommit');
+    expect(interpreter.hasPendingCommit(0)).toBe(false);
   });
 });
 

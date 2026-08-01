@@ -364,6 +364,31 @@ describe('the silent-mode chord', () => {
     expect(controller.state.silentMode).toBe(true);
     expect(sent).toHaveLength(0);
   });
+
+  /*
+   * The chord swallows both presses from inside the same `handleButtonDown` that started
+   * their captures, so the cancel can reach the controller before the HAL has finished
+   * opening the microphone. Losing it left a capture running for the life of the process,
+   * and the next press on that button reused the stale handle — the child's next voice note
+   * would have been everything recorded since the chord.
+   */
+  it('closes both captures it swallows, even the one still opening', async () => {
+    hal.pressButton(0);
+    hal.pressButton(2);
+    await vi.advanceTimersByTimeAsync(3000);
+    hal.releaseButton(0);
+    hal.releaseButton(2);
+    await vi.advanceTimersByTimeAsync(50);
+    await flush();
+
+    expect(hal.cancelledRecordings).toHaveLength(2);
+    expect(hal.activeRecordings.size).toBe(0);
+
+    // And the button still records afterwards, into a capture of its own.
+    hal.fixedDurationMs = 3000;
+    await press(2, RECORD_THRESHOLD_MS + 400);
+    await waitFor(() => sent.length === 1, 'the recording after the chord to be sent');
+  });
 });
 
 describe('volume', () => {

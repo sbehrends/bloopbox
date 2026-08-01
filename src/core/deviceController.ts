@@ -50,8 +50,17 @@ export class DeviceController {
   readonly #send: (request: OutboundRequest) => Promise<void>;
   readonly #markRead: ((index: ButtonIndex, ids: readonly string[]) => void) | undefined;
 
-  /** In-flight captures, keyed by button. */
-  readonly #captures = new Map<ButtonIndex, RecordingHandle>();
+  /**
+   * In-flight captures, keyed by button.
+   *
+   * The *promise* rather than the handle, because a capture can be cancelled before the HAL
+   * has finished opening it: `ButtonInterpreter` emits `captureCancel` synchronously inside
+   * the same `handleButtonDown` that emitted `captureStart` when the silent-mode chord forms.
+   * Storing the handle only once it resolves let that cancel find nothing and return, which
+   * left the microphone open for the life of the process — and the next press on that button
+   * reused the stale handle, shipping every second recorded since as one voice note.
+   */
+  readonly #captures = new Map<ButtonIndex, Promise<RecordingHandle | null>>();
   /** messageId -> file path, so played notes can be deleted ahead of the TTL. */
   readonly #pathsByMessageId = new Map<string, string>();
   #quietHoursTimer: NodeJS.Timeout | null = null;
@@ -186,7 +195,7 @@ export class DeviceController {
     });
 
     this.#interpreter.on('captureStart', ({ index }) => {
-      void this.#beginCapture(index);
+      this.#beginCapture(index);
     });
 
     // Now certainly a recording: light it solid and play the pop.
@@ -250,22 +259,22 @@ export class DeviceController {
 
   /* ---- capture lifecycle ---- */
 
-  async #beginCapture(index: ButtonIndex): Promise<void> {
+  #beginCapture(index: ButtonIndex): void {
     if (this.#captures.has(index)) return;
-    try {
-      const handle = await this.#hal.startRecording(index);
-      this.#captures.set(index, handle);
-    } catch {
-      // No microphone, or no browser attached. The press simply produces nothing.
-      this.#captures.delete(index);
-    }
+    // No microphone, or no browser attached: the press simply produces nothing, and the
+    // null is what commit and discard below check for.
+    this.#captures.set(
+      index,
+      this.#hal.startRecording(index).catch(() => null),
+    );
   }
 
   async #commitCapture(index: ButtonIndex): Promise<void> {
-    const handle = this.#captures.get(index);
+    const pending = this.#captures.get(index);
     this.#captures.delete(index);
     this.state.setRecording(null);
 
+    const handle = pending ? await pending : null;
     if (!handle) return;
 
     /*
@@ -320,9 +329,12 @@ export class DeviceController {
   }
 
   async #discardCapture(index: ButtonIndex): Promise<void> {
-    const handle = this.#captures.get(index);
+    const pending = this.#captures.get(index);
     this.#captures.delete(index);
     if (this.state.recording === index) this.state.setRecording(null);
+
+    // Waits for a capture that is still opening, rather than walking away from it.
+    const handle = pending ? await pending : null;
     if (!handle) return;
 
     try {

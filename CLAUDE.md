@@ -300,10 +300,19 @@ LED 1 vs. an unread message on LED 1). Resolved **per-LED, first match wins**:
 1. Recording on this button → **solid on**
 2. Active one-shot animation (boot chase, connecting blink, sent-flash, silent-mode transition
    chase) → that animation's current frame
-3. Device error — Wi-Fi down → all 3 solid; WhatsApp unlinked → LEDs 1 & 2 solid
-4. Unread message on this button → blink 0.8s on / 0.8s off
-5. Silent mode idle **and** this is button 1 or 3 → 0.1s pulse every 4s
-6. otherwise → **off**
+3. Setup hotspot up → all 3 double-pulse (150ms on / 150ms off / 150ms on, then dark to 2s)
+4. Device error — Wi-Fi down → all 3 solid; WhatsApp unlinked → LEDs 1 & 2 solid
+5. Unread message on this button → blink 0.8s on / 0.8s off
+6. Silent mode idle **and** this is button 1 or 3 → 0.1s pulse every 4s
+7. otherwise → **off**
+
+Rungs 3 and 4 are one `DeviceStatus` each and so mutually exclusive; the hotspot ranks above the
+Wi-Fi error because with the hotspot up, "the network is gone" is the cause and "setup is waiting
+for you" is the part a parent can act on. It is a **rhythm**, not another rate: every other
+pattern here is a symmetric square wave or a chase, and people tell a heartbeat from a blink
+across a room far more reliably than they tell 0.5s blinking from 1.5s blinking. Solid-on stays
+the language of error. There is deliberately **no cue** — the hotspot can come up at 3am because
+the router died, and a chime in a child's bedroom is the worse failure.
 
 ### Tap vs. cancel
 

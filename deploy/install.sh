@@ -38,7 +38,7 @@ Options:
   --data-dir DIR     Writable volume for config.json and WhatsApp auth (default: /data)
   --user NAME        System user the daemons run as (default: bloopbox)
   --boot-dir DIR     Firmware config location (default: autodetected /boot/firmware)
-  --skip-deps        Do not apt-get install ffmpeg / alsa-utils / libgpiod3
+  --skip-deps        Do not apt-get install ffmpeg / alsa-utils / libgpiod3 / dnsmasq-base
   --no-boot-config   Do not touch config.txt (skips the GPIO pull-ups the buttons need)
   --no-watchdog      Do not enable the hardware watchdog
   --no-start         Install and enable, but do not start the services
@@ -125,10 +125,11 @@ if [[ "${SKIP_DEPS}" == true ]]; then
   info "skipped (--skip-deps)"
 else
   # ffmpeg: the Opus pipeline. alsa-utils: arecord/aplay/amixer. libgpiod3: what the
-  # opengpio addon links against. Nothing here compiles.
+  # opengpio addon links against. dnsmasq-base: DHCP and DNS for the setup hotspot, via
+  # NetworkManager's shared mode. Nothing here compiles.
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y --no-install-recommends ffmpeg alsa-utils libgpiod3
+  apt-get install -y --no-install-recommends ffmpeg alsa-utils libgpiod3 dnsmasq-base
   info "ffmpeg $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f3)"
 fi
 

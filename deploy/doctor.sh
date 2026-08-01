@@ -255,6 +255,14 @@ if [[ -d /run/systemd/system ]]; then
     fail "nmcli" "not installed — wifi-apply.sh and the net agent both need it"
   fi
 
+  # NetworkManager's shared mode runs its own dnsmasq. Without the binary the setup hotspot
+  # comes up with no DHCP, which looks to a phone like a network that will not connect.
+  if [[ -x /usr/sbin/dnsmasq ]]; then
+    pass "dnsmasq-base" "present (setup hotspot DHCP)"
+  else
+    fail "dnsmasq-base" "missing — the setup hotspot would hand out no addresses"
+  fi
+
   if [[ -r "${NET_STATE_FILE}" ]]; then
     # Freshness, not content: a file that stopped updating is the failure mode that matters,
     # and it is indistinguishable from a healthy one by eye.

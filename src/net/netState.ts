@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 
 /**
@@ -127,6 +127,12 @@ export type NetStateWatcherOptions = {
   readonly now?: () => number;
   /** Called only when the answer changes, not on every poll. */
   readonly onWifiDownChange: (down: boolean) => void;
+  /**
+   * Called on every poll, changed or not, with whatever was read.
+   *
+   * The hotspot supervisor is a timing machine: it needs the ticks, not just the edges.
+   */
+  readonly onReading?: (state: NetState | null) => void;
   /** Called when a reading goes stale or starts flowing again. */
   readonly onAgentHealthChange?: (healthy: boolean) => void;
 };
@@ -143,6 +149,7 @@ export class NetStateWatcher {
   readonly #now: () => number;
   readonly #onWifiDownChange: (down: boolean) => void;
   readonly #onAgentHealthChange: ((healthy: boolean) => void) | undefined;
+  readonly #onReading: ((state: NetState | null) => void) | undefined;
 
   #timer: NodeJS.Timeout | null = null;
   #wifiDown = false;
@@ -155,6 +162,7 @@ export class NetStateWatcher {
     this.#now = options.now ?? Date.now;
     this.#onWifiDownChange = options.onWifiDownChange;
     this.#onAgentHealthChange = options.onAgentHealthChange;
+    this.#onReading = options.onReading;
   }
 
   /** The most recent trusted reading, for `/api/status`. */
@@ -199,5 +207,44 @@ export class NetStateWatcher {
       this.#wifiDown = down;
       this.#onWifiDownChange(down);
     }
+
+    // Last, so anything reacting to a tick sees the transitions already applied.
+    this.#onReading?.(state);
+  }
+}
+
+/**
+ * Where the daemon asks the root agent for something (see `deploy/net-agent.sh`).
+ *
+ * In the daemon's own runtime directory, not the agent's: one writer per directory, so the
+ * root agent never has to be able to write where the daemon writes, and never ends up owning
+ * the recordings tmpfs.
+ */
+export const NET_REQUEST_PATH = process.env['NET_REQUEST_PATH'] ?? '/run/bloopbox/net-request.json';
+
+/** Everything the daemon is allowed to ask for. The agent enforces the same list. */
+export const NET_ACTIONS = ['ap-up', 'ap-down'] as const;
+
+export type NetAction = (typeof NET_ACTIONS)[number];
+
+/**
+ * Asks the agent for something, by writing a file it consumes and deletes.
+ *
+ * Fire-and-forget by design: the answer arrives as a changed reading, not as a return value,
+ * because the agent is a separate process and the radio takes seconds to do anything. Never
+ * throws — a request that cannot be written is logged by the caller and retried by the
+ * supervisor on the next poll.
+ */
+export async function requestNetAction(
+  action: NetAction,
+  path: string = NET_REQUEST_PATH,
+): Promise<boolean> {
+  try {
+    // Written whole, in one call: the agent may read it at any moment, and a half-written
+    // document parses as nothing and is dropped.
+    await writeFile(path, `${JSON.stringify({ action })}\n`, { mode: 0o640 });
+    return true;
+  } catch {
+    return false;
   }
 }

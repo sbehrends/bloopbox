@@ -180,7 +180,24 @@ file, an unparseable one, a reading older than 30s, or an agent that found no `n
 network is gone lights the LEDs. Inventing an outage from missing information would light all
 three LEDs on any dev machine and on any device whose agent died.
 
-`sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user.
+The daemon asks for things back through `/run/bloopbox/net-request.json` — one JSON object,
+`{"action":"ap-up"}` or `{"action":"ap-down"}`, consumed and deleted by the agent. The action is
+matched against a fixed list before anything runs and no part of the file is ever evaluated as
+shell; that allowlist is the whole security model of the boundary.
+
+`ap-up` creates (or rewrites) the `bloopbox-ap` NetworkManager profile — `mode ap`, band bg, no
+passphrase, `ipv4.method shared` — and brings it up. Shared mode is why `dnsmasq-base` is a
+runtime package: NM runs its own dnsmasq on that interface for DHCP and DNS. `ap-down` drops it
+and immediately tries the real network, because there is one radio and stepping aside is the only
+way to attempt a join.
+
+When the hotspot goes up is decided in `src/core/networkSupervisor.ts`: 20s of no network on an
+unconfigured device, 3 minutes on a configured one (a flat 30s would pop a hotspot into the house
+every time the router reboots), then every 60s the hotspot steps aside for a 30s join attempt —
+unless the device was never configured, in which case there is nothing to rejoin and it stays up.
+
+`sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user, and
+that `nmcli` and dnsmasq are installed.
 
 ## The systemd units
 

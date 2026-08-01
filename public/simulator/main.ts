@@ -385,6 +385,14 @@ const INJECTORS: readonly { label: string; run: () => void }[] = [
     run: () => socket.emit('sim:injectWifiFailure', { down: false }),
   },
   {
+    label: 'Setup hotspot up',
+    run: () => socket.emit('sim:injectApMode', { active: true }),
+  },
+  {
+    label: 'Setup hotspot down',
+    run: () => socket.emit('sim:injectApMode', { active: false }),
+  },
+  {
     label: 'WhatsApp session expired',
     run: () => socket.emit('sim:injectSessionExpiry'),
   },

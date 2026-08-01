@@ -85,16 +85,18 @@ channel across the switch. On failure the agent re-raises the AP within ~30 s wi
 the state file.
 
 **Milestones.** ~~(1) observation only — net-agent, state file, real `wifiDown`, doctor checks~~
-**done**. (2) AP up/down — profile, `networkSupervisor.ts`, tests, the LED rung. (3) portal —
-`public/portal/`, port 80, probe catch-all, join and fallback. (4) packaging — `dnsmasq-base`,
-boot README, `smoke-test-release.sh` with a stubbed `nmcli` on PATH.
+**done**. ~~(2) AP up/down — profile, `networkSupervisor.ts`, tests, the LED rung~~ **done**,
+including `dnsmasq-base` in `RUNTIME_PACKAGES` and a simulator injector for the pattern. What is
+left of it: nothing is *proven* on a radio (see below), and the agent still reports no scan list
+or join error. (3) portal — `public/portal/`, port 80, probe catch-all, join and fallback.
+(4) packaging — boot README, `smoke-test-release.sh` with a stubbed `nmcli` on PATH.
 
 **Why it matters.** It is the difference between a device a parent can set up and one that needs
 a laptop and a card reader. Today the recovery path is physical — pull the card, edit a text
 file — which is documented but is not what the spec promises.
 
-Radio behaviour cannot be tested in a container, so milestones 2 and 3 land as verification gaps
-until they run on a Pi, the same as the GPIO driver.
+Radio behaviour cannot be tested in a container, so milestone 2 has landed as a verification gap
+(below), and milestone 3 will too.
 
 ### Read-only root filesystem needs /data on its own partition
 
@@ -147,6 +149,20 @@ groups, `markRead`, and `requestPairingCode` actually returning a code.
 Worth checking when pairing: that a voice note from a number **not** assigned to a button is
 dropped (it should not appear, and the bridge logs `dropped a voice note`), and that a message in
 an assigned group arrives on that button whoever in the group sent it.
+
+### The setup hotspot has never touched a radio
+
+`deploy/net-agent.sh` can create the `bloopbox-ap` NetworkManager profile and bring it up and
+down, and `NetworkSupervisor` decides when. None of it has run on a Pi. What a container proved:
+the agent publishes valid JSON for associated / disconnected / AP-active / no-nmcli, the parser
+accepts all four, and the daemon walks `WIFI_ERROR` → `SETUP_PORTAL` → `CONNECTING` and writes an
+`ap-up` request after the grace period — all against a stubbed `nmcli`.
+
+What only a radio can show: that `802-11-wireless.mode ap` + `ipv4.method shared` actually comes
+up on `brcmfmac`, that a phone gets a DHCP lease from NM's dnsmasq, that dropping the AP and
+`nmcli con up bloopbox` reliably rejoins, and that the Wi-Fi country being unset does not stop the
+AP from starting. Worth watching during bring-up: whether the radio needs a moment between AP
+teardown and the join attempt.
 
 ### GPIO driver on real hardware
 

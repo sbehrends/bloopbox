@@ -28,6 +28,17 @@ export const LED_TIMINGS = {
   sentFlashCount: 3,
   /** Silent-mode transition: one slow left-to-right pass. */
   silentTransitionStepMs: 500,
+  /**
+   * Setup hotspot: a double-pulse on all three, then quiet.
+   *
+   * A rhythm rather than another rate. Every other pattern here is a symmetric square wave
+   * or a chase, and people tell rhythms apart across a room far more reliably than they tell
+   * 0.5s blinking from 1.5s blinking — which is the distinction that would otherwise have to
+   * carry "the setup network is up" against Connecting. Solid-on stays the language of error.
+   */
+  apPulseOnMs: 150,
+  apPulseGapMs: 150,
+  apPulsePeriodMs: 2000,
 } as const;
 
 /** Total lifetime of the 3-flash send confirmation. */
@@ -106,6 +117,9 @@ export function resolveLed(
     case DeviceStatus.WifiError:
       // Network gone: all three solid.
       return true;
+    case DeviceStatus.SetupPortal:
+      // Setup hotspot up: on, off, on, then dark for the rest of the period.
+      return isOnForDoublePulse(elapsedMs);
     case DeviceStatus.WhatsAppError:
       // Wi-Fi fine, WhatsApp unlinked: outer-left pair solid.
       return index === 0 || index === 1;
@@ -130,6 +144,15 @@ export function resolveLed(
 /** On for the first half of each period, off for the second. */
 function isOnForSquareWave(elapsedMs: number, halfPeriodMs: number): boolean {
   return Math.floor(elapsedMs / halfPeriodMs) % 2 === 0;
+}
+
+/** Two short pulses at the start of each period, then dark. */
+function isOnForDoublePulse(elapsedMs: number): boolean {
+  const { apPulseOnMs, apPulseGapMs, apPulsePeriodMs } = LED_TIMINGS;
+  const phase = elapsedMs % apPulsePeriodMs;
+  if (phase < apPulseOnMs) return true;
+  const secondPulseStart = apPulseOnMs + apPulseGapMs;
+  return phase >= secondPulseStart && phase < secondPulseStart + apPulseOnMs;
 }
 
 /**

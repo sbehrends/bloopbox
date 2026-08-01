@@ -39,6 +39,7 @@ export type SimulatorToServerEvents = {
   /* Event injector — exercises paths that are otherwise hard to reach. */
   'sim:injectIncoming': (payload: { index: ButtonIndex; count?: number }) => void;
   'sim:injectWifiFailure': (payload: { down: boolean }) => void;
+  'sim:injectApMode': (payload: { active: boolean }) => void;
   'sim:injectSessionExpiry': () => void;
   'sim:injectWhatsAppConnected': () => void;
   'sim:reboot': () => void;

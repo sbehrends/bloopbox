@@ -106,6 +106,33 @@ describe('ladder step 3 — lifecycle status', () => {
     expect(frame(state, 5000)).toEqual([true, true, true]);
   });
 
+  it('double-pulses all three while the setup hotspot is up', () => {
+    const state = snapshot({ status: DeviceStatus.SetupPortal });
+    const { apPulseOnMs, apPulseGapMs, apPulsePeriodMs } = LED_TIMINGS;
+    const secondPulse = apPulseOnMs + apPulseGapMs;
+
+    expect(frame(state, 0)).toEqual([true, true, true]);
+    expect(frame(state, apPulseOnMs - 1)).toEqual([true, true, true]);
+    // The gap between the two pulses is what makes this a rhythm rather than a blink.
+    expect(frame(state, apPulseOnMs)).toEqual([false, false, false]);
+    expect(frame(state, secondPulse)).toEqual([true, true, true]);
+    expect(frame(state, secondPulse + apPulseOnMs)).toEqual([false, false, false]);
+    // Dark for the rest of the period, then the rhythm repeats.
+    expect(frame(state, apPulsePeriodMs - 1)).toEqual([false, false, false]);
+    expect(frame(state, apPulsePeriodMs)).toEqual([true, true, true]);
+  });
+
+  it('is never confusable with Connecting: they disagree within one period', () => {
+    // Both light all three, so the patterns have to differ in time, not in which LED.
+    const hotspot = snapshot({ status: DeviceStatus.SetupPortal });
+    const connecting = snapshot({ status: DeviceStatus.Connecting });
+    const differing = [];
+    for (let t = 0; t < LED_TIMINGS.apPulsePeriodMs; t += 50) {
+      if (resolveLed(0, hotspot, t, null) !== resolveLed(0, connecting, t, null)) differing.push(t);
+    }
+    expect(differing.length).toBeGreaterThan(0);
+  });
+
   it('holds only LEDs 1 and 2 on a WhatsApp error', () => {
     const state = snapshot({ status: DeviceStatus.WhatsAppError });
     expect(frame(state, 0)).toEqual([true, true, false]);

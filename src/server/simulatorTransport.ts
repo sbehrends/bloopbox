@@ -19,6 +19,13 @@ export type SimulatorInjector = {
   injectIncoming(index: ButtonIndex, count: number): void;
   /** Force the Wi-Fi error state on or off. */
   injectWifiFailure(down: boolean): void;
+  /**
+   * Force the setup-hotspot state on or off.
+   *
+   * A browser cannot produce AP mode any other way — it needs a radio and a root agent — and
+   * an LED pattern nobody can look at is one nobody will notice is wrong.
+   */
+  injectApMode(active: boolean): void;
   /** Force the WhatsApp-unlinked state. */
   injectSessionExpiry(): void;
   /**
@@ -174,6 +181,10 @@ export class SocketSimulatorTransport implements SimulatorTransport {
 
     socket.on('sim:injectWifiFailure', (payload: unknown) => {
       injector.injectWifiFailure(readField(payload, 'down') === true);
+    });
+
+    socket.on('sim:injectApMode', (payload: unknown) => {
+      injector.injectApMode(readField(payload, 'active') === true);
     });
 
     socket.on('sim:injectSessionExpiry', () => {

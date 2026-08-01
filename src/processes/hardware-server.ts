@@ -24,7 +24,12 @@ import { SimulatorHal } from '../hal/simulatorDriver.ts';
 import type { Hal } from '../hal/types.ts';
 import { BRIDGE_NAMESPACE, type WhatsAppConnectionState } from '../ipc/events.ts';
 import { childLogger } from '../logger.ts';
-import { NetStateWatcher } from '../net/netState.ts';
+import {
+  NetworkIntent,
+  NetworkSupervisor,
+  type NetworkObservation,
+} from '../core/networkSupervisor.ts';
+import { NetStateWatcher, requestNetAction, type NetAction } from '../net/netState.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
 import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
@@ -132,6 +137,11 @@ async function main(): Promise<void> {
   let wifiOverride: boolean | null = null;
   const isWifiDown = (): boolean => wifiOverride ?? wifiObserved;
 
+  /** Same arrangement for the setup hotspot: what the agent reports, or what a tester staged. */
+  let apObserved = false;
+  let apOverride: boolean | null = null;
+  const isApActive = (): boolean => apOverride ?? apObserved;
+
   const controller = new DeviceController({
     hal,
     config,
@@ -155,7 +165,11 @@ async function main(): Promise<void> {
       transport.broadcastStatus(buildStatusPayload(routesContext));
       return;
     }
-    if (isWifiDown()) {
+    if (isApActive()) {
+      // Above WifiError deliberately: with the hotspot up, "the network is gone" is the
+      // cause, and "setup is waiting for you" is the part a parent can act on.
+      controller.setStatus(DeviceStatus.SetupPortal);
+    } else if (isWifiDown()) {
       controller.setStatus(DeviceStatus.WifiError);
     } else if (whatsappState === 'connected') {
       controller.setStatus(DeviceStatus.Ready);
@@ -281,6 +295,13 @@ async function main(): Promise<void> {
         log.info({ down }, 'injected wifi state');
         refreshStatus();
       },
+      injectApMode: (active) => {
+        // Latched like the Wi-Fi injector, and left latched: the real reading would flip it
+        // straight back on any device that does have an agent.
+        apOverride = active;
+        log.info({ active }, 'injected setup hotspot state');
+        refreshStatus();
+      },
       injectSessionExpiry: () => {
         whatsappState = 'loggedOut';
         log.info('injected whatsapp session expiry');
@@ -288,8 +309,9 @@ async function main(): Promise<void> {
       },
       injectWhatsAppConnected: () => {
         whatsappState = 'connected';
-        // Hands Wi-Fi back to the agent rather than pinning it up.
+        // Hands the network back to the agent rather than pinning it up.
         wifiOverride = null;
+        apOverride = null;
         log.info('injected whatsapp connected');
         refreshStatus();
       },
@@ -316,11 +338,49 @@ async function main(): Promise<void> {
    * watcher reports as "not down". The error pattern only ever comes from a fresh reading
    * that explicitly says the network is gone.
    */
+  /**
+   * Decides when the setup hotspot goes up (PENDING.md). Pure; the privileged half is the
+   * root agent, reached by writing a request file it consumes.
+   */
+  const supervisor = new NetworkSupervisor({
+    configured: config.current.system.configured,
+    hasTargetNetwork: config.current.wifi.ssid.length > 0,
+  });
+
+  const ask = (action: NetAction): void => {
+    void (async (): Promise<void> => {
+      const written = await requestNetAction(action);
+      if (written) {
+        log.info({ action }, 'asked the network agent');
+      } else {
+        // The supervisor will ask again on a later tick; on a dev machine there is no agent
+        // and no request directory, which is exactly this path and is not a problem.
+        log.debug({ action }, 'could not write a network request');
+      }
+    })();
+  };
+
   const netWatcher = new NetStateWatcher({
     onWifiDownChange: (down) => {
       wifiObserved = down;
       log.info({ down, ssid: netWatcher.last?.ssid ?? null }, 'wifi state changed');
       refreshStatus();
+    },
+    onReading: (state) => {
+      const observation: NetworkObservation = {
+        available: state?.available ?? false,
+        online: state?.online ?? false,
+        apActive: state?.apActive ?? false,
+      };
+
+      if (observation.apActive !== apObserved) {
+        apObserved = observation.apActive;
+        log.info({ apActive: apObserved }, 'setup hotspot state changed');
+        refreshStatus();
+      }
+
+      const intent = supervisor.observe(observation, Date.now());
+      if (intent !== NetworkIntent.None) ask(intent);
     },
     onAgentHealthChange: (healthy) => {
       if (healthy) {

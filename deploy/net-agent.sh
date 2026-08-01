@@ -23,13 +23,114 @@ set -u
 STATE_DIR="${NET_STATE_DIR:-/run/bloopbox-net}"
 STATE_FILE="${STATE_DIR}/net-state.json"
 
+# The other direction: written by the unprivileged daemon in its own runtime directory,
+# consumed and deleted here. Everything in it is validated against a fixed list of actions
+# before anything happens, and no part of it is ever evaluated as shell.
+REQUEST_FILE="${NET_REQUEST_FILE:-/run/bloopbox/net-request.json}"
+
+# Used to read the request file: node is bundled with the release, jq is not.
+PREFIX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NODE="${NODE_BIN:-${PREFIX}/node/bin/node}"
+
 # Must stay comfortably under NET_STATE_MAX_AGE_MS (30s) in src/net/netState.ts, which is
 # how the daemon decides this agent has stopped publishing. Keep the two in step.
 POLL_SECONDS="${NET_AGENT_POLL_SECONDS:-5}"
 
-# The connection profile the setup hotspot will use. Named here so "are we in AP mode" has
-# one answer even before anything brings it up.
+# The connection profile the setup hotspot uses. Named here so "are we in AP mode" has one
+# answer, and so teardown never has to guess.
 AP_CONNECTION="${AP_CONNECTION_NAME:-bloopbox-ap}"
+
+# The connection wifi-apply.sh maintains from config.json — what "the real network" means.
+CONNECTION_NAME="${WIFI_CONNECTION_NAME:-bloopbox}"
+
+# The network a parent looks for. Suffixed with the last four of the Pi's serial so two boxes
+# in one house are tellable apart — not a secret, and not treated as one: the hotspot is open
+# (see PENDING.md for why a published passphrase would be worth nothing).
+serial_suffix() {
+  local serial
+  serial="$(awk -F': *' '/^Serial/{print $2; exit}' /proc/cpuinfo 2>/dev/null)"
+  if [[ -n "${serial}" ]]; then
+    echo "${serial: -4}" | tr '[:lower:]' '[:upper:]'
+  else
+    echo "0000"
+  fi
+}
+AP_SSID="${AP_SSID:-bloopbox-$(serial_suffix)}"
+
+# The Wi-Fi interface, asked for rather than assumed to be wlan0 — but falling back to it,
+# because an AP profile bound to `ifname *` has no device to pick when it activates.
+wifi_device() {
+  local device
+  device="$(nmcli -t -f DEVICE,TYPE dev status 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}')"
+  echo "${device:-wlan0}"
+}
+
+# NetworkManager's own shared mode: DHCP, DNS and 10.42.0.1 without hostapd, and teardown is
+# one command. Needs dnsmasq-base installed.
+ap_up() {
+  local device
+  device="$(wifi_device)"
+  if [[ "$(nmcli -t -f NAME con show 2>/dev/null | awk -v n="${AP_CONNECTION}" '$0==n{print "yes"; exit}')" != yes ]]; then
+    nmcli con add type wifi ifname "${device}" con-name "${AP_CONNECTION}" ssid "${AP_SSID}" \
+      >/dev/null 2>&1 || { log "could not create ${AP_CONNECTION}"; return 1; }
+  fi
+  # Rewritten every time rather than assumed: an upgrade may change what we want here, and a
+  # profile left over from an older release would otherwise stay wrong forever.
+  nmcli con modify "${AP_CONNECTION}" \
+    connection.interface-name "${device}" \
+    802-11-wireless.mode ap 802-11-wireless.band bg 802-11-wireless.ssid "${AP_SSID}" \
+    wifi-sec.key-mgmt none ipv4.method shared ipv6.method ignore \
+    connection.autoconnect no >/dev/null 2>&1
+  if nmcli con up "${AP_CONNECTION}" >/dev/null 2>&1; then
+    log "hotspot up: ${AP_SSID}"
+  else
+    log "hotspot failed to come up"
+    return 1
+  fi
+}
+
+# Down, then straight into an attempt at the real network — one radio, so the only way to try
+# is to stop being an access point first.
+ap_down() {
+  nmcli con down "${AP_CONNECTION}" >/dev/null 2>&1
+  log "hotspot down"
+  if nmcli con up "${CONNECTION_NAME}" >/dev/null 2>&1; then
+    log "rejoined ${CONNECTION_NAME}"
+  else
+    log "no luck rejoining ${CONNECTION_NAME} yet"
+  fi
+}
+
+# Reads one request, acts on it, deletes it. Unknown actions are logged and dropped: this is
+# the privilege boundary, so the allowlist is the whole security model.
+consume_request() {
+  [[ -r "${REQUEST_FILE}" ]] || return 0
+  local action=
+  if [[ -x "${NODE}" ]]; then
+    action="$("${NODE}" -e '
+      const fs = require("node:fs");
+      try {
+        const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        const action = parsed && typeof parsed.action === "string" ? parsed.action : "";
+        console.log(/^[a-z-]{1,16}$/.test(action) ? action : "");
+      } catch { console.log(""); }
+    ' "${REQUEST_FILE}" 2>/dev/null)"
+  else
+    log "no node at ${NODE} — cannot read requests"
+  fi
+  rm -f "${REQUEST_FILE}"
+
+  case "${action}" in
+    ap-up) ap_up ;;
+    ap-down) ap_down ;;
+    # Empty means the file was there but held nothing this script is willing to act on —
+    # unparseable, the wrong shape, or an action outside the allowlist. Worth a line: silence
+    # here would make a daemon asking for something impossible look like a daemon asking for
+    # nothing. The action itself is not echoed; it is untrusted input.
+    "") log "dropped a request that carried no usable action" ;;
+    *) log "ignoring unknown request: ${action}" ;;
+  esac
+}
 
 log() { echo "net-agent: $*"; }
 
@@ -81,9 +182,11 @@ if ! command -v nmcli >/dev/null 2>&1; then
   exit 0
 fi
 
-log "publishing to ${STATE_FILE} every ${POLL_SECONDS}s"
+log "publishing to ${STATE_FILE} every ${POLL_SECONDS}s; hotspot would be ${AP_SSID}"
 
 while [[ "${running}" == true ]]; do
+  consume_request
+
   ssid=
   signal=null
   online=false

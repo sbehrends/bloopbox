@@ -19,8 +19,15 @@ export const DeviceStatus = {
   Connecting: 'CONNECTING',
   /** Online and idle. */
   Ready: 'READY',
-  /** Wi-Fi down; all three solid. Opens the AP hotspot after 30s. */
+  /** Wi-Fi down and no setup hotspot up (yet); all three solid. */
   WifiError: 'WIFI_ERROR',
+  /**
+   * The open setup hotspot is up and the captive portal is waiting; all three double-pulse.
+   *
+   * Ranked above WifiError in `hardware-server.ts`: when the AP is up, "the network is gone"
+   * is the cause, not the news a parent can act on.
+   */
+  SetupPortal: 'SETUP_PORTAL',
   /** Wi-Fi up but WhatsApp unlinked or awaiting a QR scan; LEDs 1 and 2 solid. */
   WhatsAppError: 'WHATSAPP_ERROR',
 } as const;

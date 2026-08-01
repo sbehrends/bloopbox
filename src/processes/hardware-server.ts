@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
+import { RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
 import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
 import { ConfigManager } from '../config/configManager.ts';
@@ -444,6 +445,28 @@ async function main(): Promise<void> {
     throw error;
   });
   await controller.start();
+
+  /*
+   * Put back whatever a restart would otherwise have thrown away.
+   *
+   * Before the purger starts, so a note recovered into a queue is already protected by
+   * `protectedFiles()` when the first sweep runs. Awaited rather than fired off, so the boot
+   * window closes on a device whose unread lights already tell the truth.
+   */
+  const recovered = await recoverUnplayedNotes({ directory: RECORDING_DIRECTORY });
+  for (const { index, note } of recovered.notes) controller.restoreUnread(index, note);
+  if (recovered.notes.length > 0 || recovered.expired > 0 || recovered.unattributable > 0) {
+    log.info(
+      {
+        restored: recovered.notes.length,
+        expired: recovered.expired,
+        unattributable: recovered.unattributable,
+        maxAgeMs: RECOVERY_MAX_AGE_MS,
+      },
+      'unread notes recovered',
+    );
+  }
+
   purger.start();
   await netWatcher.start();
 

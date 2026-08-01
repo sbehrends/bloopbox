@@ -105,43 +105,40 @@ as the recovery route when even the hotspot cannot be reached.
 Radio behaviour cannot be tested in a container, so milestones 2 and 3 have landed as a single
 verification gap (below).
 
-### Unread notes should be recovered at boot, not silently discarded
+### Unread notes are recovered at boot — but only within 8 h, and not across a power cut
 
-**Problem.** The unread queue lives only in `QueueManager`'s memory. The audio is on disk, but the
-list of what is waiting is not, so any restart of the hardware daemon — a config save, a crash, an
-update — drops every note a child had not yet listened to. The sender has already seen their
-message delivered. Hit twice during the 2026-08-01 live run; four notes were orphaned the second
-time.
+**Built** on 2026-08-01, in `src/audio/recovery.ts`. No read-state store was needed: playback
+deletes a note's file, so *present on disk* already means *unread*, and the recordings directory is
+the ledger. The missing piece was never time, it was the **button index**, which now rides in the
+filename (`wa-<index>-<messageId>.ogg`); `receivedAt` comes from mtime and `durationMs` from
+ffprobe. Recovery is a scan, so nothing can disagree with the directory.
 
-**What is already in our favour.** Playback deletes the file, so *present on disk* already means
-*unread*: the recordings directory **is** the queue, and recovery is a scan rather than new
-bookkeeping. `RuntimeDirectoryPreserve=yes` is already set on both units, so the files genuinely do
-survive a daemon restart, and `RuntimeDirectorySize=64M` caps how much can ever be waiting.
+The window is **8 h** (`RECOVERY_MAX_AGE_MS`), a product decision rather than a technical limit: a
+note from this morning is worth hearing when the box comes back, one from yesterday is a confusing
+thing to hand a small child. Recovered notes are restored silently — `restoreUnread` skips the
+notify cue, because nothing has arrived and a box that chimed through its backlog on every restart
+would teach a parent to distrust the sound.
 
-**How far back it can reach — four ceilings, hardest first.**
+What remains open, in the order it will bite:
 
-1. _A power cycle wipes everything._ `RECORDING_DIR` is `/run/bloopbox`, a tmpfs. Someone
-   unplugging the box — the most likely reboot in a child's room — leaves nothing to recover.
-   This feature covers daemon restarts only. Surviving a power cut would mean writing a child's
-   voice notes to the SD card, which is a different decision with a privacy cost and a wear cost.
-2. _64 MB._ Whatever the queue holds, `RuntimeDirectorySize` is the real cap.
-3. _48 hours._ `AUDIO_TTL_MS` already governs the queue, and recovery should reproduce exactly what
-   would have been there had the daemon not restarted — no more, no less. A second, tighter number
-   would mean two rules answering the same question, differing only by whether a restart happened.
-4. _Whether a 40-hour-old note should still play at all_ is a real product question, but it is
-   **not** new and does not belong here: it is already true today without any restart. Answer it
-   for the queue as a whole or not at all.
+1. _A power cycle still wipes everything._ `RECORDING_DIR` is `/run/bloopbox`, a tmpfs, and
+   someone unplugging the box is the most likely restart in a child's room. Only daemon restarts —
+   config saves, crashes, updates — are covered. Surviving a power cut means writing a child's
+   voice notes to the SD card: a different decision, with a privacy cost and a wear cost.
+2. _A recovered note still cannot be marked read upstream_, because the bridge's `pendingReads` is
+   memory too (below). It plays, and the sender still never sees a receipt. These two want solving
+   together.
+3. _Notes written before this change are unattributable_ and are skipped rather than guessed at —
+   verified live, four orphans reported as `unattributable: 4`. Deliberate: putting one contact's
+   voice on another contact's button is the outcome the whitelist exists to prevent, and a guess
+   would arrive with none of the evidence that produced it. Self-clearing as the purge catches
+   them.
+4. _Nothing above the window is deleted here._ The purge owns deletion and one owner is worth more
+   than reclaiming a few kilobytes early, so an 8-to-48-hour-old note lingers unreferenced. Bounded
+   by `RuntimeDirectorySize=64M`.
 
-**The actual design problem is metadata, not time.** `wa-<messageId>.ogg` yields the message id and
-nothing else — crucially not the **button index**, which is the one thing the queue needs. `receivedAt`
-can come from the file's mtime and `durationMs` from ffprobe, but the index has no source. Options:
-encode it in the name (`wa-<index>-<messageId>.ogg`, simplest, self-healing, no second source of
-truth to keep in sync), or write a manifest (carries everything, needs atomic writes and can
-disagree with the directory).
-
-Note the ordering constraint either way: a recovered note that is then played cannot be marked read
-upstream, because the bridge's `pendingReads` is memory too — see the read-receipt gap below. The
-two want solving together or the recovered note plays and the sender still never sees a receipt.
+Whether a 40-hour-old note should play at all is a real product question, but it is not this one —
+it is already true today without any restart, and belongs to the queue as a whole.
 
 ### Read-only root filesystem needs /data on its own partition
 

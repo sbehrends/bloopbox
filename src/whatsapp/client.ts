@@ -15,6 +15,8 @@ import {
   type WASocket,
 } from 'baileys';
 import type { Logger } from 'pino';
+import { recordingName } from '../audio/recovery.ts';
+import type { ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
 
 /**
@@ -50,7 +52,17 @@ export type VoiceNote = {
   readonly fromMe: boolean;
   readonly seconds: number | null;
   /** Downloads the audio to `directory` and returns the path. */
-  readonly download: (directory: string) => Promise<{ path: string; byteLength: number }>;
+  /**
+   * Downloads the audio to `directory` and returns the path.
+   *
+   * `index` is the button the whitelist resolved this note to, and it goes into the filename:
+   * after a restart the directory is the only record of what is still unread, and a file that
+   * cannot say which button it belongs to cannot be put back on one. See `audio/recovery.ts`.
+   */
+  readonly download: (
+    directory: string,
+    index: ButtonIndex,
+  ) => Promise<{ path: string; byteLength: number }>;
   /** The raw message, for marking read. */
   readonly raw: WAMessage;
 };
@@ -320,9 +332,9 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       fromMe: message.key.fromMe === true,
       seconds,
       raw: message,
-      download: async (directory: string) => {
+      download: async (directory: string, index: ButtonIndex) => {
         await mkdir(directory, { recursive: true });
-        const path = join(directory, `wa-${messageId}.ogg`);
+        const path = join(directory, recordingName(index, messageId));
         // Streamed rather than buffered: this runs on a 512MB Pi.
         const stream = (await downloadMediaMessage(
           message,

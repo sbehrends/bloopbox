@@ -140,14 +140,26 @@ export class DeviceController {
    * produces one sound rather than a pile-up.
    */
   handleIncoming(index: ButtonIndex, note: QueuedNote): void {
-    this.queue.enqueue(index, note);
-    this.#pathsByMessageId.set(note.messageId, note.path);
-    this.state.addUnread(index);
+    this.restoreUnread(index, note);
 
     // A courtesy, and silenced at night.
     if (shouldPlayCue(AudioCue.Notify, this.state.silentMode)) {
       void this.#safeCue(AudioCue.Notify);
     }
+  }
+
+  /**
+   * Puts a note back on a button without announcing it.
+   *
+   * Used at boot to rebuild a queue a restart would otherwise have dropped. Deliberately
+   * silent: nothing has *arrived*, and a box that chimed its way through the backlog every
+   * time it restarted would teach a parent to distrust the sound. The blinking LED is the
+   * right signal — it says "there is something waiting", which is exactly true.
+   */
+  restoreUnread(index: ButtonIndex, note: QueuedNote): void {
+    this.queue.enqueue(index, note);
+    this.#pathsByMessageId.set(note.messageId, note.path);
+    this.state.addUnread(index);
   }
 
   /** Files still queued for playback, which the purge must not delete. */

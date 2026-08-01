@@ -152,7 +152,7 @@ async function main(): Promise<void> {
 
     const { target } = decision;
     try {
-      const { path, byteLength } = await note.download(RECORDING_DIRECTORY);
+      const { path, byteLength } = await note.download(RECORDING_DIRECTORY, target.index);
       const durationMs = note.seconds !== null ? note.seconds * 1000 : await probeDurationMs(path);
 
       rememberRead(note.messageId, note.raw.key);

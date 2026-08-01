@@ -38,6 +38,14 @@ const MAX_INBOUND_SECONDS = 300;
 export type VoiceNote = {
   readonly messageId: string;
   readonly chatJid: string;
+  /**
+   * The same chat addressed the other way round — see `#resolveAlt`.
+   *
+   * WhatsApp is migrating to LIDs, so `chatJid` for a direct message can arrive as
+   * `44581961883857@lid` while the parent configured a phone number. Both spellings identify
+   * one person; the whitelist accepts either.
+   */
+  readonly chatJidAlt: string | undefined;
   readonly participantJid: string | undefined;
   readonly fromMe: boolean;
   readonly seconds: number | null;
@@ -222,7 +230,8 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     socket.ev.on('messages.upsert', ({ messages, type }) => {
       // `notify` is a live message; `append` is history backfill we do not want to replay.
       if (type !== 'notify') return;
-      for (const message of messages) this.#handleMessage(message);
+      // Resolving a LID can touch the auth store, so this is async; failures are logged inside.
+      for (const message of messages) void this.#handleMessage(message);
     });
   }
 
@@ -262,7 +271,33 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     if (!this.#stopping) this.#scheduleReconnect(false);
   }
 
-  #handleMessage(message: WAMessage): void {
+  /**
+   * The phone-number spelling of a `@lid` chat, if one can be found.
+   *
+   * WhatsApp is moving addressing from phone numbers to LIDs, and a direct message now arrives
+   * as `<lid>@lid` even when the sender is someone the parent configured by number. Nothing in
+   * a LID resembles the phone number, so a whitelist holding `…@s.whatsapp.net` rejects the
+   * contact it was built for and the button goes silently deaf.
+   *
+   * Two sources, cheapest first: the key often carries the other spelling already, and
+   * otherwise Baileys keeps a LID↔PN map in the auth state (the `lid-mapping-*.json` files).
+   * A miss is not an error — it just means no alternative is known, and the primary JID stands
+   * on its own.
+   */
+  async #resolveAlt(jid: string, fromKey: string | null | undefined): Promise<string | undefined> {
+    if (typeof fromKey === 'string' && fromKey.length > 0) return fromKey;
+    if (!jid.endsWith('@lid')) return undefined;
+    const socket = this.#socket;
+    if (!socket) return undefined;
+    try {
+      return (await socket.signalRepository.lidMapping.getPNForLID(jid)) ?? undefined;
+    } catch (error: unknown) {
+      this.#log.debug({ err: error, jid }, 'could not resolve a lid to a phone number');
+      return undefined;
+    }
+  }
+
+  async #handleMessage(message: WAMessage): Promise<void> {
     const audio = message.message?.audioMessage;
     // Only voice notes. A music file or a video note is not what this device is for.
     if (!audio?.ptt) return;
@@ -280,6 +315,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     this.emit('voiceNote', {
       messageId,
       chatJid,
+      chatJidAlt: await this.#resolveAlt(chatJid, message.key.remoteJidAlt),
       participantJid: message.key.participant ?? undefined,
       fromMe: message.key.fromMe === true,
       seconds,

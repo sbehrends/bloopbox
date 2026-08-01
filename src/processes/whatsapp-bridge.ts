@@ -136,12 +136,17 @@ async function main(): Promise<void> {
   async function handleVoiceNote(note: VoiceNote): Promise<void> {
     const decision = whitelist.evaluate({
       chatJid: note.chatJid,
+      chatJidAlt: note.chatJidAlt,
       participantJid: note.participantJid,
       fromMe: note.fromMe,
     });
 
     if (!decision.allowed) {
-      log.debug({ chat: note.chatJid, reason: decision.reason }, 'dropped a voice note');
+      // Both spellings, or a LID drop is indistinguishable from an actual stranger in the log.
+      log.debug(
+        { chat: note.chatJid, chatAlt: note.chatJidAlt, reason: decision.reason },
+        'dropped a voice note',
+      );
       return;
     }
 

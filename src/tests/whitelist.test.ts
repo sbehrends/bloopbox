@@ -53,6 +53,34 @@ describe('allowing assigned contacts', () => {
     expect(decision.allowed && decision.target.index).toBe(1);
   });
 
+  it('accepts an assigned contact addressed by LID', () => {
+    /*
+     * WhatsApp addresses direct messages by LID now, so this is what a reply from Mom actually
+     * looks like on the wire. Nothing in the LID resembles her number — without the alternate
+     * she is a stranger, and the button she is assigned to goes deaf. Seen for real on
+     * 2026-08-01: chat 44581961883857@lid dropped as "not an assigned contact or group".
+     */
+    const decision = list().evaluate({
+      chatJid: '44581961883857@lid',
+      chatJidAlt: MOM,
+      fromMe: false,
+    });
+
+    expect(decision.allowed).toBe(true);
+    expect(decision.allowed && decision.target.index).toBe(0);
+  });
+
+  it('accepts a LID whose alternate carries a device suffix, as the mapping store returns it', () => {
+    // getPNForLID answers `<number>:<device>@s.whatsapp.net`, not a bare JID.
+    const decision = list().evaluate({
+      chatJid: '44581961883857@lid',
+      chatJidAlt: '15551234567:0@s.whatsapp.net',
+      fromMe: false,
+    });
+
+    expect(decision.allowed).toBe(true);
+  });
+
   it('accepts a message in an assigned group, whoever spoke', () => {
     const decision = list().evaluate({
       chatJid: FAMILY_GROUP,
@@ -104,6 +132,51 @@ describe('rejecting everything else', () => {
     const decision = list().evaluate({ chatJid: MOM, fromMe: true });
 
     expect(decision).toMatchObject({ allowed: false, reason: 'sent by this device' });
+  });
+
+  it('drops a LID that resolves to nobody assigned', () => {
+    const decision = list().evaluate({
+      chatJid: '44581961883857@lid',
+      chatJidAlt: '15550000000@s.whatsapp.net',
+      fromMe: false,
+    });
+
+    expect(decision.allowed).toBe(false);
+  });
+
+  it('drops an unresolvable LID rather than falling open', () => {
+    // No alternate available — a LID on its own has nothing to compare against.
+    expect(list().evaluate({ chatJid: '44581961883857@lid', fromMe: false }).allowed).toBe(false);
+  });
+
+  it('does not let an alternate smuggle a broadcast past the suffix rules', () => {
+    /*
+     * The alternate is a widening of *identity*, never of the rules. Every rejection applies to
+     * both spellings, so a chat that would be refused as a broadcast stays refused however it
+     * is addressed — even if the whitelist happens to hold the other spelling.
+     */
+    const smuggler = new Whitelist([{ index: 0, jid: '44581961883857@lid', kind: 'individual' }]);
+
+    expect(
+      smuggler.evaluate({
+        chatJid: '44581961883857@lid',
+        chatJidAlt: 'status@broadcast',
+        fromMe: false,
+      }).allowed,
+    ).toBe(false);
+    expect(
+      smuggler.evaluate({
+        chatJid: '44581961883857@lid',
+        chatJidAlt: '12345@newsletter',
+        fromMe: false,
+      }).allowed,
+    ).toBe(false);
+  });
+
+  it('still drops the device’s own echo when it arrives by LID', () => {
+    expect(
+      list().evaluate({ chatJid: '44581961883857@lid', chatJidAlt: MOM, fromMe: true }).allowed,
+    ).toBe(false);
   });
 
   it('drops a message with no chat jid', () => {

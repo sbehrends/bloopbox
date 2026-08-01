@@ -29,6 +29,15 @@ const REJECTED_SUFFIXES = ['@broadcast', '@newsletter'] as const;
 export type IncomingAddress = {
   /** The chat the message belongs to: a user JID or a group JID. */
   readonly chatJid: string;
+  /**
+   * The same chat under WhatsApp's other addressing scheme, when it is known.
+   *
+   * A direct message now arrives addressed to a LID (`44581961883857@lid`) rather than to the
+   * phone number the parent typed. The two are the same person, so both are checked — matching
+   * only the primary would reject a contact the parent deliberately assigned. Resolution
+   * happens in the client, so this stays pure.
+   */
+  readonly chatJidAlt?: string | undefined;
   /** Within a group, who actually spoke. Absent for direct messages. */
   readonly participantJid?: string | undefined;
   /** True when the device itself sent this. */
@@ -106,19 +115,28 @@ export class Whitelist {
       return { allowed: false, reason: 'sent by this device' };
     }
 
-    const chatJid = normaliseJid(address.chatJid);
+    /*
+     * Both spellings of the same chat. Every rejection below is applied to all of them, so an
+     * alternate can only ever admit a chat the parent assigned — never bypass a rule the
+     * primary would have failed.
+     */
+    const candidates = [address.chatJid, address.chatJidAlt]
+      .filter((jid): jid is string => typeof jid === 'string' && jid.trim().length > 0)
+      .map(normaliseJid);
 
-    if (chatJid.length === 0) return { allowed: false, reason: 'missing chat jid' };
-    if (NEVER_ALLOWED.has(chatJid)) return { allowed: false, reason: 'status broadcast' };
-    if (REJECTED_SUFFIXES.some((suffix) => chatJid.endsWith(suffix))) {
+    if (candidates.length === 0) return { allowed: false, reason: 'missing chat jid' };
+    if (candidates.some((jid) => NEVER_ALLOWED.has(jid))) {
+      return { allowed: false, reason: 'status broadcast' };
+    }
+    if (candidates.some((jid) => REJECTED_SUFFIXES.some((suffix) => jid.endsWith(suffix)))) {
       return { allowed: false, reason: 'not a personal or group chat' };
     }
 
-    const target = this.#byJid.get(chatJid);
-    if (!target) {
-      return { allowed: false, reason: 'not an assigned contact or group' };
+    for (const jid of candidates) {
+      const target = this.#byJid.get(jid);
+      if (target) return { allowed: true, target };
     }
 
-    return { allowed: true, target };
+    return { allowed: false, reason: 'not an assigned contact or group' };
   }
 }

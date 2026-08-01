@@ -13,7 +13,7 @@ import {
  * redirecting on someone's home LAN — look fine in development.
  */
 
-const get = (path: string, host = 'example.com') => ({ path, host, method: 'GET' });
+const get = (path: string) => ({ path, method: 'GET' });
 
 describe('while the hotspot is up', () => {
   it('redirects every captive-portal probe there is', () => {
@@ -51,9 +51,7 @@ describe('while the hotspot is up', () => {
 
   it('never redirects a POST', () => {
     // A redirected POST loses its body, and the join is a POST.
-    expect(shouldRedirectToPortal({ path: '/anything', host: 'x', method: 'POST' }, true)).toBe(
-      false,
-    );
+    expect(shouldRedirectToPortal({ path: '/anything', method: 'POST' }, true)).toBe(false);
   });
 
   it('does not match a prefix that is only a prefix of the name', () => {

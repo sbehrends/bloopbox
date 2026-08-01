@@ -57,10 +57,15 @@ export const KNOWN_CAPTIVE_PROBES = [
 export type CaptiveRequest = {
   /** Request path, without the query string. */
   readonly path: string;
-  /** The `Host` header, if any. */
-  readonly host: string | undefined;
   readonly method: string;
 };
+
+/*
+ * Deliberately not the Host header. A probe may use any host name — an IP, a vendor domain,
+ * whatever the OS picked — so matching on it would mean maintaining a list of every value
+ * every OS might send. The path is enough: while the hotspot is up, anything the app does
+ * not own is a probe or a stray, and both want the portal.
+ */
 
 /**
  * Whether this request should be answered with a redirect to the portal.

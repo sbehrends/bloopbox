@@ -274,12 +274,7 @@ async function main(): Promise<void> {
    * screen leaves the parent staring at a hotspot that appears to do nothing.
    */
   app.use((req, res, next) => {
-    if (
-      !shouldRedirectToPortal(
-        { path: req.path, host: req.headers.host, method: req.method },
-        isApActive(),
-      )
-    ) {
+    if (!shouldRedirectToPortal({ path: req.path, method: req.method }, isApActive())) {
       next();
       return;
     }

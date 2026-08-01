@@ -6,7 +6,8 @@ import { ConfigValidationError, type ConfigManager } from '../config/configManag
 import { configUpdateSchema, enabledContacts } from '../config/schema.ts';
 import type { DeviceController } from '../core/deviceController.ts';
 import type { DeviceStatusPayload, WhatsAppConnectionState } from '../ipc/events.ts';
-import { readBoolean, readString } from '../ipc/payload.ts';
+import { readBoolean, readField, readString } from '../ipc/payload.ts';
+import type { NetState } from '../net/netState.ts';
 import { hashAdminPassword, requireAdmin } from './auth.ts';
 
 /**
@@ -25,6 +26,13 @@ export type RoutesContext = {
   readonly whatsapp: () => { state: WhatsAppConnectionState; qr: string | null };
   /** Whether Wi-Fi is currently up. */
   readonly wifiConnected: () => boolean;
+  /** The latest reading from the root network agent, or null if there is none. */
+  readonly netState: () => NetState | null;
+  /**
+   * Hands Wi-Fi credentials to the root agent, which owns every privileged network call.
+   * Resolves once the request is written, not once the radio has done anything.
+   */
+  readonly requestJoin: (credentials: { ssid: string; psk: string }) => Promise<boolean>;
   /** Drops WhatsApp credentials so the device can be re-paired. */
   readonly unlinkWhatsApp: () => void;
   /** Groups the linked account is in, so a parent can pick one instead of typing a JID. */
@@ -138,6 +146,105 @@ export function createApiRouter(context: RoutesContext): Router {
       context.requestRestart('onboarding completed');
     } catch (error: unknown) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'onboarding failed' });
+    }
+  });
+
+  /* ---- setup portal ---- */
+
+  /**
+   * Networks the device can see, for the portal's picker.
+   *
+   * Ungated for the same reason `POST /onboard` is: while the device is unconfigured the
+   * admin guard stands aside, and this is one of the things the portal needs before a
+   * password can exist. It leaks the names of nearby networks to anyone already on the
+   * hotspot, which is the same list their own phone is showing them.
+   */
+  router.get('/wifi/scan', (_req, res) => {
+    const state = context.netState();
+    if (state === null) {
+      // No agent, which on a dev machine is normal. An empty list plus a flag beats a 500:
+      // the portal can offer the manual entry box instead of looking broken.
+      res.json({ available: false, networks: [], ageSeconds: null, apActive: false });
+      return;
+    }
+    res.json({
+      available: state.available,
+      networks: state.scan,
+      ageSeconds: state.scanAgeSeconds,
+      apActive: state.apActive,
+      apSsid: state.apSsid,
+      lastError: state.lastError,
+    });
+  });
+
+  /**
+   * Joins a network, and on an unconfigured device completes onboarding in the same call.
+   *
+   * One call rather than two because of what happens next: accepting these credentials tears
+   * the hotspot down, and the page that posted them dies with it. A second request would
+   * never arrive.
+   *
+   * `admin` stands aside while unconfigured (see auth.ts), which is exactly the first-boot
+   * case; afterwards a parent needs their password, or physical recovery through the boot
+   * partition.
+   */
+  router.post('/wifi/join', admin, async (req: Request, res: Response) => {
+    const ssid = readString(req.body, 'ssid', 32);
+    if (ssid === null) {
+      res.status(400).json({ error: 'ssid is required' });
+      return;
+    }
+
+    // Optional and empty-able: an open network has no passphrase, so "" is a real answer and
+    // readString's non-empty rule is the wrong one here.
+    const rawPsk = readField(req.body, 'psk');
+    const psk = typeof rawPsk === 'string' ? rawPsk : '';
+    if (psk.length > 63) {
+      res.status(400).json({ error: 'passphrase is too long' });
+      return;
+    }
+    if (psk.length > 0 && psk.length < 8) {
+      // WPA2's own minimum. Rejecting it here turns a silent association failure a parent
+      // cannot diagnose into a message on the page they are looking at.
+      res.status(400).json({ error: 'a Wi-Fi passphrase is at least 8 characters' });
+      return;
+    }
+
+    const configured = context.config.current.system.configured;
+    const adminPassword = readString(req.body, 'adminPassword', 128);
+    if (!configured && adminPassword === null) {
+      res.status(400).json({ error: 'an admin password is required to finish setup' });
+      return;
+    }
+
+    try {
+      // Persisted first. The agent joins the network live, but the profile it builds is not
+      // the record: config.json is, and wifi-apply.sh reapplies it on every boot.
+      const update = configured
+        ? { wifi: { ssid, password: psk } }
+        : {
+            wifi: { ssid, password: psk },
+            system: {
+              adminPasswordHash: await hashAdminPassword(adminPassword ?? ''),
+              configured: true,
+            },
+          };
+      await context.config.update(update);
+
+      const asked = await context.requestJoin({ ssid, psk });
+
+      // Answered before anything happens to the radio, because the answer cannot survive it.
+      res.json({ ok: true, ssid, handedToAgent: asked, restarting: true });
+
+      // The restart applies the saved config the ordinary way. The request file lives in the
+      // runtime directory, which systemd preserves across it, so a join in flight is not lost.
+      context.requestRestart('wifi credentials accepted');
+    } catch (error: unknown) {
+      if (error instanceof ConfigValidationError) {
+        res.status(400).json({ error: error.message, issues: error.issues });
+        return;
+      }
+      res.status(400).json({ error: error instanceof Error ? error.message : 'could not join' });
     }
   });
 

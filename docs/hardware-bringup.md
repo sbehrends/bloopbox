@@ -166,21 +166,46 @@ Then, with a phone:
    seconds. Distinct from the Connecting blink, which is a steady half-second square wave.
 4. After the window closes the device rejoins your Wi-Fi by itself.
 
-The web server is **stopped** during the default run, so nothing answers on `10.42.0.1:3000` —
-the script stops the daemon so its supervisor cannot step the hotspot aside mid-test. To prove
-the whole stack from a phone instead, run it again with the daemon left up:
+The web server is **stopped** during the default run, so nothing answers on `10.42.0.1` — the
+script stops the daemon so its supervisor cannot step the hotspot aside mid-test.
+
+### Gate 3b — the portal, which is the part a parent actually sees
 
 ```bash
 ssh bloop@bloopbox.local 'sudo bloopbox-hotspot-test --keep-daemon --seconds 50'
 ```
 
-Then `http://10.42.0.1:3000/admin/` should answer over the hotspot. Keep that window under ~55s:
-on a configured device the supervisor steps aside at 60s to retry your Wi-Fi, which is correct
-behaviour and would cut the test short. (An unconfigured device never steps aside — nothing to
-rejoin — which is the real first-boot case.)
+Join the hotspot from a phone and **wait**. The setup page should appear **by itself**, in the
+notification-style webview the OS opens for captive networks. That is the whole mechanism
+working: wildcard DNS sends every lookup to the device, the device answers the phone's
+connectivity probe wrongly on purpose, and the OS concludes there is a sign-in page.
 
-The captive-portal page, the one that pops up by itself, is milestone 3 and **is not built yet**.
-Nothing appearing on its own is not a fault.
+Pass, in order of how much each one tells you:
+
+1. The page appears **unprompted**. If it does not, open `http://10.42.0.1` by hand — if that
+   works, the fault is DNS (`dnsmasq-shared.d`), not the portal.
+2. It lists networks in range with signal bars, your own among them.
+3. Picking a secured one asks for a passphrase; picking an open one does not.
+4. On an unconfigured device it also asks for a settings password, and refuses to submit until
+   it is at least 6 characters.
+
+Do not complete the join on this run unless you mean it — accepting credentials writes the
+config, marks the device configured and restarts it.
+
+Keep the window under ~55s: on a **configured** device the supervisor steps aside at 60s to retry
+your Wi-Fi, which is correct behaviour and would cut the test short. An unconfigured device never
+steps aside, which is the real first-boot case and gives you as long as you like.
+
+If the page does not appear on its own, the first thing to check is whether NetworkManager read
+the wildcard DNS file at all:
+
+```bash
+ssh bloop@bloopbox.local 'ls -la /etc/NetworkManager/dnsmasq-shared.d/'
+```
+
+That directory is the one assumption in this design nobody has verified on Trixie. If it is
+ignored, the fallback is `hostapd` + `dnsmasq` with `wlan0` unmanaged — a bigger change, and one
+worth making only once this has actually been seen to fail.
 
 Reconnect and read the verdict:
 

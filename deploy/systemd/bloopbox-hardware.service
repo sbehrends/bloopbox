@@ -25,6 +25,12 @@ ExecStartPre=-+@PREFIX@/deploy/wifi-apply.sh
 
 ExecStart=@PREFIX@/node/bin/node dist/processes/hardware-server.js
 
+# The captive portal answers on :80, and a phone's connectivity probe will not ask anywhere
+# else. This is the whole reason the daemon needs a privileged port; the alternative was an
+# nftables redirect that something running as root would have to tear down again.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
 # Saving a setting makes the daemon exit 0 on purpose so the new config is read at boot —
 # there is deliberately no live-reload path (see CLAUDE.md). Restart=always is what turns
 # that clean exit back into a running device, and covers a crash identically.

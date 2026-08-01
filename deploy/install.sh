@@ -210,6 +210,26 @@ ln -sf "${PREFIX}/deploy/hotspot-test.sh" /usr/local/bin/bloopbox-hotspot-test
 ln -sf "${PREFIX}/deploy/debug-mode.sh" /usr/local/bin/bloopbox-debug
 info "bloopbox-doctor, -diagnostics, -hotspot-test and -debug are on PATH"
 
+step "configuring the setup hotspot's DNS"
+# NetworkManager runs its own dnsmasq for `ipv4.method shared`, and reads extra config from
+# this directory. The wildcard is what makes the captive portal appear: every name a phone
+# looks up on the hotspot resolves to the device, so its connectivity probe reaches us and
+# can be answered wrongly on purpose (see src/server/captivePortal.ts).
+if [[ -d /etc/NetworkManager ]]; then
+  install -d -m 0755 /etc/NetworkManager/dnsmasq-shared.d
+  cat > /etc/NetworkManager/dnsmasq-shared.d/bloopbox.conf <<'EOF'
+# Installed by bloopbox. Applies only to NetworkManager's shared-mode dnsmasq — the instance
+# that serves the setup hotspot — and not to normal DNS on this device.
+address=/#/10.42.0.1
+# No upstream: there is no internet to forward to while the device is hosting the hotspot,
+# and a query that hangs waiting for one delays the portal appearing.
+no-resolv
+EOF
+  info "wildcard DNS for the setup hotspot"
+else
+  warn "no /etc/NetworkManager — the captive portal will not redirect here"
+fi
+
 step "writing ${ETC_DIR}/environment"
 install -d -m 0755 "${ETC_DIR}"
 if [[ -f "${ETC_DIR}/environment" ]]; then

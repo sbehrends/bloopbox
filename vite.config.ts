@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         admin: resolve(root, 'admin/index.html'),
         simulator: resolve(root, 'simulator/index.html'),
+        portal: resolve(root, 'portal/index.html'),
       },
     },
   },

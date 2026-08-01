@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Set up your bloopbox</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23ffd54a'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="../shared/base.css" />
+    <link rel="stylesheet" href="./portal.css" />
+  </head>
+  <body class="portal">
+    <!--
+      The setup page, served over the device's own hotspot.
+
+      Its own entry point rather than the admin panel: this is read inside a captive-portal
+      webview, which is a stripped browser with no persistent storage, unreliable WebSocket
+      support and a habit of closing itself the moment the network changes. Everything here is
+      one page, plain fetch, and no Socket.io.
+    -->
+    <main class="portal-shell">
+      <header>
+        <h1>bloopbox</h1>
+        <p class="lede">Let's get this on your Wi-Fi.</p>
+      </header>
+
+      <section id="step-network" class="step">
+        <h2>1 · Your Wi-Fi</h2>
+        <div id="networks" class="networks" role="radiogroup" aria-label="Networks in range">
+          <p class="muted">Looking for networks…</p>
+        </div>
+        <button type="button" id="manual-toggle" class="link-button">
+          Can't see it? Type the name instead
+        </button>
+        <label id="manual-field" class="field" hidden>
+          <span>Network name</span>
+          <input
+            id="manual-ssid"
+            type="text"
+            maxlength="32"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+      </section>
+
+      <section id="step-passphrase" class="step" hidden>
+        <h2>2 · Wi-Fi password</h2>
+        <label class="field">
+          <span id="passphrase-label">Password for your network</span>
+          <input id="passphrase" type="password" maxlength="63" autocomplete="off" />
+        </label>
+        <label class="checkbox">
+          <input id="show-passphrase" type="checkbox" />
+          <span>Show password</span>
+        </label>
+      </section>
+
+      <section id="step-admin" class="step" hidden>
+        <h2>3 · A password for the settings page</h2>
+        <p class="muted">
+          Only you should be able to change who the buttons call. At least 6 characters — write it
+          down somewhere.
+        </p>
+        <label class="field">
+          <span>Settings password</span>
+          <input id="admin-password" type="password" maxlength="128" autocomplete="new-password" />
+        </label>
+      </section>
+
+      <p id="error" class="error" hidden></p>
+
+      <button type="button" id="submit" class="primary" disabled>Connect</button>
+
+      <section id="done" class="step done" hidden>
+        <h2>Nearly there</h2>
+        <p>
+          The box is joining <strong id="done-ssid"></strong> now. It will leave this hotspot, so
+          <strong>this page will stop working</strong> — that is what success looks like.
+        </p>
+        <ol>
+          <li>Reconnect your phone to your home Wi-Fi.</li>
+          <li>Watch the lights: three quick blinks together means it is online.</li>
+          <li>
+            Open <strong id="done-address">http://bloopbox.local:3000/admin/</strong> to finish.
+          </li>
+        </ol>
+        <p class="muted">
+          If the lights go back to double-pulsing, the box could not join and the setup hotspot is
+          back. Rejoin it and try again — usually a mistyped password.
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

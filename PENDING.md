@@ -64,18 +64,24 @@ presence — require a button press within N seconds to accept `POST /api/onboar
 one subsystem never run on hardware, so it should not gate setup until bring-up proves a press
 registers.
 
-_The portal is its own UI._ `public/portal/`, a third Vite entry: scan list → SSID + passphrase →
-admin password → "joining". Not the admin panel — iOS/Android captive browsers are stripped
-webviews with unreliable WebSocket and ephemeral storage. Everything else (WhatsApp QR, contacts,
-timings) happens afterwards on the home LAN, which is fine because pairing needs internet anyway.
+_The portal is its own UI._ **Built** — `public/portal/`, a third Vite entry: pick a network →
+passphrase → admin password → "joining". Not the admin panel: iOS/Android captive browsers are
+stripped webviews with unreliable WebSocket and ephemeral storage. Everything else (WhatsApp QR,
+contacts, timings) happens afterwards on the home LAN, which is fine because pairing needs
+internet anyway.
 
-Mechanics: port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` and a second listener on the
-same Express app (3000 stays the API/bridge port) rather than nftables rules that have to be torn
-down; wildcard DNS through `/etc/NetworkManager/dnsmasq-shared.d/bloopbox.conf`
-(`address=/#/10.42.0.1`) — ⚠️ unverified, confirm NM honours that directory before relying on it,
-fallback is `hostapd` + `dnsmasq` after all; and a catch-all that 302s unknown hosts to the portal
-while the AP is up, deliberately **failing** Android's `generate_204` and Apple's
-`hotspot-detect.html`, since answering them correctly is what suppresses the sign-in popup.
+Mechanics, all in place: port 80 via `AmbientCapabilities=CAP_NET_BIND_SERVICE` and a second
+listener on the same Express app (3000 stays the API/bridge port), which fails softly with EACCES
+off-device; a catch-all that 302s anything it does not own to the portal **while the hotspot is
+up and never otherwise**, deliberately failing Android's `generate_204` and Apple's
+`hotspot-detect.html` because answering them correctly is what suppresses the sign-in popup; and
+wildcard DNS through `/etc/NetworkManager/dnsmasq-shared.d/bloopbox.conf` (`address=/#/10.42.0.1`),
+installed by `install.sh`.
+
+⚠️ **That DNS directory is the one unverified assumption.** If NetworkManager on Trixie does not
+read `dnsmasq-shared.d`, names will not resolve on the hotspot and the portal will not pop up by
+itself — the parent would have to type `10.42.0.1`. Fallback is `hostapd` + `dnsmasq` with `wlan0`
+unmanaged. Check `31-nm-conf.txt` in a diagnostics bundle first.
 
 _Handoff._ One radio, so AP and STA are sequential — no concurrent AP+STA on `brcmfmac`. A join
 writes `config.wifi` and calls `requestRestart()`, so `wifi-apply.sh` stays the single place
@@ -92,11 +98,11 @@ or join error. (3) portal — `public/portal/`, port 80, probe catch-all, join a
 (4) packaging — boot README, `smoke-test-release.sh` with a stubbed `nmcli` on PATH.
 
 **Why it matters.** It is the difference between a device a parent can set up and one that needs
-a laptop and a card reader. Today the recovery path is physical — pull the card, edit a text
-file — which is documented but is not what the spec promises.
+a laptop and a card reader. The physical path — pull the card, write `bloopbox-wifi.txt` — stays
+as the recovery route when even the hotspot cannot be reached.
 
-Radio behaviour cannot be tested in a container, so milestone 2 has landed as a verification gap
-(below), and milestone 3 will too.
+Radio behaviour cannot be tested in a container, so milestones 2 and 3 have landed as a single
+verification gap (below).
 
 ### Read-only root filesystem needs /data on its own partition
 
@@ -150,19 +156,29 @@ Worth checking when pairing: that a voice note from a number **not** assigned to
 dropped (it should not appear, and the bridge logs `dropped a voice note`), and that a message in
 an assigned group arrives on that button whoever in the group sent it.
 
-### The setup hotspot has never touched a radio
+### The setup hotspot and its portal have never touched a radio or a phone
 
-`deploy/net-agent.sh` can create the `bloopbox-ap` NetworkManager profile and bring it up and
-down, and `NetworkSupervisor` decides when. None of it has run on a Pi. What a container proved:
-the agent publishes valid JSON for associated / disconnected / AP-active / no-nmcli, the parser
-accepts all four, and the daemon walks `WIFI_ERROR` → `SETUP_PORTAL` → `CONNECTING` and writes an
-`ap-up` request after the grace period — all against a stubbed `nmcli`.
+The whole path is built — agent, supervisor, LED rung, portal UI, captive redirect, join — and
+none of it has run on a Pi. What stubs and a container proved: the agent publishes valid JSON for
+associated / disconnected / AP-active / no-nmcli, parses a scan list including an SSID with a
+colon in it, and creates, raises, lowers and joins profiles with the right `nmcli` arguments; the
+daemon walks `WIFI_ERROR` → `SETUP_PORTAL` → `CONNECTING`, writes one `ap-up` after the grace
+period rather than one per poll, serves the portal, 302s every captive probe while the hotspot is
+up and **nothing at all** when it is down, and a join writes the config, hands the credentials to
+the agent and restarts.
 
-What only a radio can show: that `802-11-wireless.mode ap` + `ipv4.method shared` actually comes
-up on `brcmfmac`, that a phone gets a DHCP lease from NM's dnsmasq, that dropping the AP and
-`nmcli con up bloopbox` reliably rejoins, and that the Wi-Fi country being unset does not stop the
-AP from starting. Worth watching during bring-up: whether the radio needs a moment between AP
-teardown and the join attempt.
+What only a radio and a phone can show:
+
+- that `802-11-wireless.mode ap` + `ipv4.method shared` comes up on `brcmfmac` at all
+- that a phone gets a DHCP lease from NetworkManager's own dnsmasq
+- that `dnsmasq-shared.d` is honoured, without which the portal will not pop up by itself
+- that the phone's captive webview reaches `:80` and renders the page
+- that dropping the AP and `nmcli con up bloopbox` reliably rejoins — the radio may need a
+  settling delay between the two, which would be a change to `ap_down` in the agent
+- that an unset Wi-Fi country does not stop the AP from starting
+
+Also unseen: the portal rendered in a browser. It is plain HTML and CSS, built and served
+correctly, but nobody has looked at it.
 
 ### GPIO driver on real hardware
 

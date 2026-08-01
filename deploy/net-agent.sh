@@ -65,11 +65,63 @@ wifi_device() {
   echo "${device:-wlan0}"
 }
 
+# The networks in range, as a JSON array, for the setup portal's picker.
+#
+# Refreshed on a slow cadence of its own, not every poll: a rescan takes seconds and disturbs
+# an associated link. And it is captured *before* the hotspot goes up, because a radio hosting
+# an access point cannot scan — so the list a parent picks from is the room as it was moments
+# earlier, which is the best that one radio allows.
+SCAN_INTERVAL_SECONDS="${NET_SCAN_INTERVAL_SECONDS:-30}"
+SCAN_JSON='[]'
+SCAN_AT=0
+
+refresh_scan() {
+  local rescan="${1:-yes}"
+  local line ssid signal security first entry
+  local -a seen=()
+  entry=''
+  first=yes
+
+  while IFS= read -r line; do
+    # -t escapes the field separator inside values, so an SSID containing a colon arrives as
+    # `a\:b`. Split on unescaped colons by swapping the escaped ones out first.
+    line="${line//\\:/$'\x01'}"
+    ssid="${line%%:*}"; line="${line#*:}"
+    signal="${line%%:*}"; line="${line#*:}"
+    security="${line}"
+    ssid="${ssid//$'\x01'/:}"
+
+    [[ -z "${ssid}" ]] && continue
+    # nmcli lists one row per BSS, so a mesh or an extender appears several times. Keep the
+    # first, which is the strongest: the list is already sorted by signal.
+    local duplicate=no seen_one
+    for seen_one in ${seen[@]+"${seen[@]}"}; do
+      [[ "${seen_one}" == "${ssid}" ]] && { duplicate=yes; break; }
+    done
+    [[ "${duplicate}" == yes ]] && continue
+    seen+=("${ssid}")
+
+    [[ "${signal}" =~ ^[0-9]+$ ]] || signal=0
+    [[ "${first}" == yes ]] && first=no || entry+=','
+    entry+="{\"ssid\":$(json_string "${ssid}"),\"signal\":${signal},\"secure\":$([[ -n "${security}" ]] && echo true || echo false)}"
+
+    # A picker is a list a parent reads, not an inventory. Twenty is already more than any
+    # home has, and the file is read every two seconds by the daemon.
+    [[ "${#seen[@]}" -ge 20 ]] && break
+  done < <(nmcli --escape yes -t -f SSID,SIGNAL,SECURITY dev wifi list --rescan "${rescan}" 2>/dev/null)
+
+  SCAN_JSON="[${entry}]"
+  SCAN_AT="$(date +%s)"
+}
+
 # NetworkManager's own shared mode: DHCP, DNS and 10.42.0.1 without hostapd, and teardown is
 # one command. Needs dnsmasq-base installed.
 ap_up() {
   local device
   device="$(wifi_device)"
+  # Last chance to see the room: once this interface is an access point it cannot scan, and
+  # the portal it is about to serve is mostly a list of networks.
+  refresh_scan yes
   if [[ "$(nmcli -t -f NAME con show 2>/dev/null | awk -v n="${AP_CONNECTION}" '$0==n{print "yes"; exit}')" != yes ]]; then
     nmcli con add type wifi ifname "${device}" con-name "${AP_CONNECTION}" ssid "${AP_SSID}" \
       >/dev/null 2>&1 || { log "could not create ${AP_CONNECTION}"; return 1; }
@@ -101,28 +153,77 @@ ap_down() {
   fi
 }
 
+# Joins the network the portal was given: teach the profile, drop the hotspot, associate.
+#
+# The credentials arrive as arguments, never as anything evaluated — an SSID is arbitrary
+# bytes chosen by a stranger's router, and this runs as root.
+join_network() {
+  local ssid="$1" psk="$2" device
+  device="$(wifi_device)"
+  [[ -z "${ssid}" ]] && { log "join asked for with no ssid"; return 1; }
+
+  if [[ "$(nmcli -t -f NAME con show 2>/dev/null | awk -v n="${CONNECTION_NAME}" '$0==n{print "yes"; exit}')" != yes ]]; then
+    nmcli con add type wifi ifname "${device}" con-name "${CONNECTION_NAME}" ssid "${ssid}" \
+      >/dev/null 2>&1 || { log "could not create ${CONNECTION_NAME}"; return 1; }
+  fi
+  nmcli con modify "${CONNECTION_NAME}" \
+    802-11-wireless.mode infrastructure 802-11-wireless.ssid "${ssid}" \
+    connection.interface-name "${device}" \
+    connection.autoconnect yes connection.autoconnect-priority 10 >/dev/null 2>&1
+
+  if [[ -n "${psk}" ]]; then
+    nmcli con modify "${CONNECTION_NAME}" \
+      wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${psk}" >/dev/null 2>&1
+  else
+    nmcli con modify "${CONNECTION_NAME}" wifi-sec.key-mgmt none >/dev/null 2>&1
+  fi
+
+  # The hotspot has to go before the join can be attempted: one radio.
+  nmcli con down "${AP_CONNECTION}" >/dev/null 2>&1
+  if nmcli con up "${CONNECTION_NAME}" >/dev/null 2>&1; then
+    log "joined ${ssid}"
+    LAST_ERROR=
+  else
+    # Reported, not retried here. The supervisor raises the hotspot again after its grace
+    # period, and the portal reads this line to explain what went wrong.
+    log "could not join ${ssid}"
+    LAST_ERROR="could not join ${ssid} — wrong passphrase, or out of range"
+  fi
+}
+
 # Reads one request, acts on it, deletes it. Unknown actions are logged and dropped: this is
 # the privilege boundary, so the allowlist is the whole security model.
 consume_request() {
   [[ -r "${REQUEST_FILE}" ]] || return 0
-  local action=
+  local action= ssid= psk=
   if [[ -x "${NODE}" ]]; then
-    action="$("${NODE}" -e '
+    # Three lines out, never eval'd: action, ssid, psk. The action is matched against a fixed
+    # list below; the other two only ever become arguments to nmcli.
+    mapfile -t parsed < <("${NODE}" -e '
       const fs = require("node:fs");
+      const line = (value) => String(value ?? "").split("\n")[0] ?? "";
       try {
         const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-        const action = parsed && typeof parsed.action === "string" ? parsed.action : "";
+        const action = typeof parsed?.action === "string" ? parsed.action : "";
         console.log(/^[a-z-]{1,16}$/.test(action) ? action : "");
-      } catch { console.log(""); }
-    ' "${REQUEST_FILE}" 2>/dev/null)"
+        console.log(line(parsed?.ssid).slice(0, 32));
+        console.log(line(parsed?.psk).slice(0, 63));
+      } catch { console.log(""); console.log(""); console.log(""); }
+    ' "${REQUEST_FILE}" 2>/dev/null)
+    action="${parsed[0]:-}"
+    ssid="${parsed[1]:-}"
+    psk="${parsed[2]:-}"
   else
     log "no node at ${NODE} — cannot read requests"
   fi
+  # Deleted before acting, not after: a join takes seconds, and a request still sitting there
+  # when the next poll comes round would be run twice.
   rm -f "${REQUEST_FILE}"
 
   case "${action}" in
     ap-up) ap_up ;;
     ap-down) ap_down ;;
+    join) join_network "${ssid}" "${psk}" ;;
     # Empty means the file was there but held nothing this script is willing to act on —
     # unparseable, the wrong shape, or an action outside the allowlist. Worth a line: silence
     # here would make a daemon asking for something impossible look like a daemon asking for
@@ -175,7 +276,7 @@ if ! command -v nmcli >/dev/null 2>&1; then
   # running: the daemon distinguishes them, and only this one keeps the LEDs quiet.
   log "no nmcli on PATH — publishing an empty reading and idling"
   while [[ "${running}" == true ]]; do
-    publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":false,\"online\":false,\"ssid\":null,\"signal\":null,\"apActive\":false}"
+    publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":false,\"online\":false,\"ssid\":null,\"signal\":null,\"apActive\":false,\"apSsid\":null,\"scan\":[],\"scanAgeSeconds\":0,\"lastError\":null}"
     sleep "${POLL_SECONDS}" &
     wait $! 2>/dev/null || true
   done
@@ -184,8 +285,16 @@ fi
 
 log "publishing to ${STATE_FILE} every ${POLL_SECONDS}s; hotspot would be ${AP_SSID}"
 
+LAST_ERROR=
+
 while [[ "${running}" == true ]]; do
   consume_request
+
+  # Not while hosting the hotspot: the radio cannot do both, and the list captured just
+  # before it went up is the one the portal should be showing anyway.
+  if [[ "${ap_active:-false}" != true && $(( $(date +%s) - SCAN_AT )) -ge "${SCAN_INTERVAL_SECONDS}" ]]; then
+    refresh_scan yes
+  fi
 
   ssid=
   signal=null
@@ -221,7 +330,13 @@ while [[ "${running}" == true ]]; do
     ssid_json=null
   fi
 
-  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active}}"
+  if [[ -n "${LAST_ERROR}" ]]; then
+    last_error_json="$(json_string "${LAST_ERROR}")"
+  else
+    last_error_json=null
+  fi
+
+  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active},\"apSsid\":$(json_string "${AP_SSID}"),\"scan\":${SCAN_JSON},\"scanAgeSeconds\":$(( $(date +%s) - SCAN_AT )),\"lastError\":${last_error_json}}"
 
   # Backgrounded so a SIGTERM lands during the sleep rather than after it.
   sleep "${POLL_SECONDS}" &

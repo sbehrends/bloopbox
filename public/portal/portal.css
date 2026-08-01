@@ -1,0 +1,153 @@
+/* Setup portal.
+   Read on a phone, in a captive-portal webview, by a parent who is standing up and probably
+   holding a child. Bigger targets and fewer words than the admin panel, and no reliance on
+   anything a stripped webview might not have. */
+
+.portal {
+  padding: 1.25rem 1rem 3rem;
+}
+
+.portal-shell {
+  max-width: 30rem;
+  margin: 0 auto;
+}
+
+.portal .lede {
+  color: var(--muted);
+  margin: 0.25rem 0 1.5rem;
+}
+
+.step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.step h2 {
+  margin: 0 0 0.75rem;
+}
+
+.networks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* A whole row is the tap target, not a radio button the size of a pea. */
+.network {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem;
+  min-height: 3rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.network[aria-checked='true'] {
+  border-color: var(--accent);
+  background: rgb(255 213 74 / 8%);
+}
+
+.network .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.network .meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.field {
+  display: block;
+  margin: 0.75rem 0 0;
+}
+
+.field span {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.field input {
+  width: 100%;
+  padding: 0.75rem;
+  min-height: 3rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: var(--text);
+  /* 16px or larger, or iOS zooms the page the moment the field is focused. */
+  font-size: 1rem;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  color: var(--muted);
+}
+
+.link-button {
+  margin-top: 0.75rem;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.primary {
+  width: 100%;
+  padding: 1rem;
+  min-height: 3.25rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 0.75rem;
+  color: #1a1a22;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.error {
+  padding: 0.75rem;
+  border: 1px solid #b3413c;
+  border-radius: 0.5rem;
+  background: rgb(179 65 60 / 12%);
+  color: #ffb3ae;
+}
+
+.done ol {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.done li {
+  margin-bottom: 0.5rem;
+}
+
+.muted {
+  color: var(--muted);
+}

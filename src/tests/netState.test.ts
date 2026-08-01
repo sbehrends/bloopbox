@@ -42,7 +42,51 @@ describe('parseNetState', () => {
       ssid: 'Home',
       signal: 71,
       apActive: false,
+      apSsid: null,
+      scan: [],
+      scanAgeSeconds: 0,
+      lastError: null,
     });
+  });
+
+  it('reads a scan list', () => {
+    const state = parseNetState(
+      reading({
+        apSsid: 'bloopbox-A1B2',
+        scanAgeSeconds: 12,
+        scan: [
+          { ssid: 'Home', signal: 71, secure: true },
+          { ssid: 'Cafe', signal: 20, secure: false },
+        ],
+      }),
+    );
+    expect(state?.scan).toEqual([
+      { ssid: 'Home', signal: 71, secure: true },
+      { ssid: 'Cafe', signal: 20, secure: false },
+    ]);
+    expect(state?.apSsid).toBe('bloopbox-A1B2');
+    expect(state?.scanAgeSeconds).toBe(12);
+  });
+
+  it('drops the whole scan list if any entry is malformed', () => {
+    // A picker showing some of the networks is worse than one showing none: only the second
+    // is obviously wrong, and the first sends a parent looking for a network that is there.
+    const state = parseNetState(
+      reading({ scan: [{ ssid: 'Home', signal: 71, secure: true }, { signal: 40 }] }),
+    );
+    expect(state?.scan).toEqual([]);
+  });
+
+  it("defaults a scanned network's missing fields to the cautious answer", () => {
+    const state = parseNetState(reading({ scan: [{ ssid: 'Home' }] }));
+    // Secure unless told otherwise: hiding a passphrase box that was needed is the worse
+    // failure, and it happens on a phone with no way to go back.
+    expect(state?.scan).toEqual([{ ssid: 'Home', signal: 0, secure: true }]);
+  });
+
+  it('keeps a join failure so the portal can explain it', () => {
+    const state = parseNetState(reading({ lastError: 'could not join Home' }));
+    expect(state?.lastError).toBe('could not join Home');
   });
 
   it('rejects anything that is not a JSON object', () => {

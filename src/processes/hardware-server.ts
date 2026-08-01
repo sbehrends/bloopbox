@@ -29,7 +29,13 @@ import {
   NetworkSupervisor,
   type NetworkObservation,
 } from '../core/networkSupervisor.ts';
-import { NetStateWatcher, requestNetAction, type NetAction } from '../net/netState.ts';
+import {
+  NetStateWatcher,
+  requestNetAction,
+  type NetAction,
+  type NetState,
+} from '../net/netState.ts';
+import { portalRedirectTarget, shouldRedirectToPortal } from '../server/captivePortal.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
 import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
@@ -54,6 +60,15 @@ function requestRestart(reason: string): void {
 }
 
 const PORT = Number(process.env['PORT'] ?? 3000);
+/**
+ * Second listener, for the captive portal only.
+ *
+ * A phone's captive-portal probe goes to port 80 and nowhere else, so the setup page has to
+ * answer there. The unit grants CAP_NET_BIND_SERVICE for it; in development the bind fails
+ * with EACCES and is logged and shrugged off, because :3000 is all a laptop needs. Set to 0
+ * to switch the listener off entirely.
+ */
+const PORTAL_PORT = Number(process.env['PORTAL_PORT'] ?? 80);
 /** Audio lives in tmpfs on the device; override for dev. */
 const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/bloopbox';
 /** Built UI assets. Absent in dev, where Vite serves them on :5174. */
@@ -246,7 +261,30 @@ async function main(): Promise<void> {
     requestRestart: (reason: string) => {
       requestRestart(reason);
     },
+    netState: (): NetState | null => netWatcher.last,
+    requestJoin: async (credentials: { ssid: string; psk: string }) =>
+      requestNetAction('join', { credentials }),
   };
+
+  /*
+   * Captive-portal interception, first in the chain and active only while the hotspot is up.
+   *
+   * Deliberately answers a phone's connectivity probe *wrongly* — a correct answer is what
+   * makes the OS decide the network is fine and show nothing, which on a device with no
+   * screen leaves the parent staring at a hotspot that appears to do nothing.
+   */
+  app.use((req, res, next) => {
+    if (
+      !shouldRedirectToPortal(
+        { path: req.path, host: req.headers.host, method: req.method },
+        isApActive(),
+      )
+    ) {
+      next();
+      return;
+    }
+    res.redirect(302, portalRedirectTarget(PORTAL_PORT));
+  });
 
   app.use('/api', createApiRouter(routesContext));
   app.use('/audio', createAudioRouter(RECORDING_DIRECTORY));
@@ -433,6 +471,30 @@ async function main(): Promise<void> {
     });
   });
 
+  /*
+   * The portal listener. Same Express app, second socket — a phone probing a captive network
+   * asks port 80 and will not be told otherwise, and an nftables redirect would have to be
+   * torn down again by something running as root.
+   */
+  const portalServer = PORTAL_PORT > 0 ? createServer(app) : null;
+  if (portalServer) {
+    portalServer.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EACCES' || error.code === 'EADDRINUSE') {
+        // Expected off-device: binding 80 needs CAP_NET_BIND_SERVICE, which the systemd unit
+        // grants and a laptop does not. The captive portal is the only thing that needs it.
+        log.warn(
+          { port: PORTAL_PORT, code: error.code },
+          'no portal listener — captive portal will not work here',
+        );
+        return;
+      }
+      log.error({ err: error }, 'portal listener failed');
+    });
+    portalServer.listen(PORTAL_PORT, () => {
+      log.info({ port: PORTAL_PORT }, 'portal listening');
+    });
+  }
+
   /* ---- shutdown ---- */
 
   let shuttingDown = false;
@@ -443,6 +505,7 @@ async function main(): Promise<void> {
 
     void (async (): Promise<void> => {
       netWatcher.stop();
+      portalServer?.close();
       purger.stop();
       await purger.whenIdle();
       await controller.stop();

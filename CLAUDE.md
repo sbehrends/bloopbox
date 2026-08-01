@@ -202,10 +202,11 @@ simulator transport), `src/audio/` (ffmpeg pipeline, cue playback, unread queue,
 `src/whatsapp/` (Baileys client + whitelist), `src/config/` (Zod schema + atomic ConfigManager),
 `src/net/` (reads what the root network agent publishes).
 
-### The two browser UIs
+### The three browser UIs
 
-`public/simulator/` (virtual device) and `public/admin/` (parent settings) are plain TS + a shared
-`public/shared/base.css` — no framework. They are **outside `src/`** and compiled by Vite, not tsc:
+`public/simulator/` (virtual device), `public/admin/` (parent settings) and `public/portal/`
+(first-boot setup over the hotspot) are plain TS + a shared `public/shared/base.css` — no
+framework. They are **outside `src/`** and compiled by Vite, not tsc:
 
 - Three tsconfigs. `tsconfig.json` typechecks `src/` + `scripts/` (node libs, no DOM);
   `tsconfig.web.json` typechecks `public/` with DOM libs and `types: []`, whitelisting only the
@@ -213,13 +214,19 @@ simulator transport), `src/audio/` (ffmpeg pipeline, cue playback, unread queue,
   `tsconfig.build.json` is the emit config. `npm run typecheck` runs the first two — a DOM global in
   `src/`, or a node global in `public/`, fails there and nowhere else.
 - Vite 8 bundles with **Rolldown**: use `rolldownOptions`, not `rollupOptions`.
-- Both UIs speak the same typed contract as the daemons via `src/ipc/events.ts`. Adding a
-  simulator or admin event means editing that file first.
+- The simulator and admin panel speak the same typed contract as the daemons via
+  `src/ipc/events.ts`. Adding a simulator or admin event means editing that file first.
+- **The portal is deliberately not on that contract.** It runs in a captive-portal webview,
+  where WebSocket is unreliable and storage is ephemeral, so it is plain `fetch` against
+  `GET /api/wifi/scan` and `POST /api/wifi/join` and narrows every response by hand. Keep it
+  that way: a dependency on Socket.io there is a page that hangs on a phone.
 
 ### Server surface
 
 `/api` is the only mutable surface, mounted in `hardware-server.ts` alongside `/audio` (recordings)
-and `/sounds` (cues). Everything under `/api` sits behind `requireAdmin` — HTTP Basic against a
+and `/sounds` (cues). The app also listens on **:80** (`PORTAL_PORT`, via
+`AmbientCapabilities=CAP_NET_BIND_SERVICE`) because a phone's captive-portal probe asks nowhere
+else; off-device that bind fails with EACCES and is logged and ignored. Everything under `/api` sits behind `requireAdmin` — HTTP Basic against a
 bcrypt hash in config — except `GET /status`, `GET /whatsapp`, `GET /cues` and `POST /onboard`.
 The guard also **stands aside entirely while `system.configured` is false**, or first-run
 onboarding could never set a password; don't "fix" that. The bridge authenticates separately with `BRIDGE_TOKEN` on the `x-bridge-token` header,

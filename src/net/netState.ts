@@ -31,6 +31,15 @@ export const NET_STATE_MAX_AGE_MS = 30_000;
 /** The schema version the agent writes. A mismatch is treated as no reading at all. */
 export const NET_STATE_VERSION = 1;
 
+/** One network the agent saw, for the setup portal's picker. */
+export type ScannedNetwork = {
+  readonly ssid: string;
+  /** 0-100. */
+  readonly signal: number;
+  /** Whether joining it needs a passphrase. */
+  readonly secure: boolean;
+};
+
 /** A published reading, once validated. */
 export type NetState = {
   /** When the agent wrote it, epoch ms. */
@@ -43,8 +52,21 @@ export type NetState = {
   readonly ssid: string | null;
   /** Signal strength 0–100, or null when not associated. */
   readonly signal: number | null;
-  /** True while the setup hotspot is up. Always false until that ships. */
+  /** True while the setup hotspot is up. */
   readonly apActive: boolean;
+  /** The hotspot's own SSID, so the portal can tell a parent what they joined. */
+  readonly apSsid: string | null;
+  /**
+   * Networks in range.
+   *
+   * Captured while the radio was still a client — an interface hosting an access point
+   * cannot scan — so during setup this is the room as it was moments before the hotspot
+   * went up. `scanAgeSeconds` says how stale that is.
+   */
+  readonly scan: readonly ScannedNetwork[];
+  readonly scanAgeSeconds: number;
+  /** Why the last join failed, in words a parent can act on. Null if nothing has failed. */
+  readonly lastError: string | null;
 };
 
 /**
@@ -76,6 +98,12 @@ export function isStale(state: NetState, nowMs: number): boolean {
  * a privilege boundary: a field that arrives missing or wrong-typed should degrade to the
  * cautious answer, not throw away an otherwise usable reading.
  */
+const scannedNetworkSchema = z.object({
+  ssid: z.string().min(1).max(64),
+  signal: z.number().min(0).max(100).catch(0),
+  secure: z.boolean().catch(true),
+});
+
 const netStateSchema = z.object({
   version: z.literal(NET_STATE_VERSION),
   updatedAtMs: z.number(),
@@ -84,6 +112,12 @@ const netStateSchema = z.object({
   ssid: z.string().min(1).nullable().catch(null),
   signal: z.number().nullable().catch(null),
   apActive: z.boolean().catch(false),
+  apSsid: z.string().min(1).nullable().catch(null),
+  // One malformed entry drops the whole list rather than the entry: a picker showing some of
+  // the networks is worse than one showing none, because only the second is obviously wrong.
+  scan: z.array(scannedNetworkSchema).max(40).catch([]),
+  scanAgeSeconds: z.number().min(0).catch(0),
+  lastError: z.string().max(200).nullable().catch(null),
 });
 
 /** Parses a published reading, or returns null if it cannot be trusted. */
@@ -105,6 +139,10 @@ export function parseNetState(raw: string): NetState | null {
     ssid: result.data.ssid,
     signal: result.data.signal,
     apActive: result.data.apActive,
+    apSsid: result.data.apSsid,
+    scan: result.data.scan,
+    scanAgeSeconds: result.data.scanAgeSeconds,
+    lastError: result.data.lastError,
   };
 }
 
@@ -223,9 +261,15 @@ export class NetStateWatcher {
 export const NET_REQUEST_PATH = process.env['NET_REQUEST_PATH'] ?? '/run/bloopbox/net-request.json';
 
 /** Everything the daemon is allowed to ask for. The agent enforces the same list. */
-export const NET_ACTIONS = ['ap-up', 'ap-down'] as const;
+export const NET_ACTIONS = ['ap-up', 'ap-down', 'join'] as const;
 
 export type NetAction = (typeof NET_ACTIONS)[number];
+
+/** Credentials for a `join`. Nothing else carries a payload. */
+export type NetJoinCredentials = {
+  readonly ssid: string;
+  readonly psk: string;
+};
 
 /**
  * Asks the agent for something, by writing a file it consumes and deletes.
@@ -237,12 +281,19 @@ export type NetAction = (typeof NET_ACTIONS)[number];
  */
 export async function requestNetAction(
   action: NetAction,
-  path: string = NET_REQUEST_PATH,
+  options: { readonly credentials?: NetJoinCredentials; readonly path?: string } = {},
 ): Promise<boolean> {
+  const body =
+    action === 'join' && options.credentials
+      ? { action, ssid: options.credentials.ssid, psk: options.credentials.psk }
+      : { action };
   try {
     // Written whole, in one call: the agent may read it at any moment, and a half-written
-    // document parses as nothing and is dropped.
-    await writeFile(path, `${JSON.stringify({ action })}\n`, { mode: 0o640 });
+    // document parses as nothing and is dropped. Mode 0640 because a join carries the Wi-Fi
+    // passphrase for the few seconds before the agent consumes the file.
+    await writeFile(options.path ?? NET_REQUEST_PATH, `${JSON.stringify(body)}\n`, {
+      mode: 0o640,
+    });
     return true;
   } catch {
     return false;

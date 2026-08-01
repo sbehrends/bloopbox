@@ -155,8 +155,11 @@ and `npm run check` does not run it. What is left, in order of size:
   test honestly: most of it is an unofficial API surface that can only be exercised against a real
   account. `whitelist.ts` (the safety boundary) is already well covered; what is not is the media
   download, the reconnect ladder and the send path.
-- **`src/server/simulatorTransport.ts`** — no tests. Same shape as `bridgeLink.test.ts`, which is
-  now the template for how to do it: real Socket.io server, real client, drive events.
+- **`src/server/simulatorTransport.ts`** — no tests, and **deliberately not getting any**. It is
+  the browser end of a debugging tool: it never runs on a device, and when it breaks the person
+  looking at it is the one who broke it. `bridgeLink.test.ts` is the template if that ever stops
+  being true. It stays in the coverage denominator, so the 80% thresholds cannot be reached
+  without excluding it — worth doing at the same time as any other change to `vitest.config.ts`.
 - **`src/audio/` at 75%** — the ffmpeg pipeline's error paths.
 - Three timeout paths in `bridgeLink.ts` (send 60s, pairing 20s, groups 10s) are deliberately
   uncovered: they need fake timers, which do not mix with real sockets.

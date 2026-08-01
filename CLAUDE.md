@@ -284,7 +284,8 @@ Sections with a refinement are therefore written as a plain `…Shape` object pl
 (excluding `src/tests`, `src/processes` and `gpioDriver.ts`) but **`npm run check` does not run
 them** — it calls plain `vitest run`. As of this writing `npm run test:coverage` reports **77%
 statements / 68% branches**, so the thresholds still fail: `src/whatsapp/` (24%) is the large
-remaining hole, `src/server/simulatorTransport.ts` has no tests, and `src/audio/` sits at 75%.
+remaining hole and `src/audio/` sits at 75%. `src/server/simulatorTransport.ts` is untested on
+purpose — it is the browser end of a debugging tool, not device code.
 Treat that number as a known debt, not a passing gate.
 
 Server-layer tests drive a **real Express app on an ephemeral port with `fetch`**, assembled the

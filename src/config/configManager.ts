@@ -211,9 +211,21 @@ export class ConfigManager {
  */
 type PatchSection<T> = { readonly [K in keyof T]?: T[K] | undefined };
 
+/**
+ * Written out section by section rather than mapped over `DeviceConfig`, for two reasons a
+ * mapped type could not express: `contacts` is two levels deep, because a single button is
+ * patchable field by field, and `version` is absent entirely — `mergeConfig` always takes it
+ * from the base, so accepting one here would suggest a client could set it.
+ */
 export type ConfigPatch = {
-  readonly [K in keyof DeviceConfig]?:
-    (DeviceConfig[K] extends object ? PatchSection<DeviceConfig[K]> : DeviceConfig[K]) | undefined;
+  readonly system?: PatchSection<DeviceConfig['system']> | undefined;
+  readonly wifi?: PatchSection<DeviceConfig['wifi']> | undefined;
+  readonly contacts?:
+    | { readonly [K in keyof DeviceConfig['contacts']]?: PatchSection<ContactConfig> | undefined }
+    | undefined;
+  readonly audio?: PatchSection<DeviceConfig['audio']> | undefined;
+  readonly quietHours?: PatchSection<DeviceConfig['quietHours']> | undefined;
+  readonly buttons?: PatchSection<ButtonTimings> | undefined;
 };
 
 /** Falls back to `base` when the patch omits a field *or* sets it to undefined. */

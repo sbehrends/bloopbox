@@ -128,26 +128,122 @@ describe('PUT /config', () => {
     expect(api.restarts).toEqual([]);
   });
 
-  it('takes a partial wifi patch but demands a whole audio section', async () => {
+  it('takes a patch of any depth, and leaves the fields it did not mention alone', async () => {
     /*
-     * The asymmetry is in the schema, not here: `system`, `wifi` and `contacts` are
-     * `.partial()`, while `audio`, `quietHours` and `buttons` are whole-section. So the panel
-     * gets to send just an SSID, and a new form that sends one timing gets a 400 naming every
-     * field it forgot. Surprising enough to pin — if it ever becomes uniform, this fails.
+     * Uniform by design: every section takes a subset. It used to be uneven, and a form that
+     * sent one timing got a 400 listing everything it forgot.
+     *
+     * The assertion that matters is the second half. `mergeConfig` merges field by field, so a
+     * one-field patch must not blank its siblings — a patch of the volume that reset the volume
+     * *cap* would raise the ceiling on a speaker sitting beside a child's ears.
      */
     api = await startApi({ configured: false });
+    await send(api, 'PUT', '/api/config', {
+      audio: {
+        speakerVolumePercent: 40,
+        maxVolumeCapPercent: 80,
+        micGainPercent: 50,
+        maxRecordingSeconds: 30,
+      },
+    });
 
-    const partialWifi = await send(api, 'PUT', '/api/config', { wifi: { ssid: 'Only the name' } });
-    expect(partialWifi.status).toBe(200);
-    expect(api.config.current.wifi.ssid).toBe('Only the name');
-
-    const partialAudio = await send(api, 'PUT', '/api/config', {
+    const response = await send(api, 'PUT', '/api/config', {
       audio: { speakerVolumePercent: 55 },
     });
-    expect(partialAudio.status).toBe(400);
-    const issues = JSON.stringify(readField(await partialAudio.json(), 'issues'));
-    expect(issues).toContain('audio.maxVolumeCapPercent');
-    expect(issues).toContain('audio.micGainPercent');
+    expect(response.status).toBe(200);
+    expect(api.config.current.audio).toEqual({
+      speakerVolumePercent: 55,
+      maxVolumeCapPercent: 80,
+      micGainPercent: 50,
+      maxRecordingSeconds: 30,
+    });
+  });
+
+  it('patches one field of one contact without disturbing the others', async () => {
+    api = await startApi({ configured: false });
+    const response = await send(api, 'PUT', '/api/config', {
+      contacts: { button1: { name: 'Mamá' } },
+    });
+
+    expect(response.status).toBe(200);
+    expect(api.config.current.contacts.button1).toEqual({
+      name: 'Mamá',
+      target: '15551234567',
+      enabled: true,
+    });
+    expect(api.config.current.contacts.button2.name).toBe('Dad');
+  });
+
+  it('still migrates the legacy phone field inside a patch', async () => {
+    // Devices in the field have a config.json using `phone`, and a client written against that
+    // shape may still be sending it. The preprocess has to survive being made partial.
+    api = await startApi({ configured: false });
+    const response = await send(api, 'PUT', '/api/config', {
+      contacts: { button2: { phone: '15550000000' } },
+    });
+
+    expect(response.status).toBe(200);
+    expect(api.config.current.contacts.button2).toMatchObject({
+      name: 'Dad',
+      target: '15550000000',
+    });
+  });
+
+  it('still enforces a cross-field rule the patch cannot see on its own', async () => {
+    /*
+     * The point of validating the *merged* config rather than the patch. A patch raising the
+     * volume carries no cap to compare against, so the rule can only be checked after the
+     * merge — and it is, in ConfigManager.save(). Losing this would let a partial patch walk
+     * the volume past its ceiling one field at a time.
+     */
+    api = await startApi({ configured: false });
+    await send(api, 'PUT', '/api/config', {
+      audio: {
+        speakerVolumePercent: 40,
+        maxVolumeCapPercent: 80,
+        micGainPercent: 50,
+        maxRecordingSeconds: 30,
+      },
+    });
+
+    const response = await send(api, 'PUT', '/api/config', {
+      audio: { speakerVolumePercent: 95 },
+    });
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(await response.json())).toContain('maxVolumeCapPercent');
+    expect(api.config.current.audio.speakerVolumePercent).toBe(40);
+  });
+
+  it('rejects a lone debounce that would swallow the threshold', async () => {
+    // Same shape of rule, on the timings: the stored threshold is 500, so 600 alone is invalid
+    // even though nothing in the patch says so.
+    api = await startApi({ configured: false });
+    const response = await send(api, 'PUT', '/api/config', { buttons: { debounceMs: 600 } });
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(await response.json())).toContain('recordThresholdMs');
+    expect(api.config.current.buttons.debounceMs).toBe(150);
+  });
+
+  it('will not enable a button that has nobody behind it', async () => {
+    // The third button is unassigned in the harness. Enabling it with a one-field patch has to
+    // fail on the merged config, or a button would light up and send into the void — and this
+    // is the rule closest to the whitelist, which is the product's safety boundary.
+    api = await startApi({ configured: false });
+    const response = await send(api, 'PUT', '/api/config', {
+      contacts: { button3: { enabled: true } },
+    });
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(await response.json())).toContain('phone number or group');
+    expect(api.config.current.contacts.button3.enabled).toBe(false);
+  });
+
+  it('accepts an empty patch as a no-op save', async () => {
+    api = await startApi({ configured: false });
+    const response = await send(api, 'PUT', '/api/config', {});
+    expect(response.status).toBe(200);
+    expect(api.restarts).toEqual(['configuration saved']);
   });
 
   it('does not restart when nothing could be saved', async () => {

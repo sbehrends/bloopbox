@@ -262,8 +262,21 @@ and `/sounds` (cues). The app also listens on **:80** (`PORTAL_PORT`, via
 else; off-device that bind fails with EACCES and is logged and ignored. Everything under `/api` sits behind `requireAdmin` — HTTP Basic against a
 bcrypt hash in config — except `GET /status`, `GET /whatsapp`, `GET /cues` and `POST /onboard`.
 The guard also **stands aside entirely while `system.configured` is false**, or first-run
-onboarding could never set a password; don't "fix" that. The bridge authenticates separately with `BRIDGE_TOKEN` on the `x-bridge-token` header,
+onboarding could never set a password; don't "fix" that. It stands aside on an empty
+`adminPasswordHash` too, which means a config with `configured: true` and no hash is wide open —
+a **decided, accepted risk**, because the guard cannot tell that state from mid-onboarding and
+refusing to serve would make the device recoverable only by pulling the SD card. Both halves are
+pinned by `src/tests/adminAuth.test.ts`; the watch item in `PENDING.md` has the reasoning.
+The bridge authenticates separately with `BRIDGE_TOKEN` on the `x-bridge-token` header,
 compared in constant time.
+
+`PUT /api/config` accepts **any subset of any section, to any depth** — `configUpdateSchema` is
+partial all the way down, `mergeConfig` merges field by field, and cross-field rules
+(volume ≤ cap, debounce < threshold, an enabled contact has a target) are enforced by
+`ConfigManager.save()` against the **merged** config. That last part is the load-bearing bit: a
+patch raising the volume does not carry the cap, so the rule can only be checked after merging.
+Sections with a refinement are therefore written as a plain `…Shape` object plus a refined
+`…Schema` — `.partial()` exists only on a ZodObject.
 
 ### Tests
 

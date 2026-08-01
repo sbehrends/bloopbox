@@ -36,12 +36,12 @@ teardown is `nmcli con down`. `shared` needs `dnsmasq-base` — one more entry i
 _Root does networking, the daemon does UI, they talk through files in `/run`._ **Built** — see
 `deploy/net-agent.sh`, `bloopbox-net.service` and `src/net/netState.ts`. The hardware daemon runs
 unprivileged under `ProtectSystem=strict`, so it cannot run `nmcli` and should not be able to. The
-root agent polls every 5 s and publishes `/run/bloopbox-net/net-state.json`. Still to come: the
-scan list and last join error in that document, and the other direction —
-`/run/bloopbox/net-request.json`, written by the daemon, carrying a **strictly enum-validated**
+root agent polls every 5 s and publishes `/run/bloopbox-net/net-state.json`, including the scan
+list and the last join error. The other direction is built too: `/run/bloopbox/net-request.json`,
+written by `requestNetAction()` in `src/net/netState.ts`, carrying a **strictly enum-validated**
 action (`ap-up` | `ap-down` | `join {ssid, psk}`), never evaluated as shell. One writer per
-directory, so the agent can never end up owning the recordings tmpfs. The agent should also keep a
-fallback of its own — unassociated, unconfigured and no requests for ~5 min raises the AP anyway —
+directory, so the agent can never end up owning the recordings tmpfs. Still to come: the agent
+keeping a fallback of its own — unassociated, unconfigured and no requests for ~5 min raises the AP anyway —
 so a crashed daemon cannot strand the device.
 
 _Decision logic in TS._ `src/core/networkSupervisor.ts`: pure, takes observations plus timings,
@@ -145,24 +145,6 @@ Deliberate for now: the portal is served from a Pi over its own hotspot, and a f
 late is a page a parent stares at. Revisit only with a subsetted self-hosted WOFF2 (Latin, the two
 weights actually used), `font-display: swap`, and a before/after measurement of the portal's first
 paint on a real phone over the hotspot — not on localhost, where the cost is invisible.
-
-### A config with `configured: true` and no password hash leaves the API open
-
-`requireAdmin` stands aside when **either** `system.configured` is false **or**
-`system.adminPasswordHash` is empty. The second clause is what makes a half-written state fail
-open: everything under `/api` becomes reachable by anyone on the LAN, with no password to type.
-
-It should be unreachable — `POST /onboard` and `POST /wifi/join` both write the hash and the flag
-in a single `config.update()` — so this is a hand-edited `config.json` or a future code path that
-sets one without the other. Pinned as it stands by
-`src/tests/adminAuth.test.ts` ("stands aside when configured is true but no hash was ever
-written"), which flips to expecting a 401 if this is hardened.
-
-The fix is not obvious, which is why it is here rather than done: refusing to serve in that state
-means a device that can only be recovered by pulling the SD card, and the guard genuinely cannot
-distinguish "mid-onboarding" from "corrupted". The better answer is probably for `ConfigManager`
-to refuse to *load* a config with `configured: true` and an empty hash, falling back to the
-template — turning it into a device that onboards again rather than one that is wide open.
 
 ### Coverage still fails its own thresholds
 
@@ -293,6 +275,20 @@ browser with speakers that playback runs at the right speed.
 ## Watch items
 
 Not work, but things that could bite.
+
+- **An empty password hash opens the API even when `configured` is true — accepted, on purpose.**
+  `requireAdmin` stands aside when `system.configured` is false **or** `adminPasswordHash` is
+  empty. The second clause means a config in that half-written state leaves everything under
+  `/api` reachable by anyone on the LAN with no password to type. It should be unreachable —
+  `POST /onboard` and `POST /wifi/join` each write the hash and the flag in one `config.update()`
+  — so getting there takes a hand-edited `config.json`.
+
+  **Decision: leave it.** The alternative is refusing to serve in that state, and the guard cannot
+  tell "mid-onboarding" from "corrupted" — so hardening it turns a recoverable device into one
+  that needs the SD card pulled, in a house with no screen and possibly no laptop. An open API on
+  a family LAN is the smaller failure. Do not "fix" this without a way to recover the device
+  first. Pinned by `src/tests/adminAuth.test.ts` ("stands aside when configured is true but no
+  hash was ever written"), which is the test to change if that ever exists.
 
 - **The carry-on window leaves its own silence in the file.** `resumeGraceMs` keeps the microphone
   open after release, so every message carries up to that much trailing room noise, per gap and at

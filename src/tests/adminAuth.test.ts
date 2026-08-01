@@ -156,10 +156,17 @@ describe('once the device is configured', () => {
   });
 
   it('stands aside when configured is true but no hash was ever written', async () => {
-    // Not what you would want, and recorded rather than endorsed: the guard treats an empty
-    // hash as "no password exists yet", so a config in this state leaves the API open. It
-    // should be unreachable — /onboard writes both fields in one update — but a hand-edited
-    // config.json gets there. See PENDING.md; if that is ever hardened, this test flips to 401.
+    /*
+     * An open API, and a **deliberate** one. The guard reads an empty hash as "no password
+     * exists yet", so a config in this half-written state is reachable by anyone on the LAN.
+     * Getting there takes a hand-edited config.json: both write paths set the hash and the flag
+     * in one update.
+     *
+     * Kept because the alternative is worse. The guard cannot tell "mid-onboarding" from
+     * "corrupted", so refusing to serve turns a recoverable device into one that needs the SD
+     * card pulled — in a house with no screen. See the watch item in PENDING.md; changing this
+     * test means a recovery path exists.
+     */
     api = await startApi({ configured: true });
     const response = await fetch(api.url('/api/config'));
     expect(response.status).toBe(200);

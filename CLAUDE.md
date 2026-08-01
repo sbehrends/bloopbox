@@ -269,9 +269,18 @@ compared in constant time.
 
 `src/tests/*.test.ts`, node environment. `vitest.config.ts` declares 80% coverage thresholds
 (excluding `src/tests`, `src/processes` and `gpioDriver.ts`) but **`npm run check` does not run
-them** — it calls plain `vitest run`. As of this writing `npm run test:coverage` fails at 55%
-statements / 44% branches, because `src/server/**` and `src/ipc/payload.ts` have no tests at all.
-Treat that number as a known debt, not a passing gate. Timing-sensitive suites (LED patterns, debounce,
+them** — it calls plain `vitest run`. As of this writing `npm run test:coverage` reports **77%
+statements / 68% branches**, so the thresholds still fail: `src/whatsapp/` (24%) is the large
+remaining hole, `src/server/simulatorTransport.ts` has no tests, and `src/audio/` sits at 75%.
+Treat that number as a known debt, not a passing gate.
+
+Server-layer tests drive a **real Express app on an ephemeral port with `fetch`**, assembled the
+way `hardware-server.ts` assembles it — see `src/tests/support/apiHarness.ts`, which is a helper
+rather than a suite (`include` is `*.test.ts` only). No supertest: nothing was worth a dependency
+here. `bridgeLink.test.ts` does the same with a real Socket.io server and client, because the
+token gate is handshake middleware and only exists during a connection.
+
+Timing-sensitive suites (LED patterns, debounce,
 purge TTL) run on **fake timers** — never add a real sleep. Where a code path awaits real
 filesystem work (`deviceController.test.ts` leaves `setImmediate` real because commit awaits `rm`),
 assert with a `waitFor` condition rather than a fixed number of yields: fixed flushes passed in

@@ -8,7 +8,7 @@
 # here, as root, and crosses to the daemon as a file it can only read:
 #
 #   /run/bloopbox-net/net-state.json   root writes, everyone reads   (this script)
-#   /run/bloopbox/net-request.json     daemon writes, root reads     (not yet built)
+#   /run/bloopbox/net-request.json     daemon writes, root reads     (requestNetAction)
 #
 # Two directories, one writer each, so neither side can be tricked into acting on something
 # it wrote itself, and so this script never chowns the daemon's recording directory out from

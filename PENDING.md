@@ -93,8 +93,9 @@ the state file.
 **Milestones.** ~~(1) observation only — net-agent, state file, real `wifiDown`, doctor checks~~
 **done**. ~~(2) AP up/down — profile, `networkSupervisor.ts`, tests, the LED rung~~ **done**,
 including `dnsmasq-base` in `RUNTIME_PACKAGES` and a simulator injector for the pattern. What is
-left of it: nothing is *proven* on a radio (see below), and the agent still reports no scan list
-or join error. (3) portal — `public/portal/`, port 80, probe catch-all, join and fallback.
+left of it: nothing is *proven* on a radio (see below). ~~(3) portal — `public/portal/`, port 80,
+probe catch-all, join and fallback~~ **done**, along with the scan list and `lastError` in the
+state document and `requestNetAction()` writing the other direction.
 (4) packaging — boot README, `smoke-test-release.sh` with a stubbed `nmcli` on PATH.
 
 **Why it matters.** It is the difference between a device a parent can set up and one that needs
@@ -144,6 +145,39 @@ Deliberate for now: the portal is served from a Pi over its own hotspot, and a f
 late is a page a parent stares at. Revisit only with a subsetted self-hosted WOFF2 (Latin, the two
 weights actually used), `font-display: swap`, and a before/after measurement of the portal's first
 paint on a real phone over the hotspot — not on localhost, where the cost is invisible.
+
+### A config with `configured: true` and no password hash leaves the API open
+
+`requireAdmin` stands aside when **either** `system.configured` is false **or**
+`system.adminPasswordHash` is empty. The second clause is what makes a half-written state fail
+open: everything under `/api` becomes reachable by anyone on the LAN, with no password to type.
+
+It should be unreachable — `POST /onboard` and `POST /wifi/join` both write the hash and the flag
+in a single `config.update()` — so this is a hand-edited `config.json` or a future code path that
+sets one without the other. Pinned as it stands by
+`src/tests/adminAuth.test.ts` ("stands aside when configured is true but no hash was ever
+written"), which flips to expecting a 401 if this is hardened.
+
+The fix is not obvious, which is why it is here rather than done: refusing to serve in that state
+means a device that can only be recovered by pulling the SD card, and the guard genuinely cannot
+distinguish "mid-onboarding" from "corrupted". The better answer is probably for `ConfigManager`
+to refuse to *load* a config with `configured: true` and an empty hash, falling back to the
+template — turning it into a device that onboards again rather than one that is wide open.
+
+### Coverage still fails its own thresholds
+
+`npm run test:coverage` reports 77% statements / 68% branches against declared thresholds of 80,
+and `npm run check` does not run it. What is left, in order of size:
+
+- **`src/whatsapp/` at 24%** — the Baileys client. The largest hole by far, and the hardest to
+  test honestly: most of it is an unofficial API surface that can only be exercised against a real
+  account. `whitelist.ts` (the safety boundary) is already well covered; what is not is the media
+  download, the reconnect ladder and the send path.
+- **`src/server/simulatorTransport.ts`** — no tests. Same shape as `bridgeLink.test.ts`, which is
+  now the template for how to do it: real Socket.io server, real client, drive events.
+- **`src/audio/` at 75%** — the ffmpeg pipeline's error paths.
+- Three timeout paths in `bridgeLink.ts` (send 60s, pairing 20s, groups 10s) are deliberately
+  uncovered: they need fake timers, which do not mix with real sockets.
 
 ### The mark is drawn twice, and nothing enforces that they agree
 

@@ -11,12 +11,15 @@ import type { ButtonIndex } from '../config/schema.ts';
 /**
  * Reads one property from an unknown value.
  *
- * `Reflect.get` is used rather than indexing because `key in payload` does not narrow for
- * a non-literal key, and indexing would need a cast.
+ * `Reflect.get` is used rather than indexing because indexing a non-literal key would need a
+ * cast. The guard is `Object.hasOwn` rather than `in`: `in` walks the prototype chain, so
+ * `readField({}, 'toString')` answered with `Object.prototype.toString` — a function, from a
+ * payload that did not contain the key at all. Every caller today type-checks what it gets
+ * back, so nothing was exposed, but this is the function whose job is to make that unnecessary.
  */
 export function readField(payload: unknown, key: string): unknown {
   if (typeof payload !== 'object' || payload === null) return undefined;
-  if (!(key in payload)) return undefined;
+  if (!Object.hasOwn(payload, key)) return undefined;
   return Reflect.get(payload, key);
 }
 

@@ -116,7 +116,10 @@ does differently from the 6.x examples most guides show:
 ## Hardware status: NOT ON HAND
 
 All development happens on macOS through the **simulator** HAL driver. `src/hal/gpioDriver.ts` is
-written but **has never run on real hardware** — treat it as unverified. Do not add code paths
+written but **has never run on real hardware** — treat it as unverified. `docs/hardware-bringup.md`
+is the plan for the day that changes: gate by gate, with the debugging kit
+(`bloopbox-doctor`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`) and who has to be standing
+next to the device for each step. Do not add code paths
 that only work with real GPIO, and never import `opengpio` statically (it is an
 `optionalDependency` and does not build on macOS; `src/hal/index.ts` loads it via dynamic
 `import()`).

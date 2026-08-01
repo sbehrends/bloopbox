@@ -168,7 +168,8 @@ teardown and the join attempt.
 
 `src/hal/gpioDriver.ts` is written from datasheets and the opengpio API but has never run on a
 Pi Zero 2 W. Pin numbers, ULN2003 polarity and ALSA device names are all unverified. See the
-`TODO(hardware)` banner in the driver; `docs/hardware-bringup.md` is still to be written.
+`TODO(hardware)` banner in the driver; `docs/hardware-bringup.md` is the order to prove things
+in and what to reach for when one of them does not work.
 Contained behind the HAL, so bring-up should be a debugging session rather than a rewrite.
 
 What packaging did settle: the addon **compiles and loads on arm64 Trixie** against `libgpiod3`,

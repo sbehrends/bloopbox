@@ -81,6 +81,10 @@ Then check it:
 sudo bloopbox-doctor
 ```
 
+For a first device — where the GPIO, ALSA and hotspot paths have never run — follow
+[`hardware-bringup.md`](./hardware-bringup.md) instead of improvising: it sequences the gates so
+only one unverified subsystem is in play at a time, and it carries the debugging kit.
+
 That is the bash counterpart to `npm run doctor` — the tsx version cannot run on the device,
 which has no devDependencies. It checks the runtime, the addon, ffmpeg's Opus encoder, the ALSA
 devices, the firmware pull-ups, `/data`, the tmpfs, the cue files and both services.

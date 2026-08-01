@@ -201,7 +201,9 @@ rm -rf "${PREFIX}.old"
 info "$(du -sh "${PREFIX}" | cut -f1) installed"
 
 ln -sf "${PREFIX}/deploy/doctor.sh" /usr/local/bin/bloopbox-doctor
-info "bloopbox-doctor is on PATH"
+ln -sf "${PREFIX}/deploy/collect-diagnostics.sh" /usr/local/bin/bloopbox-diagnostics
+ln -sf "${PREFIX}/deploy/hotspot-test.sh" /usr/local/bin/bloopbox-hotspot-test
+info "bloopbox-doctor, bloopbox-diagnostics and bloopbox-hotspot-test are on PATH"
 
 step "writing ${ETC_DIR}/environment"
 install -d -m 0755 "${ETC_DIR}"
@@ -324,7 +326,9 @@ Installed.
 
   admin panel   http://${HOSTNAME_NOW}.local:3000/admin/
   health check  sudo bloopbox-doctor
-  logs          journalctl -u bloopbox-hardware -u bloopbox-whatsapp -f
+  diagnostics   sudo bloopbox-diagnostics        (a redacted bundle to send somewhere)
+  hotspot test  sudo bloopbox-hotspot-test       (drops your ssh session on purpose)
+  logs          journalctl -u bloopbox-hardware -u bloopbox-whatsapp -u bloopbox-net -f
   config        ${DATA_DIR}/config.json   (saving from the admin panel restarts the daemon)
 
 First run: open the admin panel, set a password, link WhatsApp, assign the three buttons.

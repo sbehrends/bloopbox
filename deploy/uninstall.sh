@@ -45,7 +45,8 @@ rm -f /etc/systemd/system.conf.d/10-bloopbox-watchdog.conf
 
 step "removing the application"
 rm -rf "${PREFIX}" "${PREFIX}.new" "${PREFIX}.old"
-rm -f /usr/local/bin/bloopbox-doctor
+rm -f /usr/local/bin/bloopbox-doctor /usr/local/bin/bloopbox-diagnostics \
+      /usr/local/bin/bloopbox-hotspot-test
 
 step "reverting the firmware configuration"
 for candidate in /boot/firmware/config.txt /boot/config.txt; do

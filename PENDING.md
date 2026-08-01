@@ -105,6 +105,44 @@ as the recovery route when even the hotspot cannot be reached.
 Radio behaviour cannot be tested in a container, so milestones 2 and 3 have landed as a single
 verification gap (below).
 
+### Unread notes should be recovered at boot, not silently discarded
+
+**Problem.** The unread queue lives only in `QueueManager`'s memory. The audio is on disk, but the
+list of what is waiting is not, so any restart of the hardware daemon — a config save, a crash, an
+update — drops every note a child had not yet listened to. The sender has already seen their
+message delivered. Hit twice during the 2026-08-01 live run; four notes were orphaned the second
+time.
+
+**What is already in our favour.** Playback deletes the file, so *present on disk* already means
+*unread*: the recordings directory **is** the queue, and recovery is a scan rather than new
+bookkeeping. `RuntimeDirectoryPreserve=yes` is already set on both units, so the files genuinely do
+survive a daemon restart, and `RuntimeDirectorySize=64M` caps how much can ever be waiting.
+
+**How far back it can reach — four ceilings, hardest first.**
+
+1. _A power cycle wipes everything._ `RECORDING_DIR` is `/run/bloopbox`, a tmpfs. Someone
+   unplugging the box — the most likely reboot in a child's room — leaves nothing to recover.
+   This feature covers daemon restarts only. Surviving a power cut would mean writing a child's
+   voice notes to the SD card, which is a different decision with a privacy cost and a wear cost.
+2. _64 MB._ Whatever the queue holds, `RuntimeDirectorySize` is the real cap.
+3. _48 hours._ `AUDIO_TTL_MS` already governs the queue, and recovery should reproduce exactly what
+   would have been there had the daemon not restarted — no more, no less. A second, tighter number
+   would mean two rules answering the same question, differing only by whether a restart happened.
+4. _Whether a 40-hour-old note should still play at all_ is a real product question, but it is
+   **not** new and does not belong here: it is already true today without any restart. Answer it
+   for the queue as a whole or not at all.
+
+**The actual design problem is metadata, not time.** `wa-<messageId>.ogg` yields the message id and
+nothing else — crucially not the **button index**, which is the one thing the queue needs. `receivedAt`
+can come from the file's mtime and `durationMs` from ffprobe, but the index has no source. Options:
+encode it in the name (`wa-<index>-<messageId>.ogg`, simplest, self-healing, no second source of
+truth to keep in sync), or write a manifest (carries everything, needs atomic writes and can
+disagree with the directory).
+
+Note the ordering constraint either way: a recovered note that is then played cannot be marked read
+upstream, because the bridge's `pendingReads` is memory too — see the read-receipt gap below. The
+two want solving together or the recovered note plays and the sender still never sees a receipt.
+
 ### Read-only root filesystem needs /data on its own partition
 
 **Problem.** `PRODUCT.md` §11 wants the root filesystem mounted read-only through overlayfs so an
@@ -201,23 +239,66 @@ None of this blocks anything: the fallbacks are all "looks plainer", not "does n
 
 ### Browser microphone capture
 
-`getUserMedia` / `MediaRecorder` in `public/simulator/main.ts` has never been exercised.
-Headless Chrome has no audio input device and blocks on the permission prompt, so automated
-verification was not possible. The ffmpeg leg of that path (WebM/Opus in, Ogg/Opus out) _was_
-verified separately against real ffmpeg. What remains unproven is the browser glue: that a hold
-produces a valid `.ogg` in the recordings directory.
+The **glue** is now proven, the **device** is not. On 2026-08-01 two holds in a real Chrome sent
+two voice notes that WhatsApp accepted, so `MediaRecorder` → WebM/Opus → Socket.io upload →
+ffmpeg → Ogg/Opus → Baileys works end to end.
+
+But `getUserMedia` was stubbed to reach it: the page was handed a `MediaStreamAudioDestinationNode`
+fed by an oscillator, because no real microphone could be held from a driven browser. So a real
+capture device — permission prompt, sample rate, channel count, a mic that starts slowly — has
+still never been in the path. That last part matters more than it sounds: `minRecordingMs`
+discards on *captured* audio rather than hold duration precisely because a slow microphone start
+is expected, and nothing has yet exercised a device that does it.
 
 ### WhatsApp end to end with a real account
 
-The bridge connects, produces a pairing QR (verified scannable by decoding it back to the exact
-payload), offers phone-number pairing, propagates the whitelist and reports state. What has **not**
-run is the part that needs a linked account: completing a pairing, receiving a real voice note, and
-sending one that appears as a PTT bubble on a phone. Also unverified: the group picker against real
-groups, `markRead`, and `requestPairingCode` actually returning a code.
+Largely done, on 2026-08-01, against a real linked account. Verified in both directions: pairing
+by QR, the group picker returning a real group, a contact assigned by `PUT /api/config` surviving
+the daemon restart, the whitelist reaching the bridge, a voice note **sent** to a group and to an
+individual (`voice note sent`, kinds `group` and `individual`), a voice note **received** on each
+(`voice note accepted`), playback of both from a simulator tap, the unread counts clearing, and
+the recordings being purged from the RAM disk afterwards.
 
-Worth checking when pairing: that a voice note from a number **not** assigned to a button is
-dropped (it should not appear, and the bridge logs `dropped a voice note`), and that a message in
-an assigned group arrives on that button whoever in the group sent it.
+Still not run: `requestPairingCode` actually returning a code, and a note from a number nobody
+assigned being dropped — the negative case, which is the one the safety boundary exists for.
+Group membership as permission is also only half-checked: the group note came from the account
+that owns the device, not from a third party in that group.
+
+### Read receipts do not survive a bridge restart
+
+`pendingReads` in `whatsapp-bridge.ts` is an in-memory `Map` from message id to the Baileys key
+`markRead` needs. A voice note received before a bridge restart is still played and still clears
+its unread count — that state lives in the hardware server — but the key is gone, so nothing is
+marked read upstream and the sender never sees the receipt.
+
+Observed on 2026-08-01: two notes were waiting, one from before a bridge restart and one from
+after; both played, only the newer produced `marked read upstream`.
+
+Small, but it is the visible half of the promise. The sender's evidence that a child heard them is
+those two ticks, and a bridge restart is not rare — it happens on update, on crash, and on every
+reboot. Fixing it means persisting the pending keys somewhere; `/data` is the writable volume, but
+the keys are a privacy consideration of their own, so this needs a decision rather than a patch.
+
+### Baileys cannot draw the waveform on a sent voice note
+
+Every send logs `Failed to generate waveform: Cannot find package 'audio-decode'`. It is optional,
+the send succeeds regardless, and the note plays — but the PTT bubble on the recipient's phone
+carries no waveform bars. For a product whose entire output is voice notes, the bubble looking
+inert is worth the dependency. Not yet confirmed against a real phone screen: check what the
+bubbles from 18:45 and 18:46 actually look like before adding it.
+
+### The admin panel feels sluggish during pairing
+
+Reported while pairing on 2026-08-01: the panel "felt a bit unresponsive". Not diagnosed, and no
+measurement was taken — this is a note to look, not a conclusion.
+
+First places to look, cheapest first. The pairing block now runs a 500 ms ticker that polls
+`/api/whatsapp` every 2 s and every tick once a code has lapsed, so a bridge that is down turns
+into two fetches a second, each awaiting a socket round trip to the WhatsApp process. `getJson`
+has no timeout, so a slow reply stacks; the `polling` guard drops overlaps but not latency. Each
+rotation also refetches `qr.svg`, which re-renders the QR server-side. Separately, every save
+rebuilds the whole panel from scratch and the daemon restarts on config writes, which is a couple
+of seconds where nothing answers — expected, but indistinguishable from a hang without a spinner.
 
 ### The setup hotspot and its portal have never touched a radio or a phone
 

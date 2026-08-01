@@ -139,6 +139,10 @@ async function main(): Promise<void> {
   const link: { current: BridgeLink | null } = { current: null };
   let whatsappState: WhatsAppConnectionState = 'connecting';
   let whatsappQr: string | null = null;
+  /* When the current code arrived. The panel counts down from this, and the age is what it
+     gets — not the timestamp — so a laptop whose clock disagrees with the device still
+     shows the right number of seconds. */
+  let whatsappQrAt = 0;
 
   /**
    * Wi-Fi health, from two sources that must not fight.
@@ -202,7 +206,10 @@ async function main(): Promise<void> {
     token: process.env['BRIDGE_TOKEN'] ?? '',
     onStatus: ({ state, qr }) => {
       whatsappState = state;
-      whatsappQr = qr ?? null;
+      const next = qr ?? null;
+      // Only a genuinely new code restarts the clock: a status repeat is not a rotation.
+      if (next !== null && next !== whatsappQr) whatsappQrAt = Date.now();
+      whatsappQr = next;
       log.info({ state }, 'whatsapp status');
       refreshStatus();
     },
@@ -248,7 +255,11 @@ async function main(): Promise<void> {
     config,
     controller,
     recordingDirectory: RECORDING_DIRECTORY,
-    whatsapp: () => ({ state: whatsappState, qr: whatsappQr }),
+    whatsapp: () => ({
+      state: whatsappState,
+      qr: whatsappQr,
+      qrAgeMs: whatsappQr === null ? null : Date.now() - whatsappQrAt,
+    }),
     wifiConnected: () => !isWifiDown(),
     unlinkWhatsApp: () => {
       link.current?.unlink();

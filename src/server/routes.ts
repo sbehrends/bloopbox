@@ -5,7 +5,11 @@ import { ALL_AUDIO_CUES } from '../audio/cues.ts';
 import { ConfigValidationError, type ConfigManager } from '../config/configManager.ts';
 import { configUpdateSchema, enabledContacts } from '../config/schema.ts';
 import type { DeviceController } from '../core/deviceController.ts';
-import type { DeviceStatusPayload, WhatsAppConnectionState } from '../ipc/events.ts';
+import {
+  QR_LIFETIME_MS,
+  type DeviceStatusPayload,
+  type WhatsAppConnectionState,
+} from '../ipc/events.ts';
 import { readBoolean, readField, readString } from '../ipc/payload.ts';
 import type { NetState } from '../net/netState.ts';
 import { hashAdminPassword, requireAdmin } from './auth.ts';
@@ -22,8 +26,16 @@ export type RoutesContext = {
   readonly controller: DeviceController;
   /** Directory recordings live in; served read-only to the simulator. */
   readonly recordingDirectory: string;
-  /** Latest WhatsApp state, owned by the process layer. */
-  readonly whatsapp: () => { state: WhatsAppConnectionState; qr: string | null };
+  /**
+   * Latest WhatsApp state, owned by the process layer. `qrAgeMs` is how long ago the current
+   * code arrived — an age rather than a timestamp, so the panel's countdown does not depend on
+   * the browser's clock agreeing with the device's.
+   */
+  readonly whatsapp: () => {
+    state: WhatsAppConnectionState;
+    qr: string | null;
+    qrAgeMs?: number | null;
+  };
   /** Whether Wi-Fi is currently up. */
   readonly wifiConnected: () => boolean;
   /** The latest reading from the root network agent, or null if there is none. */
@@ -77,10 +89,18 @@ export function createApiRouter(context: RoutesContext): Router {
 
   router.get('/whatsapp', (_req, res) => {
     const whatsapp = context.whatsapp();
+    const awaiting = whatsapp.state === 'awaitingPairing';
     res.json({
       state: whatsapp.state,
       // The QR is a pairing secret; only expose it while it is actually needed.
-      qr: whatsapp.state === 'awaitingPairing' ? whatsapp.qr : null,
+      qr: awaiting ? whatsapp.qr : null,
+      /*
+       * How old the code is and how long one lives, so the panel can run a countdown and
+       * swap in the next image the moment Baileys rotates. Both are needed: the panel polls
+       * on its own schedule and would otherwise be guessing at both ends.
+       */
+      qrAgeMs: awaiting ? (whatsapp.qrAgeMs ?? null) : null,
+      qrLifetimeMs: QR_LIFETIME_MS,
     });
   });
 
@@ -295,8 +315,17 @@ export function createApiRouter(context: RoutesContext): Router {
       /*
        * margin 4 is the quiet zone the QR spec requires; scanners can fail to lock on
        * without it. errorCorrectionLevel M tolerates a little screen glare and moire.
+       *
+       * The colours are stated rather than left to default because this SVG inherits nothing
+       * from the page: a dark-mode panel that let the "light" modules go transparent would
+       * render a white-on-dark code, which many phone scanners refuse outright.
        */
-      const svg = await qrToString(qr, { type: 'svg', margin: 4, errorCorrectionLevel: 'M' });
+      const svg = await qrToString(qr, {
+        type: 'svg',
+        margin: 4,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#000000ff', light: '#ffffffff' },
+      });
       res.type('image/svg+xml').set('cache-control', 'no-store').send(svg);
     } catch {
       res.status(500).json({ error: 'could not render the pairing code' });

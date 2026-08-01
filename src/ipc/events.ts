@@ -98,6 +98,17 @@ export type WhatsAppConnectionState =
   /** Transient failure; the bridge is backing off. */
   | 'disconnected';
 
+/**
+ * How long the admin panel treats a pairing QR as scannable.
+ *
+ * Baileys rotates the code itself: the first one lives 60 s and every one after it 20 s
+ * (`qrMs` in its `Socket/socket.js`). We count against the short figure for all of them —
+ * understating the life of the first code costs one refresh, while overstating any of the
+ * others means a parent scans a dead code and WhatsApp tells them, unhelpfully, that it
+ * "cannot link a device right now".
+ */
+export const QR_LIFETIME_MS = 20_000;
+
 /** Sent by the bridge to the hardware server. */
 export type BridgeToServerEvents = {
   /** Connection state changed. Drives the WhatsApp error LED pattern. */

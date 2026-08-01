@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { QR_LIFETIME_MS } from '../ipc/events.ts';
 import { readField, readString } from '../ipc/payload.ts';
 import { startApi, type Harness } from './support/apiHarness.ts';
 
@@ -56,16 +57,33 @@ describe('GET /whatsapp', () => {
     expect(await (await fetch(api.url('/api/whatsapp'))).json()).toEqual({
       state: 'connected',
       qr: null,
+      qrAgeMs: null,
+      qrLifetimeMs: QR_LIFETIME_MS,
     });
   });
 
   it('hands over the QR while pairing is pending', async () => {
     api = await startApi({ configured: false });
-    api.whatsapp = { state: 'awaitingPairing', qr: 'secret-payload' };
+    api.whatsapp = { state: 'awaitingPairing', qr: 'secret-payload', qrAgeMs: 3_000 };
     expect(await (await fetch(api.url('/api/whatsapp'))).json()).toEqual({
       state: 'awaitingPairing',
       qr: 'secret-payload',
+      qrAgeMs: 3_000,
+      qrLifetimeMs: QR_LIFETIME_MS,
     });
+  });
+
+  it('reports the age of the code, so the panel can count down without a shared clock', async () => {
+    // The panel shows "expires in Ns". A timestamp would need the browser's clock to agree
+    // with the device's; an age does not, and this device has no RTC.
+    api = await startApi({ configured: false });
+    api.whatsapp = { state: 'awaitingPairing', qr: 'secret-payload', qrAgeMs: 19_000 };
+    const body: unknown = await (await fetch(api.url('/api/whatsapp'))).json();
+    const age = readField(body, 'qrAgeMs');
+    const lifetime = readField(body, 'qrLifetimeMs');
+    expect(typeof age === 'number' && typeof lifetime === 'number' ? lifetime - age : null).toBe(
+      1_000,
+    );
   });
 });
 

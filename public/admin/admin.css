@@ -24,17 +24,59 @@
   font-size: var(--text-base);
 }
 
+.qr-frame {
+  width: max-content;
+  max-width: 100%;
+  margin: var(--space-2) 0;
+}
+
 /* White plate behind the code: scanners need the quiet zone and true contrast, whatever the
-   page's theme happens to be. */
+   page's theme happens to be.
+
+   320px across a 65-module code leaves each module about 4.9 device-independent pixels, which
+   is where phone scanners stop struggling. The payload is a ~270-character URL, so the code is
+   dense and the old 240px left them under 4. */
 .qr-image {
   display: block;
-  width: 240px;
+  width: 320px;
   max-width: 100%;
   height: auto;
-  margin: var(--space-2) 0;
   padding: 10px;
   border-radius: var(--radius-md);
   background: #ffffff;
+  transition: opacity var(--dur) ease;
+}
+
+/* Faded rather than hidden: the parent should see that the thing they are aiming at is the
+   dead one, not be left staring at a blank card wondering if the device fell over. */
+.qr-image.is-expired {
+  opacity: 0.25;
+}
+
+.qr-countdown {
+  margin: var(--space-1) 0 var(--space-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.qr-countdown.is-expired {
+  color: var(--danger);
+}
+
+/* What the typed target actually resolves to. Monospace because the whole point is reading
+   a JID character by character. */
+.target-resolved {
+  margin: calc(var(--space-1) * -1) 0 var(--space-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.target-resolved.is-bad {
+  color: var(--danger);
 }
 
 .pair-code {

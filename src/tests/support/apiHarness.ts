@@ -47,7 +47,7 @@ export type Harness = {
   readonly recordingDirectory: string;
 
   /* Stub state, writable mid-test. */
-  whatsapp: { state: WhatsAppConnectionState; qr: string | null };
+  whatsapp: { state: WhatsAppConnectionState; qr: string | null; qrAgeMs?: number | null };
   netState: NetState | null;
   joinAccepted: boolean;
   groups: { id: string; subject: string }[];
@@ -108,6 +108,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     whatsapp: { state: 'connected', qr: null } as {
       state: WhatsAppConnectionState;
       qr: string | null;
+      qrAgeMs?: number | null;
     },
     netState: null as NetState | null,
     joinAccepted: true,

@@ -10,6 +10,8 @@ import {
   textInput,
 } from '../shared/dom.ts';
 import { CHANNEL_TOKENS } from '../shared/theme.ts';
+// The same parser the device validates against, rather than a second one that can disagree.
+import { parseTarget } from '../../src/config/schema.ts';
 
 /**
  * Admin panel (PRODUCT.md §3).
@@ -175,13 +177,41 @@ function renderContacts(
     const target = textInput(contact.target, { placeholder: '15551234567' });
     const enabled = checkbox(contact.enabled);
 
+    /*
+     * The resolved JID, shown as it is typed.
+     *
+     * A phone number is unverifiable by eye — every wrong one looks exactly like a right one,
+     * and the device has no screen to report the mistake on later. Echoing what the number
+     * will actually become is the only feedback available before a child presses the button
+     * and nothing happens.
+     */
+    const resolved = element('p', 'target-resolved');
+    const showResolution = (): void => {
+      const raw = target.value.trim();
+      if (raw.length === 0) {
+        resolved.textContent = '';
+        resolved.classList.remove('is-bad');
+        return;
+      }
+      const parsed = parseTarget(raw);
+      resolved.classList.toggle('is-bad', parsed === null);
+      resolved.textContent =
+        parsed === null
+          ? 'Not a usable target — a phone number needs its country code.'
+          : `${parsed.kind === 'group' ? 'Group' : 'Sends to'} ${parsed.jid}`;
+    };
+    target.addEventListener('input', showResolution);
+    showResolution();
+
     row.append(
       field('Name', name),
       field(
         'Phone number or group',
         target,
-        'Phone: digits with country code, no + or spaces. Groups end in @g.us — use the picker.',
+        'Phone: country code first. A +, 00, spaces or dashes are fine. ' +
+          'Groups end in @g.us — use the picker.',
       ),
+      resolved,
     );
 
     // A group JID is opaque, so offer the ones this account is actually in.
@@ -201,6 +231,7 @@ function renderContacts(
       picker.addEventListener('change', () => {
         if (picker.value.length === 0) return;
         target.value = picker.value;
+        showResolution();
         // Adopt the group's name unless the parent has already written one.
         const chosen = groups.find((group) => group.id === picker.value);
         if (chosen && name.value.trim().length === 0) name.value = chosen.subject.slice(0, 24);
@@ -386,6 +417,18 @@ function renderWifi(config: ConfigView, onSave: SaveFn): HTMLElement {
   return section;
 }
 
+/**
+ * How often the panel asks the device for the current pairing code, and how often the
+ * countdown redraws.
+ *
+ * Baileys rotates the QR every 20 s, and nothing pushes that to the browser — so the panel
+ * polls. A code that has already lapsed is chased every tick instead, because the seconds
+ * between a rotation and the panel noticing are seconds the parent spends aiming a phone at
+ * a dead square.
+ */
+const QR_TICK_MS = 500;
+const QR_POLL_TICKS = 4;
+
 function renderWhatsApp(status: StatusView): HTMLElement {
   const section = card('WhatsApp');
   const state = element('p', 'status', status.whatsappConnected ? 'Linked' : 'Not linked');
@@ -393,43 +436,64 @@ function renderWhatsApp(status: StatusView): HTMLElement {
 
   section.append(state, pairing);
 
-  /** Renders whichever pairing route is currently available. */
-  const refresh = async (): Promise<void> => {
-    pairing.replaceChildren();
-    let current = 'unknown';
-    let awaiting = false;
-    try {
-      const payload = await getJson('/api/whatsapp');
-      if (typeof payload === 'object' && payload !== null && 'state' in payload) {
-        current = asText(payload.state) || 'unknown';
-        awaiting = current === 'awaitingPairing';
-      }
-    } catch {
-      state.textContent = 'State: unavailable — is the WhatsApp bridge running?';
-      return;
-    }
+  /*
+   * The pairing block is built once on entering `awaitingPairing` and then only updated in
+   * place. Rebuilding it every poll would clear the phone-number field under the parent's
+   * fingers twice a second.
+   */
+  let image: HTMLImageElement | null = null;
+  let countdown: HTMLElement | null = null;
+  /** The code the visible image was drawn for, so a rotation is a string comparison. */
+  let shownQr: string | null = null;
+  /** Browser-clock deadline for that code; 0 while there is nothing to count down. */
+  let deadline = 0;
+  let polling = false;
 
-    state.textContent = `State: ${current}`;
-    if (!awaiting) return;
+  const drawCountdown = (): void => {
+    if (countdown === null) return;
+    const remaining = deadline === 0 ? 0 : Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    const expired = deadline !== 0 && remaining === 0;
+    countdown.textContent = expired
+      ? 'This code has expired — fetching a fresh one…'
+      : `Expires in ${String(remaining)}s`;
+    countdown.classList.toggle('is-expired', expired);
+    image?.classList.toggle('is-expired', expired);
+  };
+
+  const buildPairing = (): void => {
+    pairing.replaceChildren();
+
+    const frame = element('div', 'qr-frame');
+    // Rendered server-side; the raw payload is a long string and unscannable as text.
+    image = element('img', 'qr-image');
+    image.alt = 'WhatsApp pairing QR code';
+    image.addEventListener('error', () => {
+      // A 404 means the code rotated out from under this request; the next poll re-arms it.
+      deadline = Date.now();
+      drawCountdown();
+    });
+    countdown = element('p', 'qr-countdown');
+    frame.append(image, countdown);
+
+    // Unstyled on purpose: the bare button is the design system's secondary, and the primary
+    // action in this block is the phone-number route below.
+    const again = element('button', undefined, 'Show a new code');
+    again.type = 'button';
+    again.addEventListener('click', () => {
+      void poll();
+    });
 
     pairing.append(
       element('h3', undefined, 'Option 1 — scan this code'),
       element(
         'p',
         'field-hint',
-        'On your phone: WhatsApp → Settings → Linked devices → Link a device.',
+        'On your phone: WhatsApp → Settings → Linked devices → Link a device. ' +
+          'The code changes every 20 seconds; this panel keeps up on its own.',
       ),
+      frame,
+      again,
     );
-
-    // Rendered server-side; the raw payload is a long string and unscannable as text.
-    const image = element('img', 'qr-image');
-    image.alt = 'WhatsApp pairing QR code';
-    // Cache-busted so a refresh never shows a stale, already-expired code.
-    image.src = `/api/whatsapp/qr.svg?t=${String(Date.now())}`;
-    image.addEventListener('error', () => {
-      image.replaceWith(element('p', 'field-hint', 'The code expired — refresh to get a new one.'));
-    });
-    pairing.append(image);
 
     pairing.append(
       element('h3', undefined, 'Option 2 — link with your phone number'),
@@ -478,14 +542,80 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     );
   };
 
-  void refresh();
+  /** Reads the device's pairing state and brings the visible code into line with it. */
+  const poll = async (): Promise<void> => {
+    // Overlapping polls would race on `shownQr` and could swap in an older code.
+    if (polling) return;
+    polling = true;
+    try {
+      let payload: unknown;
+      try {
+        payload = await getJson('/api/whatsapp');
+      } catch {
+        state.textContent = 'State: unavailable — is the WhatsApp bridge running?';
+        return;
+      }
+      const read = typeof payload === 'object' && payload !== null ? payload : {};
+      const current = 'state' in read ? asText(read.state) || 'unknown' : 'unknown';
+      state.textContent = `State: ${current}`;
+
+      if (current !== 'awaitingPairing') {
+        // Linked, logged out or reconnecting: nothing to scan, so drop the block entirely.
+        if (image !== null) {
+          pairing.replaceChildren();
+          image = null;
+          countdown = null;
+          shownQr = null;
+          deadline = 0;
+        }
+        return;
+      }
+
+      if (image === null) buildPairing();
+
+      const qr = 'qr' in read ? asText(read.qr) : '';
+      if (qr.length === 0) {
+        // Awaiting pairing but between codes — the bridge is mid-rotation or reconnecting.
+        deadline = Date.now();
+        drawCountdown();
+        return;
+      }
+      if (qr !== shownQr) {
+        shownQr = qr;
+        const age = 'qrAgeMs' in read && typeof read.qrAgeMs === 'number' ? read.qrAgeMs : 0;
+        const life =
+          'qrLifetimeMs' in read && typeof read.qrLifetimeMs === 'number' ? read.qrLifetimeMs : 0;
+        // The device reports an age, not a timestamp, so its clock need not match this one.
+        deadline = life === 0 ? 0 : Date.now() + Math.max(0, life - age);
+        if (image !== null) image.src = `/api/whatsapp/qr.svg?t=${String(Date.now())}`;
+      }
+      drawCountdown();
+    } finally {
+      polling = false;
+    }
+  };
+
+  void poll();
+
+  let ticks = 0;
+  const ticker = window.setInterval(() => {
+    // The panel rebuilds itself on every save; the detached copy must stop polling.
+    if (!section.isConnected) {
+      window.clearInterval(ticker);
+      return;
+    }
+    ticks += 1;
+    drawCountdown();
+    const lapsed = deadline !== 0 && Date.now() >= deadline;
+    if (lapsed || ticks % QR_POLL_TICKS === 0) void poll();
+  }, QR_TICK_MS);
+
   section.append(
-    saveButton('Refresh pairing status', refresh),
     saveButton('Unlink WhatsApp', async () => {
       await fetch('/api/whatsapp/unlink', { method: 'POST' });
       // Give the bridge a moment to produce a fresh code.
       await new Promise((resolve) => window.setTimeout(resolve, 2500));
-      await refresh();
+      await poll();
     }),
   );
 

@@ -66,7 +66,7 @@ export function requireAdmin(config: ConfigManager): RequestHandler {
     }
 
     const challenge = (message: string): void => {
-      res.setHeader('WWW-Authenticate', 'Basic realm="Kids Messenger", charset="UTF-8"');
+      res.setHeader('WWW-Authenticate', 'Basic realm="bloopbox", charset="UTF-8"');
       res.status(401).json({ error: message });
     };
 

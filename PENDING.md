@@ -62,7 +62,7 @@ portal, and §6 gives Wi-Fi Error an "opens AP hotspot after 30s" behaviour. Non
 `deploy/wifi-apply.sh` — but only over a network that already works.
 
 So the first-boot story is currently: the parent supplies Wi-Fi **before** first boot by editing
-`kids-messenger-wifi.txt` on the boot partition, or the image is built with `--wifi-ssid`. A
+`bloopbox-wifi.txt` on the boot partition, or the image is built with `--wifi-ssid`. A
 device that cannot reach the network cannot be configured over the network either.
 
 **Proposed work.** A `hostapd` + `dnsmasq` profile (or NetworkManager's own AP mode, which is
@@ -82,14 +82,14 @@ it, because `/data` currently lives **on** the root filesystem: with the overlay
 config write and the WhatsApp credentials would land in a RAM overlay and vanish on reboot. That
 is a worse failure than the one it prevents, and a silent one.
 
-**Proposed work.** Give `/data` a third ext4 partition (label `kidsdata`, mounted from fstab),
+**Proposed work.** Give `/data` a third ext4 partition (label `bloopdata`, mounted from fstab),
 then `raspi-config nonint do_overlayfs 0` becomes safe. The catch to design around: Pi OS expands
 the **last** partition on first boot, so a naive third partition after the rootfs breaks
 auto-expand. Either put `/data` before the rootfs, or size the rootfs at build time and do the
 expansion in the image builder rather than on the device.
 
 **Acceptance.** A built image where pulling power during a settings save leaves both the OS and
-the previous config intact, and `sudo kids-messenger-doctor` reports `/data` writable with `/`
+the previous config intact, and `sudo bloopbox-doctor` reports `/data` writable with `/`
 read-only.
 
 ### On-device doctor duplicates the tsx one

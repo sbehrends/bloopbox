@@ -49,7 +49,7 @@ function requestRestart(reason: string): void {
 
 const PORT = Number(process.env['PORT'] ?? 3000);
 /** Audio lives in tmpfs on the device; override for dev. */
-const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/kids-messenger';
+const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/bloopbox';
 /** Built UI assets. Absent in dev, where Vite serves them on :5174. */
 const STATIC_ROOT = resolve(import.meta.dirname, '../../dist/public');
 

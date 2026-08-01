@@ -1,7 +1,7 @@
 [Unit]
 # Process 1 of 2 (src/processes/hardware-server.ts): GPIO, LEDs, audio, config, the admin
 # panel and the Socket.io server the WhatsApp bridge dials into.
-Description=Kids WhatsApp Voice Messenger — hardware and web server
+Description=bloopbox — hardware and web server
 Documentation=file://@PREFIX@/deploy/doctor.sh
 After=network.target sound.target
 # Not Requires=: the buttons and the LED error patterns are exactly what should still work
@@ -33,10 +33,10 @@ RestartSec=1
 TimeoutStopSec=10
 
 # Recordings live in RAM and must not survive a power cut. /run is already a tmpfs, so
-# this needs no mount unit: systemd creates /run/kids-messenger owned by the service user.
+# this needs no mount unit: systemd creates /run/bloopbox owned by the service user.
 # Preserve=yes keeps it across the restart-on-config-save, and across the bridge stopping,
 # since both units declare the same directory.
-RuntimeDirectory=kids-messenger
+RuntimeDirectory=bloopbox
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 RuntimeDirectorySize=64M

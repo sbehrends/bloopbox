@@ -25,7 +25,7 @@ Everything pinned — base images, the Pi OS image and its checksum, apt package
 ## Building a release
 
 ```bash
-npm run release            # -> release/kids-messenger-<version>-linux-arm64.tar.gz
+npm run release            # -> release/bloopbox-<version>-linux-arm64.tar.gz
 npm run release:smoke      # boot it in a bare arm64 Debian Trixie container
 ```
 
@@ -51,20 +51,20 @@ produce a device with three dead buttons.
 ## Installing on a Pi
 
 ```bash
-scp release/kids-messenger-0.1.0-linux-arm64.tar.gz pi@kids-messenger.local:
-ssh pi@kids-messenger.local
-tar xzf kids-messenger-0.1.0-linux-arm64.tar.gz
-sudo ./kids-messenger-0.1.0-linux-arm64/install.sh
+scp release/bloopbox-0.1.0-linux-arm64.tar.gz pi@bloopbox.local:
+ssh pi@bloopbox.local
+tar xzf bloopbox-0.1.0-linux-arm64.tar.gz
+sudo ./bloopbox-0.1.0-linux-arm64/install.sh
 ```
 
 What it does:
 
 - `apt-get install ffmpeg alsa-utils libgpiod3` — the only three things npm cannot supply
-- creates the `kidsmsg` system user, in the `gpio` and `audio` groups
+- creates the `bloopbox` system user, in the `gpio` and `audio` groups
 - creates `/data` (settings, WhatsApp credentials) owned by that user
-- installs the app to `/opt/kids-messenger`, staged and swapped so a failed copy cannot leave
+- installs the app to `/opt/bloopbox`, staged and swapped so a failed copy cannot leave
   half an application behind
-- writes `/etc/kids-messenger/environment` with a **generated** `BRIDGE_TOKEN`
+- writes `/etc/bloopbox/environment` with a **generated** `BRIDGE_TOKEN`
 - installs and enables both systemd units
 - appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups and the watchdog
 - restarts the services
@@ -78,7 +78,7 @@ Useful flags: `--skip-deps`, `--no-boot-config`, `--no-watchdog`, `--no-start`, 
 Then check it:
 
 ```bash
-sudo kids-messenger-doctor
+sudo bloopbox-doctor
 ```
 
 That is the bash counterpart to `npm run doctor` — the tsx version cannot run on the device,
@@ -89,7 +89,7 @@ devices, the firmware pull-ups, `/data`, the tmpfs, the cue files and both servi
 
 ```bash
 sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
-# -> release/kids-messenger-<version>-<pi-os-date>-sd.img.xz  (~660 MB)
+# -> release/bloopbox-<version>-<pi-os-date>-sd.img.xz  (~660 MB)
 ```
 
 Flash it with Raspberry Pi Imager (**Use custom**) or `dd`, put the card in, power up. No ssh
@@ -133,11 +133,11 @@ which is useless on a device with no screen.
 
 The boot partition is FAT32, so any Windows or macOS laptop can read and write it:
 
-- `kids-messenger-wifi.txt` — `ssid=` / `psk=` / `country=`. Applied on the next boot and then
+- `bloopbox-wifi.txt` — `ssid=` / `psk=` / `country=`. Applied on the next boot and then
   **deleted**, so the passphrase does not sit in clear text on a partition every computer can
   read. This is also the way back in when the device is offline and the admin panel is
   therefore unreachable: write the file, reboot.
-- `kids-messenger-README.txt` — the addresses and commands, for whoever finds the card in a
+- `bloopbox-README.txt` — the addresses and commands, for whoever finds the card in a
   drawer in two years.
 
 ## Wi-Fi at runtime
@@ -145,12 +145,12 @@ The boot partition is FAT32, so any Windows or macOS laptop can read and write i
 [`deploy/wifi-apply.sh`](../deploy/wifi-apply.sh) is the only thing that turns Wi-Fi settings
 into an actual network connection. It runs from two places:
 
-- `kids-messenger-firstboot.service`, on every boot
+- `bloopbox-firstboot.service`, on every boot
 - `ExecStartPre` of the hardware unit — so saving Wi-Fi in the admin panel takes effect on the
   restart that saving already triggers (config is read at boot; there is no live-reload path)
 
 The boot-partition file wins over `config.json` when both are present. The connection is called
-`kids-messenger` and is given `autoconnect-priority 10`, so anything seeded earlier stays as a
+`bloopbox` and is given `autoconnect-priority 10`, so anything seeded earlier stays as a
 fallback if the new network turns out to be wrong.
 
 There is still **no AP / captive-portal fallback** — `PRODUCT.md` §First Boot describes one and
@@ -159,15 +159,15 @@ it is not built. Editing the file on the boot partition is the recovery path tod
 
 ## The systemd units
 
-| Unit                       | Runs                             |
-| -------------------------- | -------------------------------- |
-| `kids-messenger-hardware`  | GPIO, LEDs, audio, API, admin UI |
-| `kids-messenger-whatsapp`  | The Baileys bridge               |
-| `kids-messenger-firstboot` | Wi-Fi provisioning, oneshot      |
+| Unit                 | Runs                             |
+| -------------------- | -------------------------------- |
+| `bloopbox-hardware`  | GPIO, LEDs, audio, API, admin UI |
+| `bloopbox-whatsapp`  | The Baileys bridge               |
+| `bloopbox-firstboot` | Wi-Fi provisioning, oneshot      |
 
 ```bash
-journalctl -u kids-messenger-hardware -u kids-messenger-whatsapp -f
-systemctl restart kids-messenger-hardware
+journalctl -u bloopbox-hardware -u bloopbox-whatsapp -f
+systemctl restart bloopbox-hardware
 ```
 
 Decisions worth knowing:
@@ -175,7 +175,7 @@ Decisions worth knowing:
 - **`Restart=always` is load-bearing.** Saving a setting makes the hardware server exit 0 on
   purpose so the new config is read at startup. Without `Restart=always` a settings save would
   simply switch the device off.
-- **Recordings go in `/run/kids-messenger`**, via `RuntimeDirectory=` in both units. `/run` is
+- **Recordings go in `/run/bloopbox`**, via `RuntimeDirectory=` in both units. `/run` is
   already a tmpfs, so audio lives in RAM with no mount unit and no fstab entry, and cannot
   survive a power cut or fill the card. `RuntimeDirectoryPreserve=yes` keeps it across the
   restart-on-save; both units declare the same directory because they hand each other file
@@ -201,7 +201,7 @@ an arm64 runner makes it several times faster and needs no other change.
 
 Optional repository secrets for the image job: `WIFI_SSID`, `WIFI_PSK`, `WIFI_COUNTRY`,
 `IMAGE_PASSWORD`. Without them the image still boots — it ships the fillable
-`kids-messenger-wifi.txt` and a generated ssh password.
+`bloopbox-wifi.txt` and a generated ssh password.
 
 **The generated ssh password is never attached to a release.** It goes to the private
 `sd-card-credentials` build artifact; the release assets are an explicit list, not a glob, so a

@@ -22,7 +22,7 @@ import { LedAnimator } from '../core/ledAnimator.ts';
 let workDir: string;
 
 beforeEach(async () => {
-  workDir = await mkdtemp(join(tmpdir(), 'kids-messenger-hal-'));
+  workDir = await mkdtemp(join(tmpdir(), 'bloopbox-hal-'));
 });
 
 afterEach(async () => {

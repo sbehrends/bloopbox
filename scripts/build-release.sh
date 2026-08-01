@@ -3,7 +3,7 @@
 # Builds the device release bundle: an arm64 tarball carrying the compiled server, the two
 # UIs, node_modules built for the Pi, a matching Node runtime and the installer.
 #
-#   ./scripts/build-release.sh                    # -> release/kids-messenger-<version>-linux-arm64.tar.gz
+#   ./scripts/build-release.sh                    # -> release/bloopbox-<version>-linux-arm64.tar.gz
 #   ./scripts/build-release.sh --output /tmp/out
 #
 # Docker does the work (see packaging/Dockerfile.release) because the Pi must never
@@ -60,7 +60,7 @@ BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null || echo 0)"
 
 ARCH="${PLATFORM##*/}"
-ARTIFACT="kids-messenger-${APP_VERSION}-linux-${ARCH}.tar.gz"
+ARTIFACT="bloopbox-${APP_VERSION}-linux-${ARCH}.tar.gz"
 
 # Captured rather than piped into grep: `grep -q` exits at the first match, docker takes a
 # SIGPIPE, and `set -o pipefail` then reports the whole check as failed.
@@ -113,5 +113,5 @@ echo "==> ${OUTPUT_DIR}/${ARTIFACT} (${SIZE})"
 echo
 echo "Next:"
 echo "  ./scripts/smoke-test-release.sh                 # boot it in a bare ${TARGET_ARCH} container"
-echo "  scp ${OUTPUT_DIR}/${ARTIFACT} pi@kids-messenger.local:"
-echo "  ssh pi@kids-messenger.local 'tar xzf ${ARTIFACT} && sudo ./kids-messenger-${APP_VERSION}-linux-${ARCH}/install.sh'"
+echo "  scp ${OUTPUT_DIR}/${ARTIFACT} pi@bloopbox.local:"
+echo "  ssh pi@bloopbox.local 'tar xzf ${ARTIFACT} && sudo ./bloopbox-${APP_VERSION}-linux-${ARCH}/install.sh'"

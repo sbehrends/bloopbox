@@ -88,7 +88,7 @@ RUN npm prune --omit=dev \
 # relative to their own location in dist/. package.json must ship too — without
 # "type": "module" beside dist/, node refuses every import in it.
 # ---------------------------------------------------------------------------------------
-RUN name="kids-messenger-${APP_VERSION}-linux-${TARGETARCH:-arm64}" \
+RUN name="bloopbox-${APP_VERSION}-linux-${TARGETARCH:-arm64}" \
  && root="/stage/${name}" \
  && mkdir -p "${root}/node/bin" \
  && cp -r dist "${root}/dist" \

@@ -45,8 +45,8 @@ Usage: sudo ./scripts/build-sd-image.sh [options]
 Options:
   --artifact PATH     Release tarball (default: newest in ./release)
   --output PATH       Where to write the .img.xz (default: ./release/<name>.img.xz)
-  --hostname NAME     Device hostname, also its .local name (default: kids-messenger)
-  --user NAME         Login user for ssh (default: kids)
+  --hostname NAME     Device hostname, also its .local name (default: bloopbox)
+  --user NAME         Login user for ssh (default: bloop)
   --password PASS     That user's password (default: generated and written next to the image)
   --wifi-ssid SSID    Wi-Fi network to join on first boot
   --wifi-psk PSK      Wi-Fi passphrase
@@ -57,7 +57,7 @@ Options:
   --work-dir DIR      Scratch space (default: ./release/image-work)
   -h, --help          This message
 
-Without --wifi-ssid the image still boots: it writes kids-messenger-wifi.txt onto the boot
+Without --wifi-ssid the image still boots: it writes bloopbox-wifi.txt onto the boot
 partition, which any laptop can fill in before first boot.
 EOF
 }
@@ -92,15 +92,15 @@ for tool in curl xz losetup parted e2fsck resize2fs mount umount chroot openssl 
 done
 
 if [[ -z "${ARTIFACT}" ]]; then
-  ARTIFACT="$(ls -t release/kids-messenger-*-linux-"${TARGET_ARCH}".tar.gz 2>/dev/null | head -1 || true)"
+  ARTIFACT="$(ls -t release/bloopbox-*-linux-"${TARGET_ARCH}".tar.gz 2>/dev/null | head -1 || true)"
 fi
 [[ -n "${ARTIFACT}" && -f "${ARTIFACT}" ]] \
   || die "no release tarball — run ./scripts/build-release.sh first"
 ARTIFACT="$(readlink -f "${ARTIFACT}")"
 ARTIFACT_NAME="$(basename "${ARTIFACT}")"
-APP_VERSION="$(echo "${ARTIFACT_NAME}" | sed -E 's/^kids-messenger-(.+)-linux-.*/\1/')"
+APP_VERSION="$(echo "${ARTIFACT_NAME}" | sed -E 's/^bloopbox-(.+)-linux-.*/\1/')"
 
-IMAGE_NAME="kids-messenger-${APP_VERSION}-${PI_OS_IMAGE}"
+IMAGE_NAME="bloopbox-${APP_VERSION}-${PI_OS_IMAGE}"
 [[ -n "${OUTPUT}" ]] || OUTPUT="${REPO_ROOT}/release/${IMAGE_NAME}.img.xz"
 
 # Cross-architecture chroot needs the static interpreter. Debian's qemu-user-static
@@ -243,12 +243,12 @@ step "installing the application into the image"
 chroot "${MOUNT_POINT}" /bin/bash -euo pipefail -c "
   cd /tmp
   tar xzf '${ARTIFACT_NAME}'
-  cd 'kids-messenger-${APP_VERSION}-linux-${TARGET_ARCH}'
+  cd 'bloopbox-${APP_VERSION}-linux-${TARGET_ARCH}'
   # Packages are in already, and there is no systemd to start anything: the units are
   # enabled offline and come up on first boot.
   ./install.sh --skip-deps --no-start
   cd /
-  rm -rf '/tmp/${ARTIFACT_NAME}' '/tmp/kids-messenger-${APP_VERSION}-linux-${TARGET_ARCH}'
+  rm -rf '/tmp/${ARTIFACT_NAME}' '/tmp/bloopbox-${APP_VERSION}-linux-${TARGET_ARCH}'
 "
 
 step "configuring access"
@@ -277,11 +277,11 @@ if [[ -n "${WIFI_SSID}" ]]; then
   # Seeded as a NetworkManager keyfile so the very first boot is already online. The
   # runtime path (deploy/wifi-apply.sh) uses the same connection name, so a later change
   # from the admin panel or the boot partition edits this one rather than competing with it.
-  CONNECTION_FILE="${MOUNT_POINT}/etc/NetworkManager/system-connections/kids-messenger.nmconnection"
+  CONNECTION_FILE="${MOUNT_POINT}/etc/NetworkManager/system-connections/bloopbox.nmconnection"
   mkdir -p "$(dirname "${CONNECTION_FILE}")"
   {
     echo '[connection]'
-    echo 'id=kids-messenger'
+    echo 'id=bloopbox'
     echo 'type=wifi'
     echo 'autoconnect=true'
     echo 'autoconnect-priority=10'
@@ -312,13 +312,13 @@ if [[ -n "${WIFI_SSID}" ]]; then
       || info "could not preset the wi-fi country (set it later with raspi-config)"
   fi
 else
-  info "no wi-fi supplied — the parent fills in kids-messenger-wifi.txt before first boot"
+  info "no wi-fi supplied — the parent fills in bloopbox-wifi.txt before first boot"
 fi
 
 # The one file a parent may need to touch, on the only partition Windows and macOS can
 # both read. deploy/wifi-apply.sh consumes and then deletes it, on every boot.
-cat > "${MOUNT_POINT}/boot/firmware/kids-messenger-wifi.txt" <<EOF
-# Wi-Fi for the Kids WhatsApp Voice Messenger.
+cat > "${MOUNT_POINT}/boot/firmware/bloopbox-wifi.txt" <<EOF
+# Wi-Fi for bloopbox.
 #
 # Fill in the two lines below, save the file, and put the card back in the device. It is
 # read and then deleted on the next boot, so the password does not stay on this partition.
@@ -332,17 +332,17 @@ psk=${WIFI_PSK}
 country=${WIFI_COUNTRY:-DE}
 EOF
 
-cat > "${MOUNT_POINT}/boot/firmware/kids-messenger-README.txt" <<EOF
-Kids WhatsApp Voice Messenger — ${APP_VERSION}
+cat > "${MOUNT_POINT}/boot/firmware/bloopbox-README.txt" <<EOF
+bloopbox — ${APP_VERSION}
 Built $(date -u +%Y-%m-%dT%H:%M:%SZ) on ${PI_OS_IMAGE}
 
 This card is ready to run. Put it in the Pi and power up.
 
-  Wi-Fi        edit kids-messenger-wifi.txt on this partition before first boot
+  Wi-Fi        edit bloopbox-wifi.txt on this partition before first boot
   Admin panel  http://${NEW_HOSTNAME}.local:3000/admin/
   ssh          ${LOGIN_USER}@${NEW_HOSTNAME}.local
-  Health       sudo kids-messenger-doctor
-  Logs         journalctl -u kids-messenger-hardware -u kids-messenger-whatsapp -f
+  Health       sudo bloopbox-doctor
+  Logs         journalctl -u bloopbox-hardware -u bloopbox-whatsapp -f
 
 First boot takes a minute or so: the root filesystem is expanded to fill the card and the
 device reboots once. The LEDs run a chase while it starts, then go dark when it is ready.
@@ -397,7 +397,7 @@ ${IMAGE_NAME}
 hostname   ${NEW_HOSTNAME}
 ssh user   ${LOGIN_USER}
 password   ${LOGIN_PASSWORD}
-wi-fi      ${WIFI_SSID:-(not set — edit kids-messenger-wifi.txt on the boot partition)}
+wi-fi      ${WIFI_SSID:-(not set — edit bloopbox-wifi.txt on the boot partition)}
 
 The admin panel password is separate and is set during onboarding, in the browser.
 EOF

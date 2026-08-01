@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Kids WhatsApp Voice Messenger. Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry Pi Zero 2 W let a 2–5 year
+bloopbox. Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry Pi Zero 2 W let a 2–5 year
 old send and receive WhatsApp voice notes. **Hold to send, tap to play.** No screen, ever.
 
 `docs/PRODUCT.md` is the authoritative behavioral spec (the `§` citations throughout the source
@@ -68,7 +68,7 @@ to `config.default.json` in RAM and every settings save fails. Set it when testi
 | ------------------------------------------------ | --------------------- | ------------------------------------------------- |
 | `SIMULATOR_MODE=true`                            | unset → `gpio`        | Selects the HAL. `HAL_DRIVER=mock` wins over it.  |
 | `CONFIG_PATH`                                    | `/data/config.json`   | Point at `./data/config.json` locally             |
-| `RECORDING_DIR`                                  | `/tmp/kids-messenger` | `/run/kids-messenger` on the device (tmpfs)       |
+| `RECORDING_DIR`                                  | `/tmp/bloopbox`       | `/run/bloopbox` on the device (tmpfs)             |
 | `WA_AUTH_DIR`                                    | `/data/auth_info`     | Baileys credentials                               |
 | `BRIDGE_TOKEN`                                   | `''`                  | Shared secret both processes must agree on        |
 | `HARDWARE_URL` / `PORT`                          | `localhost:3000`      | Where the bridge dials / where the server listens |
@@ -138,7 +138,7 @@ that only work with real GPIO, and never import `opengpio` statically (it is an
   rejects every import in it. `hardware-server.js` also resolves the UI at `../../dist/public`
   and `configManager.js` the defaults at `../../config.default.json`, both relative to `dist/` —
   so that layout is load-bearing, not tidiness.
-- **`RECORDING_DIR` is `/run/kids-messenger` on the device**, not `/tmp`: `/run` is already a
+- **`RECORDING_DIR` is `/run/bloopbox` on the device**, not `/tmp`: `/run` is already a
   tmpfs, so `RuntimeDirectory=` in both units gives us audio-in-RAM with no mount unit.
 - The three commands: `npm run release`, `npm run release:smoke`, `npm run release:image`.
   The smoke test installs the artefact in a bare Trixie arm64 container and boots both daemons;
@@ -270,7 +270,7 @@ Who does the restarting:
 
 | Context                | Supervisor                                                                                                                                                           |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Device                 | systemd, `Restart=always` in `deploy/systemd/kids-messenger-hardware.service`                                                                                        |
+| Device                 | systemd, `Restart=always` in `deploy/systemd/bloopbox-hardware.service`                                                                                              |
 | `npm run dev:hw`       | `scripts/dev-server.ts`, a ~60-line respawner                                                                                                                        |
 | `npm run dev:hw:watch` | nothing — `tsx watch` does **not** restart a process that exits cleanly, so a config save leaves the server down. Use it for editing source, not for testing config. |
 

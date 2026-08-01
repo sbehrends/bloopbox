@@ -110,7 +110,7 @@ function checkCueFiles(): CheckResult {
 }
 
 async function main(): Promise<void> {
-  console.log(`kids-messenger doctor — ${platform()} ${release()}\n`);
+  console.log(`bloopbox doctor — ${platform()} ${release()}\n`);
 
   const results: CheckResult[] = [
     checkNode(),

@@ -32,7 +32,7 @@ let workDir: string;
 let configPath: string;
 
 beforeEach(async () => {
-  workDir = await mkdtemp(join(tmpdir(), 'kids-messenger-config-'));
+  workDir = await mkdtemp(join(tmpdir(), 'bloopbox-config-'));
   configPath = join(workDir, 'config.json');
 });
 

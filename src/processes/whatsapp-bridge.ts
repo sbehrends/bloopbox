@@ -22,7 +22,7 @@ const log = childLogger('whatsapp');
 /** Where Baileys keeps its credentials. Must be on the writable volume, and is gitignored. */
 const AUTH_DIRECTORY = process.env['WA_AUTH_DIR'] ?? '/data/auth_info';
 /** Inbound voice notes land here, alongside outgoing recordings. Should be tmpfs. */
-const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/kids-messenger';
+const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/bloopbox';
 /** The hardware server's Socket.io endpoint. */
 const HARDWARE_URL = process.env['HARDWARE_URL'] ?? 'http://localhost:3000';
 

@@ -1,11 +1,11 @@
 [Unit]
 # Applies Wi-Fi credentials left on the boot partition. Runs on every boot, not only the
-# first: rewriting /boot/firmware/kids-messenger-wifi.txt from any laptop is the only way
+# first: rewriting /boot/firmware/bloopbox-wifi.txt from any laptop is the only way
 # back onto the network when the device cannot reach the admin panel.
-Description=Kids WhatsApp Voice Messenger — apply Wi-Fi provisioning
+Description=bloopbox — apply Wi-Fi provisioning
 After=NetworkManager.service
 Wants=NetworkManager.service
-Before=kids-messenger-hardware.service
+Before=bloopbox-hardware.service
 
 [Service]
 Type=oneshot

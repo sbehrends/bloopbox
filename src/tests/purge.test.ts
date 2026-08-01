@@ -13,7 +13,7 @@ let workDir: string;
 const NOW = new Date(2026, 5, 15, 12, 0, 0).getTime();
 
 beforeEach(async () => {
-  workDir = await mkdtemp(join(tmpdir(), 'kids-messenger-purge-'));
+  workDir = await mkdtemp(join(tmpdir(), 'bloopbox-purge-'));
 });
 
 afterEach(async () => {

@@ -3,7 +3,7 @@
 # Teaches NetworkManager the Wi-Fi network this device should join. There is no screen and
 # no keyboard, so the credentials arrive one of two ways:
 #
-#   1. A text file on the boot partition — /boot/firmware/kids-messenger-wifi.txt — which
+#   1. A text file on the boot partition — /boot/firmware/bloopbox-wifi.txt — which
 #      any laptop can write, because that partition is FAT. This wins when present, and is
 #      deleted once applied: it is the recovery path when the device cannot get online and
 #      the admin panel is therefore unreachable.
@@ -22,10 +22,10 @@ set -u
 PREFIX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NODE="${PREFIX}/node/bin/node"
 CONFIG_PATH="${CONFIG_PATH:-/data/config.json}"
-CONNECTION_NAME=kids-messenger
+CONNECTION_NAME=bloopbox
 
 BOOT_FILE=
-for candidate in /boot/firmware/kids-messenger-wifi.txt /boot/kids-messenger-wifi.txt; do
+for candidate in /boot/firmware/bloopbox-wifi.txt /boot/bloopbox-wifi.txt; do
   [[ -f "${candidate}" ]] && { BOOT_FILE="${candidate}"; break; }
 done
 

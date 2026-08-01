@@ -86,7 +86,7 @@ jobs:
         # /mnt is the runner's large scratch disk — the uncompressed image is several GB.
         run: |
           sudo ./scripts/build-sd-image.sh \
-            --work-dir /mnt/kids-messenger-image \
+            --work-dir /mnt/bloopbox-image \
             --output "release/$(basename "$(ls release/*.tar.gz)" .tar.gz | sed 's/-linux-arm64//')-sd.img.xz" \
             ${WIFI_SSID:+--wifi-ssid "$WIFI_SSID"} \
             ${WIFI_PSK:+--wifi-psk "$WIFI_PSK"} \
@@ -95,7 +95,7 @@ jobs:
         env:
           # All optional. Set them as repository secrets to bake your own network and ssh
           # password into the image; otherwise the image ships with a fillable
-          # kids-messenger-wifi.txt and a generated password.
+          # bloopbox-wifi.txt and a generated password.
           WIFI_SSID: ${{ secrets.WIFI_SSID }}
           WIFI_PSK: ${{ secrets.WIFI_PSK }}
           WIFI_COUNTRY: ${{ secrets.WIFI_COUNTRY }}
@@ -165,8 +165,8 @@ jobs:
           Install on a Raspberry Pi Zero 2 W running Raspberry Pi OS Trixie (64-bit):
 
           ```
-          tar xzf kids-messenger-*-linux-arm64.tar.gz
-          sudo ./kids-messenger-*-linux-arm64/install.sh
+          tar xzf bloopbox-*-linux-arm64.tar.gz
+          sudo ./bloopbox-*-linux-arm64/install.sh
           ```
 
           Or flash the `-sd.img.xz` for a card that needs no install step. See

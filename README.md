@@ -1,4 +1,4 @@
-# Kids WhatsApp Voice Messenger
+# bloopbox
 
 A screenless WhatsApp voice messenger for children aged 2–5. Three illuminated arcade buttons, each
 assigned to one family member. **Hold to send a voice note, tap to play what arrived.** No screen,
@@ -157,7 +157,7 @@ without a screen, are in [`docs/deployment.md`](./docs/deployment.md).
 
 Each button targets one person **or** one group, and the device accepts messages only from those
 targets — unknown numbers, groups nobody assigned, status broadcasts and newsletters are all
-dropped, before any audio is downloaded. Recordings live in a RAM disk (`/run/kids-messenger`,
+dropped, before any audio is downloaded. Recordings live in a RAM disk (`/run/bloopbox`,
 a tmpfs) and unread audio is deleted after 48 hours. Writes to `/data/config.json` are atomic, so
 losing power mid-save cannot corrupt the parent's settings.
 

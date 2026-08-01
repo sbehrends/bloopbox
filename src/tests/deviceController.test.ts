@@ -58,7 +58,7 @@ beforeEach(async () => {
   });
   vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0));
 
-  workDir = await mkdtemp(join(tmpdir(), 'kids-messenger-controller-'));
+  workDir = await mkdtemp(join(tmpdir(), 'bloopbox-controller-'));
   const configPath = join(workDir, 'config.json');
   await writeFile(configPath, JSON.stringify(await buildConfig()), 'utf8');
 

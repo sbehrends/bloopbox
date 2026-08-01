@@ -1,6 +1,6 @@
 # System Requirements & Architecture Specification
 
-**Project Name:** Screenless WhatsApp Voice Messenger for Kids
+**Project Name:** bloopbox — a screenless WhatsApp voice messenger for kids
 
 **Target Audience:** Children aged 2–5 years
 
@@ -100,7 +100,7 @@ To keep source code immutable and support onboard setup, device settings are gen
 {
   "version": 1,
   "system": {
-    "hostname": "kids-messenger",
+    "hostname": "bloopbox",
     "adminPasswordHash": "$2b$10$e8...",
     "configured": true
   },
@@ -269,7 +269,7 @@ All lighting indicators rely strictly on binary digital states (HIGH/LOW) with s
 ## 9. Full Directory Blueprint
 
 ```text
-kids-whatsapp-messenger/
+bloopbox/
 ├── package.json
 ├── tsconfig.json               # Configured for TypeScript 7
 ├── vitest.config.ts            # Test runner configuration

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# On-device health check:  sudo kids-messenger-doctor
+# On-device health check:  sudo bloopbox-doctor
 #
 # `npm run doctor` cannot run here — it is a tsx script and the device has no
 # devDependencies — so this covers the same ground in bash, plus what only exists once
@@ -14,9 +14,9 @@
 # failed check. `ffmpeg -encoders | grep libopus` fails that way every time.
 set -u
 
-PREFIX="${PREFIX:-/opt/kids-messenger}"
-ETC_DIR="${ETC_DIR:-/etc/kids-messenger}"
-SERVICE_USER="${SERVICE_USER:-kidsmsg}"
+PREFIX="${PREFIX:-/opt/bloopbox}"
+ETC_DIR="${ETC_DIR:-/etc/bloopbox}"
+SERVICE_USER="${SERVICE_USER:-bloopbox}"
 
 FAILURES=0
 WARNINGS=0
@@ -41,13 +41,13 @@ section() { printf '\n%s\n' "$1"; }
 
 # Values the daemons actually run with, not the defaults.
 CONFIG_PATH=/data/config.json
-RECORDING_DIR=/run/kids-messenger
+RECORDING_DIR=/run/bloopbox
 if [[ -r "${ETC_DIR}/environment" ]]; then
   # shellcheck disable=SC1091
   source "${ETC_DIR}/environment"
 fi
 
-echo "kids-messenger doctor — $(uname -srm)"
+echo "bloopbox doctor — $(uname -srm)"
 if [[ "${EUID}" -ne 0 ]]; then
   echo "note: not running as root — the checks that step into the ${SERVICE_USER} account will be skipped"
 fi
@@ -205,7 +205,7 @@ fi
 
 section "services"
 if [[ -d /run/systemd/system ]]; then
-  for unit in kids-messenger-hardware kids-messenger-whatsapp; do
+  for unit in bloopbox-hardware bloopbox-whatsapp; do
     state="$(systemctl is-active "${unit}.service" 2>/dev/null || true)"
     enabled="$(systemctl is-enabled "${unit}.service" 2>/dev/null || true)"
     if [[ "${state}" == "active" ]]; then

@@ -77,7 +77,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: kids-messenger-release
+          name: bloopbox-release
           path: |
             release/*.tar.gz
             release/*.tar.gz.sha256

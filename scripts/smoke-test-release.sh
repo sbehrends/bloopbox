@@ -3,7 +3,7 @@
 # Runs a built release inside a bare arm64 Debian Trixie container — no Node, no npm, no
 # toolchain, nothing the device would not have — and checks that it actually comes up:
 #
-#   ./scripts/smoke-test-release.sh [path/to/kids-messenger-x.y.z-linux-arm64.tar.gz]
+#   ./scripts/smoke-test-release.sh [path/to/bloopbox-x.y.z-linux-arm64.tar.gz]
 #
 # What this catches that the build cannot: a missing runtime apt package, a node binary
 # that will not execute outside its build image, an installer that assumes a systemd it
@@ -22,7 +22,7 @@ source packaging/versions.env
 
 ARTIFACT="${1:-}"
 if [[ -z "${ARTIFACT}" ]]; then
-  ARTIFACT="$(ls -t release/kids-messenger-*-linux-"${TARGET_ARCH}".tar.gz 2>/dev/null | head -1 || true)"
+  ARTIFACT="$(ls -t release/bloopbox-*-linux-"${TARGET_ARCH}".tar.gz 2>/dev/null | head -1 || true)"
 fi
 [[ -n "${ARTIFACT}" && -f "${ARTIFACT}" ]] \
   || { echo "error: no release tarball found — run ./scripts/build-release.sh first" >&2; exit 1; }
@@ -51,7 +51,7 @@ docker run --rm \
     echo "--- unpacking ---"
     mkdir -p /opt/staging && cd /opt/staging
     tar xzf "/artifacts/${ARTIFACT}"
-    cd kids-messenger-*-linux-*
+    cd bloopbox-*-linux-*
 
     echo
     echo "--- running install.sh (no systemd in here, so it enables without starting) ---"
@@ -59,10 +59,10 @@ docker run --rm \
 
     echo
     echo "--- doctor ---"
-    # From / on purpose: that is where a parent runs `sudo kids-messenger-doctor` from, and
+    # From / on purpose: that is where a parent runs `sudo bloopbox-doctor` from, and
     # a check that resolves node modules against the caller'"'"'s directory passes from inside
     # the unpacked tarball while failing everywhere else.
-    DOCTOR_OUTPUT="$( cd / && /usr/local/bin/kids-messenger-doctor 2>&1 || true )"
+    DOCTOR_OUTPUT="$( cd / && /usr/local/bin/bloopbox-doctor 2>&1 || true )"
     echo "${DOCTOR_OUTPUT}"
     # Captured rather than piped into grep -q: an early-exiting grep SIGPIPEs doctor, and
     # pipefail then turns a passing check into a failing one.
@@ -77,12 +77,12 @@ docker run --rm \
     # stands in for GPIO that a container does not have.
     set -a
     # shellcheck disable=SC1091
-    . /etc/kids-messenger/environment
+    . /etc/bloopbox/environment
     set +a
     export HAL_DRIVER=mock
-    export RECORDING_DIR=/run/kids-messenger
+    export RECORDING_DIR=/run/bloopbox
     mkdir -p "${RECORDING_DIR}"
-    cd /opt/kids-messenger
+    cd /opt/bloopbox
     ./node/bin/node dist/processes/hardware-server.js > /tmp/server.log 2>&1 &
     SERVER_PID=$!
 

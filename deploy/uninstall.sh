@@ -2,17 +2,17 @@
 #
 # Removes the daemons and the application.
 #
-#   sudo /opt/kids-messenger/deploy/uninstall.sh              # keeps /data and the env file
-#   sudo /opt/kids-messenger/deploy/uninstall.sh --purge      # removes those too
+#   sudo /opt/bloopbox/deploy/uninstall.sh              # keeps /data and the env file
+#   sudo /opt/bloopbox/deploy/uninstall.sh --purge      # removes those too
 #
 # Without --purge this is reversible: reinstalling a release picks the parent's settings
 # and the WhatsApp pairing straight back up.
 set -euo pipefail
 
-PREFIX=/opt/kids-messenger
+PREFIX=/opt/bloopbox
 DATA_DIR=/data
-ETC_DIR=/etc/kids-messenger
-SERVICE_USER=kidsmsg
+ETC_DIR=/etc/bloopbox
+SERVICE_USER=bloopbox
 PURGE=false
 
 while [[ $# -gt 0 ]]; do
@@ -36,21 +36,21 @@ step() { printf '\n==> %s\n' "$*"; }
 [[ "${EUID}" -eq 0 ]] || { echo "run this with sudo" >&2; exit 1; }
 
 step "stopping and disabling the services"
-for unit in kids-messenger-hardware kids-messenger-whatsapp kids-messenger-firstboot; do
+for unit in bloopbox-hardware bloopbox-whatsapp bloopbox-firstboot; do
   systemctl disable --now "${unit}.service" 2>/dev/null || true
   rm -f "/etc/systemd/system/${unit}.service"
 done
-rm -f /etc/systemd/system.conf.d/10-kids-messenger-watchdog.conf
+rm -f /etc/systemd/system.conf.d/10-bloopbox-watchdog.conf
 [[ -d /run/systemd/system ]] && systemctl daemon-reload
 
 step "removing the application"
 rm -rf "${PREFIX}" "${PREFIX}.new" "${PREFIX}.old"
-rm -f /usr/local/bin/kids-messenger-doctor
+rm -f /usr/local/bin/bloopbox-doctor
 
 step "reverting the firmware configuration"
 for candidate in /boot/firmware/config.txt /boot/config.txt; do
-  if [[ -f "${candidate}" ]] && grep -q '^# >>> kids-messenger >>>' "${candidate}"; then
-    sed -i '/^# >>> kids-messenger >>>/,/^# <<< kids-messenger <<</d' "${candidate}"
+  if [[ -f "${candidate}" ]] && grep -q '^# >>> bloopbox >>>' "${candidate}"; then
+    sed -i '/^# >>> bloopbox >>>/,/^# <<< bloopbox <<</d' "${candidate}"
     echo "    cleaned ${candidate} (pull-ups and watchdog are gone after a reboot)"
   fi
 done

@@ -1,10 +1,10 @@
-# /etc/kids-messenger/environment — read by both systemd units.
+# /etc/bloopbox/environment — read by both systemd units.
 #
 # Written once by install.sh, which fills in @BRIDGE_TOKEN@ with a value generated for this
 # device and never overwrites the file again, so re-installing an upgrade keeps it.
-# Owned root:kidsmsg, mode 0640: it holds the shared secret between the two daemons.
+# Owned root:bloopbox, mode 0640: it holds the shared secret between the two daemons.
 #
-# After editing:  sudo systemctl restart kids-messenger-hardware kids-messenger-whatsapp
+# After editing:  sudo systemctl restart bloopbox-hardware bloopbox-whatsapp
 
 # Shared secret for the localhost Socket.io link between the two processes, compared in
 # constant time on the /bridge namespace. Both units read it from this one file, so they
@@ -17,9 +17,9 @@ CONFIG_PATH=@DATA_DIR@/config.json
 WA_AUTH_DIR=@DATA_DIR@/auth_info
 
 # Voice notes, in RAM. /run is a tmpfs and systemd creates this directory for both units
-# (RuntimeDirectory=kids-messenger), so recordings can never survive a power cut or fill
+# (RuntimeDirectory=bloopbox), so recordings can never survive a power cut or fill
 # the SD card. Do not point this at a path on disk.
-RECORDING_DIR=/run/kids-messenger
+RECORDING_DIR=/run/bloopbox
 
 NODE_ENV=production
 # debug is the dev default and is far too chatty for an SD card.

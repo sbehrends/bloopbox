@@ -161,7 +161,7 @@ different, darker red so that "something went wrong" can never be confused with 
 
 `--ch-1/2/3` are **yellow, coral, teal** — the order the three buttons run in the mark, matching
 Button 1 left / 2 centre / 3 right and the colour-coded caps on the enclosure (`PRODUCT.md`
-§Overview). They appear as the contact row stripes in the admin panel, the lenses in the
+§1, and `hardware.md`). They appear as the contact row stripes in the admin panel, the lenses in the
 simulator and the lamps in the kit's light signature. A channel colour never carries any other
 meaning.
 

@@ -1,166 +1,395 @@
 # bloopbox
 
-A screenless WhatsApp voice messenger for children aged 2–5. Three illuminated arcade buttons, each
-assigned to one family member. **Hold to send a voice note, tap to play what arrived.** No screen,
-no menus, no scrolling.
+A screenless WhatsApp voice messenger for children aged 2–5. Three illuminated arcade buttons,
+each assigned to one family member. **Hold to send a voice note, tap to play what arrived.**
 
-Runs on a Raspberry Pi Zero 2 W as two Node.js daemons. See [`PRODUCT.md`](./docs/PRODUCT.md) for the
-full behavioral specification, [`CLAUDE.md`](./CLAUDE.md) for architecture and conventions, and
-[`PENDING.md`](./PENDING.md) for known gaps and the backlog.
+No screen, no menus, no scrolling, and nothing for a toddler to get lost in. A parent sets the
+device up once from a phone or laptop; after that the child's entire interface is three buttons
+and three lights.
+
+It runs on a Raspberry Pi Zero 2 W as two Node.js daemons and speaks to WhatsApp as an ordinary
+linked device, so the people at the other end need nothing but WhatsApp.
 
 ## Status
 
-Under active development, built in phases:
+Under active development. Everything is built and tested against a **browser-based hardware
+simulator**, so no Pi is needed to work on it — and the physical device does not exist yet.
 
-- [x] **Phase 1** — project foundation, tooling, validation gate
-- [x] **Phase 2** — hardware server: config, LED state machine, HAL, audio pipeline, simulator UI
-- [x] **Phase 3** — WhatsApp bridge (Baileys), people and groups as targets
-- [x] **Phase 4** — packaging: arm64 release builds, an installer, systemd units, a flashable
-      SD card image and CI ([`docs/deployment.md`](./docs/deployment.md))
-- [ ] **Phase 5** — hardware bring-up: the GPIO driver, audio and WhatsApp pairing against real
-      hardware (waiting on the parts)
+- [x] Project foundation, tooling, validation gate
+- [x] Hardware server: config, LED state machine, HAL, audio pipeline, simulator
+- [x] WhatsApp bridge (Baileys), people and groups as targets
+- [x] Setup hotspot and captive portal for first boot
+- [x] Packaging: arm64 release builds, an installer, systemd units, a flashable SD card image, CI
+- [ ] Hardware bring-up: the GPIO driver, audio and WhatsApp pairing against real hardware
+      (waiting on the parts)
 
-The physical device does not exist yet. Everything is developed and verified against a **browser
-based hardware simulator**, so no Pi is needed to work on this. The build pipeline is verified
-against arm64 Debian Trixie containers, up to booting both daemons out of a mounted SD card
-image — but nothing has yet run on a Pi with buttons attached.
+The build pipeline is verified against arm64 Debian Trixie containers, up to booting both daemons
+out of a mounted SD card image, and WhatsApp has been exercised in both directions against a real
+account. What has **never** run is any of it on a Pi with buttons and a speaker attached — pin
+numbers, LED polarity, ALSA device names and the hotspot are all unproven. See
+[`PENDING.md`](./PENDING.md) for the honest list.
 
-## Prerequisites
-
-- **Node.js ≥ 22** (developed on 24)
-- **ffmpeg** with Opus support — `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Pi)
-
-Verify with:
-
-```bash
-npm run doctor
-```
-
-## Getting started
-
-```bash
-npm install
-npm run sounds      # generate the audio cue WAVs (not committed)
-npm run doctor      # check external prerequisites
-npm run check       # format + lint + typecheck + test — must pass
-```
-
-Then run two terminals — the API server and the Vite dev server for the UIs:
-
-```bash
-npm run dev:hw      # terminal 1: hardware server + API on :3000
-npm run dev:web     # terminal 2: UIs with hot reload on :5174
-```
-
-Open http://localhost:5174/simulator/ (virtual device) or http://localhost:5174/admin/ (admin
-panel). Vite proxies `/api` and `/socket.io` through to :3000.
-
-In production there is only one server: `npm run build` emits the UIs into `dist/public/`, which
-`npm run start:hw` serves from :3000 alongside the API.
-
-### Using the simulator
-
-The device boots into `CONNECTING` and stays there until WhatsApp links, so start by clicking
-**"WhatsApp connected (go READY)"** in the event injector — that is the state where normal
-behaviour lives.
-
-| Action                                                                             | What it does                                                        |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Click-and-hold a button (or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>) for ≥0.5s | Records, then sends on release                                      |
-| Tap a blinking button (0.15–0.5s)                                                  | Plays every voice note waiting from that contact                    |
-| Tap a dark button                                                                  | "Oops" double-beep — nothing was sent                               |
-| Press under 0.15s                                                                  | Ignored entirely — that is a toddler brushing it                    |
-| Admin → Button timings                                                             | Retune all of the above (device restarts to apply)                  |
-| Hold <kbd>1</kbd>+<kbd>3</kbd> for 3s                                              | Toggles silent mode                                                 |
-| Event injector                                                                     | Reboot, go READY, fake inbound notes, Wi-Fi failure, session expiry |
-
-Injected notes are synthesised 1.4-second tones with a distinct pitch per button (G4 / C5 / E5), so
-you can hear both _that_ playback worked and _which_ contact it came from.
-
-All four press timings — debounce, record threshold, minimum recording length and the silent-mode
-chord — are editable under **Button timings** in the admin panel, so finding the right feel needs
-no rebuild. Saving any setting **restarts the device** to apply it: config is read at boot rather
-than watched. `npm run dev:hw` supervises the server and brings it straight back, and the admin
-panel shows "restarting" then reloads itself.
-
-Recording needs microphone permission.
-
-### Linking WhatsApp
-
-Sending and receiving need a linked WhatsApp account. Run both daemons, open the admin panel, and
-scroll to **WhatsApp** — it offers two routes:
-
-- **Scan the QR.** On your phone: WhatsApp → Settings → Linked devices → Link a device.
-- **Link with a phone number.** Enter your number, press _Get a pairing code_, then on your phone
-  choose "Link with phone number instead" and type the 8-character code. Usually easier than
-  pointing a camera at a laptop.
-
-Codes expire after about 20 seconds; press _Refresh pairing status_ for a new one.
-
-Once linked, assign a target to each button under **Contacts** — a phone number, or a group chosen
-from the picker (which appears after linking, since group ids have to be read from the account).
-Saving restarts the device, then the LEDs go dark, meaning ready.
-
-> The account you link becomes the identity the device sends as. Use a spare number if you would
-> rather not have a toddler's device speaking as you.
-
-## Scripts
-
-| Command                 | Does                                                  |
-| ----------------------- | ----------------------------------------------------- |
-| `npm run check`         | **The gate.** Format check, lint, typecheck, tests.   |
-| `npm run dev`           | Both daemons in watch mode                            |
-| `npm run dev:hw`        | Hardware server, supervised — restarts on config save |
-| `npm run dev:hw:watch`  | Hardware server with file watching, no supervisor     |
-| `npm run dev:wa`        | WhatsApp bridge only                                  |
-| `npm run test:watch`    | Vitest in watch mode                                  |
-| `npm run test:coverage` | Coverage report                                       |
-| `npm run build`         | Compile server to `dist/` and UIs to `dist/public/`   |
-| `npm run doctor`        | Verify ffmpeg / audio device prerequisites            |
-| `npm run sounds`        | Regenerate the audio cue WAVs                         |
-| `npm run release`       | Build the arm64 device tarball (Docker)               |
-| `npm run release:smoke` | Install and boot that tarball in an arm64 container   |
-| `npm run release:image` | Build a flashable SD card image (Linux + root)        |
-
-## Hardware
+## What you need
 
 | Component  | Part                                    |
 | ---------- | --------------------------------------- |
 | Brain      | Raspberry Pi Zero 2 W                   |
 | Buttons    | 3× 60 mm illuminated arcade buttons     |
 | LED driver | ULN2003 (3.3 V GPIO → 5 V LEDs)         |
-| Audio      | USB speakerphone or USB soundcard + mic |
+| Audio      | USB speakerphone, or USB soundcard + mic |
 | Power      | 5 V 2.5 A micro-USB                     |
+| Storage    | 8 GB+ microSD card                      |
 
-The OS target is **Raspberry Pi OS Trixie, 64-bit**, and that is not a preference: the GPIO
-addon compiles against the libgpiod v2 API, which Bookworm does not have.
+Wiring, GPIO pins and the enclosure layout are in [`docs/hardware.md`](./docs/hardware.md).
 
-## Putting it on a device
+The OS target is **Raspberry Pi OS Trixie, 64-bit**, and that is a constraint rather than a
+preference: the GPIO addon compiles against the libgpiod v2 API, which Bookworm does not have.
+
+## Install
+
+### On a Raspberry Pi
+
+The easiest route is a card that needs no install step at all. On a Linux machine with root:
 
 ```bash
-npm run release          # arm64 tarball, built in Docker — the Pi compiles nothing
-npm run release:smoke    # install and boot it in a bare arm64 Debian Trixie container
-```
-
-Then either copy the tarball over and `sudo ./install.sh`, or build a card that needs no install
-step at all:
-
-```bash
+npm install
 sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
 ```
 
-Flash the resulting `.img.xz`, power up, and the device is on the network with the admin panel on
-port 3000. Full details, including what the installer changes and how Wi-Fi is provisioned
-without a screen, are in [`docs/deployment.md`](./docs/deployment.md).
+Flash the resulting `release/bloopbox-*-sd.img.xz` with Raspberry Pi Imager (**Use custom**) or
+`dd`, put the card in, and power up. The Wi-Fi flags are optional — without them the device raises
+its own setup hotspot on first boot (below).
+
+If the Pi is already running Raspberry Pi OS Trixie and reachable over ssh, install a release
+tarball instead:
+
+```bash
+npm run release                                    # arm64 tarball, built in Docker
+scp release/bloopbox-*-linux-arm64.tar.gz pi@bloopbox.local:
+ssh pi@bloopbox.local 'tar xzf bloopbox-*.tar.gz && sudo ./bloopbox-*/install.sh && sudo reboot'
+```
+
+The Pi compiles nothing — the tarball carries its own `node` binary and a `node_modules` built for
+arm64. Re-running `install.sh` is an upgrade and leaves settings and the WhatsApp pairing alone.
+
+Then check it over ssh:
+
+```bash
+sudo bloopbox-doctor
+```
+
+For a **first** device, follow [`docs/hardware-bringup.md`](./docs/hardware-bringup.md) rather than
+improvising: it sequences the gates so only one unverified subsystem is in play at a time.
+[`docs/deployment.md`](./docs/deployment.md) is the full deployment reference.
+
+### On your computer
+
+No hardware needed — see [Developing](#developing).
+
+## Setting it up
+
+### First boot
+
+A device that cannot reach a network raises its own **open Wi-Fi hotspot** called
+`bloopbox-XXXX` (the last four of the Pi's serial), after 20 seconds on a device that has never
+been set up. The three lights double-pulse together while it is up.
+
+Join that network from a phone. The setup page should open by itself, the way a hotel Wi-Fi
+sign-in page does; if it does not, open `http://10.42.0.1`. It asks for:
+
+1. Your home Wi-Fi network, from a list, and its passphrase.
+2. A **settings password**, at least 6 characters. This is what protects the admin panel
+   afterwards — the child never needs it.
+
+Accepting those tears the hotspot down and joins your network, so the page you are looking at
+dies. That is expected; the lights are the only feedback across the switch (double-pulse →
+blinking together → dark).
+
+If you built the card with `--wifi-ssid`, or wrote `bloopbox-wifi.txt` on the boot partition, the
+device joins your network directly and never raises a hotspot. Open the admin panel and set the
+settings password there instead.
+
+### The admin panel
+
+```
+http://bloopbox.local:3000/admin/
+```
+
+Sign in with the settings password (any username). Seven sections:
+
+| Section        | What it does                                                            |
+| -------------- | ----------------------------------------------------------------------- |
+| Contacts       | Who each of the three buttons talks to, and whether it is enabled       |
+| Audio          | Speaker volume, a hard volume cap, mic gain, maximum recording length   |
+| Quiet hours    | A nightly window where the device stops making cue noises               |
+| Read receipts  | Whether playing a message marks it read for the sender                  |
+| Button timings | Tap-vs-hold thresholds, debounce, the carry-on window, the silent chord |
+| Wi-Fi          | Which network the device joins                                          |
+| WhatsApp       | Pairing, unlinking, and the group picker                                |
+
+**Saving anything restarts the device.** Configuration is read once at boot rather than watched,
+so a save exits the daemon cleanly and systemd brings it straight back with the new values. The
+panel shows "restarting", polls, and reloads itself after a couple of seconds.
+
+### Linking WhatsApp
+
+Sending and receiving need a linked WhatsApp account. In the admin panel's **WhatsApp** section
+there are two routes:
+
+- **Scan the QR.** On your phone: WhatsApp → Settings → Linked devices → Link a device.
+- **Link with a phone number.** Enter your number, press _Get a pairing code_, then on your phone
+  choose "Link with phone number instead" and type the 8-character code. Usually easier than
+  pointing a camera at a laptop.
+
+Codes expire after about 20 seconds and the panel rotates them automatically.
+
+> The account you link becomes the identity the device sends as. Use a spare number if you would
+> rather not have a toddler's device speaking as you.
+
+### Assigning the three buttons
+
+Under **Contacts**, give each button a name and a target. A target is either:
+
+- **a phone number**, with its country code — `+54 9 11 5555 5555`, `005491155555555` and
+  `5491155555555` are all the same person, and all accepted. A number written with a national
+  trunk prefix and no country code is **rejected** rather than guessed at, because guessing would
+  reach a stranger.
+- **a group**, chosen from the picker. Group ids cannot be typed from memory, so the picker is fed
+  by the linked account and only appears after pairing.
+
+Assigning a group means **everyone in that group** can send to the child, and everyone in it hears
+what the child sends. That is the deliberate reading of "put the family chat on button 2".
+
+Only the assigned targets can reach the device. Unknown numbers, groups nobody assigned, status
+broadcasts and newsletters are all dropped before any audio is downloaded.
+
+Save, wait for the restart, and the lights go dark — which means ready.
+
+## Using it
+
+### Hold to send, tap to play
+
+| What the child does                | What happens                                                     |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| Holds a button                     | The light goes solid, a "pop" plays, and recording is under way   |
+| Lets go                            | A "whoosh", three quick flashes, and the note is on its way       |
+| Lets go by accident, presses again | The **same** message carries on — see below                      |
+| Taps a blinking button             | Plays everything waiting from that person, oldest first           |
+| Taps a dark button                 | A low "oops" double-beep. Nothing was sent                        |
+| Brushes a button                   | Nothing at all                                                   |
+
+The boundaries between those are all configurable under **Button timings**, because the right feel
+depends on the child and on the switches. Shipped defaults:
+
+| Setting             | Default | Means                                                            |
+| ------------------- | ------- | ---------------------------------------------------------------- |
+| `debounceMs`        | 150 ms  | Shorter than this is a brush, and is ignored entirely            |
+| `recordThresholdMs` | 500 ms  | At or beyond this, a press is a recording rather than a tap      |
+| `minRecordingMs`    | 500 ms  | A message with less actual audio than this is thrown away        |
+| `resumeGraceMs`     | 400 ms  | How long a released recording stays open, waiting to carry on    |
+| `silentComboMs`     | 3000 ms | How long buttons 1 + 3 must be held together to toggle silence   |
+
+**The carry-on window is the one worth knowing about.** A toddler's grip slips. Releasing the
+button does not send the message immediately — it stays open for `resumeGraceMs`, and pressing the
+**same** button again inside that window continues the same recording instead of starting a new
+one. Nothing new to learn: the light stays solid the whole time, so **solid means "still
+listening"** and the whoosh still means "gone".
+
+Recordings are capped at `maxRecordingSeconds` (30 by default), and pressing the button again
+cannot extend a message past that ceiling.
+
+### Silent mode
+
+Holding **buttons 1 and 3 together for three seconds** toggles silent mode, confirmed by a slow
+left-to-right chase. It can also be scheduled — **Quiet hours**, 20:00 to 07:00 by default, which
+wraps past midnight as you would expect.
+
+Silent mode suppresses the *cue noises*: the inbound chime, the record start and stop cues, the
+"oops". It does **not** suppress playback — tapping a blinking button always plays at the
+configured volume, because a child who taps a light expects to hear something.
+
+Volume is always clamped to the configured cap, whatever else is set. This sits next to a small
+child's ears.
+
+### What the lights mean
+
+Three lights are the device's entire vocabulary. **Solid always means something is wrong.**
+
+| Lights                                        | Means                                                    |
+| --------------------------------------------- | -------------------------------------------------------- |
+| Chase left to right, 0.2 s a step             | Starting up                                              |
+| All three together, 0.5 s on / 0.5 s off      | Joining Wi-Fi and linking WhatsApp                       |
+| All off                                       | Ready and idle. This is the normal state                 |
+| One button blinking, 0.8 s on / 0.8 s off     | A voice note is waiting from that person — tap it        |
+| One button solid                              | That button is recording right now                       |
+| One button, three quick flashes               | That message was delivered                               |
+| Buttons 1 and 3, a brief pulse every 4 s      | Silent mode is on                                        |
+| A slow left-to-right pass, once               | Silent mode just changed                                 |
+| All three double-pulse: on-off-on, then dark  | The setup hotspot is up and the setup page is waiting    |
+| **All three solid**                           | No network, and no hotspot yet                           |
+| **Buttons 1 and 2 solid**                     | Network is fine; WhatsApp is unlinked or waiting for a scan |
+
+The double-pulse is a rhythm rather than another blink rate on purpose: people tell a heartbeat
+from a blink across a room far more reliably than they tell 0.5 s blinking from 1.5 s blinking.
+And it deliberately makes **no sound** — the hotspot can come up at 3am because the router died,
+and a chime in a child's bedroom is the worse failure.
+
+When two of these could apply to the same light at once, the device resolves it per-light with a
+fixed priority ladder — see [`docs/architecture.md`](./docs/architecture.md#the-led-priority-ladder).
+
+### When something is wrong
+
+On the device, over ssh:
+
+```bash
+sudo bloopbox-doctor        # is everything present and running?
+sudo bloopbox-debug on      # persistent journal, debug logging, a 10s sampler — expires in 24h
+sudo bloopbox-diagnostics   # bundle the whole picture into one redacted tarball
+```
+
+If the device is offline and the admin panel is therefore unreachable, the way back in is the boot
+partition: pull the card, write `bloopbox-wifi.txt` with `ssid=` / `psk=` / `country=`, and boot.
+Any laptop can read that partition.
 
 ## Safety and privacy
 
-Each button targets one person **or** one group, and the device accepts messages only from those
-targets — unknown numbers, groups nobody assigned, status broadcasts and newsletters are all
-dropped, before any audio is downloaded. Recordings live in a RAM disk (`/run/bloopbox`,
-a tmpfs) and unread audio is deleted after 48 hours. Writes to `/data/config.json` are atomic, so
-losing power mid-save cannot corrupt the parent's settings.
+- **Only assigned targets can reach the device.** Filtering happens before download, so a
+  stranger's audio never reaches the disk. `src/whatsapp/whitelist.ts` is the boundary, and
+  `src/tests/whitelist.test.ts` is written from the position that anything not explicitly assigned
+  must not get through.
+- **Recordings live in RAM.** `/run/bloopbox` is a tmpfs, so a child's voice is never written to
+  the SD card. Unread audio is deleted after 48 hours regardless.
+- **Settings writes are atomic** (temp file → `fsync` → `rename`), so losing power mid-save cannot
+  corrupt a parent's configuration or brick the device.
+- **The admin API is password-protected**, except while the device is still being set up — the
+  onboarding flow has to be able to set the first password. See the watch items in `PENDING.md`
+  for the accepted risks around that.
+- **A read-only root filesystem** (`PRODUCT.md` §8) is specified but **not built**: `/data` still
+  lives on the root filesystem, so enabling the overlay would make every setting and the WhatsApp
+  pairing evaporate on reboot. It needs a dedicated partition first.
 
-`PRODUCT.md` §11 also calls for a **read-only root filesystem** via overlayfs. That is not built
-yet: with `/data` on the root filesystem, enabling the overlay would make every setting and the
-WhatsApp pairing evaporate on reboot, so it needs a dedicated partition first. See `PENDING.md`.
+## Developing
+
+### Prerequisites
+
+- **Node.js ≥ 22** (developed on 24)
+- **ffmpeg** with Opus support — `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Linux)
+
+```bash
+npm install
+npm run sounds      # generate the audio cue WAVs — they are not committed
+npm run doctor      # verify ffmpeg and the audio devices
+npm run check       # format + lint + typecheck + test. This is the gate; it must pass
+```
+
+`npm install` also installs a pre-commit hook that runs the same gate, so a broken commit is hard
+to make by accident. `git commit --no-verify` bypasses it.
+
+### Running it
+
+Two terminals — the daemon and Vite for the browser UIs:
+
+```bash
+npm run dev:hw      # hardware server + API + Socket.io on :3000, with the simulator HAL
+npm run dev:web     # the four UIs with hot reload on :5174, proxying to :3000
+```
+
+Then open <http://localhost:5174/simulator/>. Add a third terminal for `npm run dev:wa` (the
+WhatsApp bridge) only when you need real pairing or sending.
+
+Set `CONFIG_PATH=./data/config.json` if you are testing anything that saves settings — the default
+is the device's `/data`, which does not exist on a dev machine, and without it every save fails.
+The full environment table is in [`docs/architecture.md`](./docs/architecture.md#environment).
+
+In production there is one server: `npm run build` emits `dist/` and `dist/public/`, and
+`npm run start:hw` serves both from :3000.
+
+### Driving the simulator
+
+The simulator is a virtual device on a browser canvas, and it is how essentially all of this was
+developed. It boots into `CONNECTING` and stays there, so start by clicking **"WhatsApp connected
+(go READY)"** in the event injector — that is where normal behaviour lives.
+
+| Action                                                        | What it does                                    |
+| ------------------------------------------------------------- | ----------------------------------------------- |
+| Click-and-hold a button, or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> | Records, then sends                   |
+| Tap a blinking button                                         | Plays that contact's queue                      |
+| Tap a dark button                                             | "Oops" double-beep                              |
+| Hold <kbd>1</kbd> + <kbd>3</kbd>                              | Toggles silent mode after three seconds         |
+| Event injector                                                | Reboot, go READY, inbound notes, Wi-Fi down and restored, hotspot up and down, session expiry |
+
+Injected notes are synthesised 1.4-second tones with a distinct pitch per button (G4 / C5 / E5),
+so you can hear both *that* playback worked and *which* contact it came from. Recording needs
+microphone permission.
+
+`npm run dev:hw` supervises the server, so the restart-on-save behaviour works in development too.
+`npm run dev:hw:watch` does not — `tsx watch` will not restart a process that exits cleanly, so a
+config save leaves the server down. Use it for editing source, not for testing config.
+
+### Tests
+
+```bash
+npx vitest run src/tests/button.test.ts        # one file
+npx vitest run -t 'discards a short recording' # one test by name
+npm run test:watch
+npm run test:coverage                          # v8; thresholds are declared but not yet met
+```
+
+Timing-sensitive suites — LED patterns, debounce, purge TTL — run on **fake timers**. Never add a
+real sleep. Server-layer tests drive a real Express app on an ephemeral port with `fetch`.
+
+### All the scripts
+
+| Command                 | Does                                                  |
+| ----------------------- | ----------------------------------------------------- |
+| `npm run check`         | **The gate.** Format check, lint, typecheck, tests    |
+| `npm run dev`           | Hardware server and WhatsApp bridge together          |
+| `npm run dev:hw`        | Hardware server, supervised — restarts on config save |
+| `npm run dev:hw:watch`  | Hardware server with file watching, no supervisor     |
+| `npm run dev:wa`        | WhatsApp bridge only                                  |
+| `npm run dev:web`       | Vite dev server for the four browser UIs              |
+| `npm run typecheck`     | Both tsconfigs — server and browser                   |
+| `npm run lint`          | oxlint, with type-aware rules                         |
+| `npm run format`        | prettier (markdown is deliberately out of scope)      |
+| `npm run test:watch`    | Vitest in watch mode                                  |
+| `npm run test:coverage` | Coverage report                                       |
+| `npm run build`         | Compile the server to `dist/` and the UIs to `dist/public/` |
+| `npm run doctor`        | Verify ffmpeg and audio device prerequisites          |
+| `npm run sounds`        | Regenerate the audio cue WAVs                         |
+| `npm run release`       | Build the arm64 device tarball (Docker)               |
+| `npm run release:smoke` | Install and boot that tarball in an arm64 container   |
+| `npm run release:image` | Build a flashable SD card image (Linux + root)        |
+
+### Where things live
+
+```
+src/core/        pure domain logic — button interpreter, LED animator, state, network supervisor
+src/hal/         everything physical, behind one interface: GPIO, simulator, mock
+src/audio/       ffmpeg pipeline, cues, the unread queue, the 48h purge
+src/whatsapp/    Baileys client and the contact whitelist
+src/config/      Zod schema and the atomic config manager
+src/server/      Express routes, admin auth, the bridge link, the captive portal
+src/net/         reads what the root network agent publishes
+src/processes/   the two daemons
+public/          the four browser UIs, on a shared design system — outside src/, built by Vite
+deploy/          systemd units, the installer, the root network agent, the debugging kit
+```
+
+[`docs/architecture.md`](./docs/architecture.md) explains why it is split that way, and which
+rules are load-bearing.
+
+## Documentation
+
+| Document                                                   | What it is                                                       |
+| ---------------------------------------------------------- | ---------------------------------------------------------------- |
+| [`docs/PRODUCT.md`](./docs/PRODUCT.md)                     | The behavioural specification. `§` citations in the source point here |
+| [`docs/architecture.md`](./docs/architecture.md)           | How the software is put together, and the decisions behind it    |
+| [`docs/hardware.md`](./docs/hardware.md)                   | Bill of materials, wiring, GPIO pins, the enclosure              |
+| [`docs/deployment.md`](./docs/deployment.md)               | Releases, the installer, the SD image, systemd, CI               |
+| [`docs/hardware-bringup.md`](./docs/hardware-bringup.md)   | The gated plan for the first real device, and the debugging kit   |
+| [`docs/BRAND.md`](./docs/BRAND.md)                         | Visual direction and the design system's locked decisions        |
+| [`CLAUDE.md`](./CLAUDE.md)                                 | Conventions, toolchain traps, and rules for changing this codebase |
+| [`PENDING.md`](./PENDING.md)                               | The backlog: known gaps, unverified claims, watch items          |
+
+The living brand kit is a page rather than a file: `/brand/`, served by the same two stylesheets
+the product pages use, so it cannot drift.

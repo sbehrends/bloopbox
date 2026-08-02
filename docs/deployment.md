@@ -5,6 +5,10 @@ or a **flashable SD card image** with everything already in place.
 
 Both are produced by Docker on a dev machine or by CI, and the Pi compiles nothing.
 
+For a **first** device, follow [`hardware-bringup.md`](./hardware-bringup.md) rather than this page:
+it sequences the unverified subsystems so only one is in play at a time.
+[`hardware.md`](./hardware.md) is the wiring and the parts list.
+
 ## The target is Raspberry Pi OS Trixie, 64-bit
 
 Not a preference — a constraint, and the reason is worth knowing before someone tries to
@@ -157,11 +161,14 @@ The boot-partition file wins over `config.json` when both are present. The conne
 `bloopbox` and is given `autoconnect-priority 10`, so anything seeded earlier stays as a
 fallback if the new network turns out to be wrong.
 
-There is still **no AP / captive-portal fallback** — `PRODUCT.md` §First Boot describes one and
-it is not built. Editing the file on the boot partition is the recovery path today, and stays the
-escape hatch afterwards. The design is agreed and written up in `PENDING.md`: NetworkManager AP
-mode (not `hostapd`), an open network, the root `bloopbox-net.service` below doing the privileged
-work while the unprivileged daemon serves a portal UI, the two talking through files in `/run`.
+The **AP / captive-portal fallback is built** — `PRODUCT.md` §3 (First Boot) describes the
+behaviour, and the pieces are NetworkManager's own AP mode (not `hostapd`), an open network, the root
+`bloopbox-net.service` below doing the privileged work while the unprivileged daemon serves
+`public/portal/`, the two talking through files in `/run`. None of it has touched a real radio yet;
+`PENDING.md` lists exactly what only a phone in the room can show.
+
+Editing the file on the boot partition therefore stays the **recovery** path rather than the primary
+one: it is what gets you back in when even the hotspot cannot be reached.
 
 ## How the device knows whether Wi-Fi is up
 

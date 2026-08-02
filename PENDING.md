@@ -11,14 +11,16 @@ Ordered roughly by priority within each group.
 
 ### AP hotspot / captive portal for onboarding
 
-**Problem.** `PRODUCT.md` §First Boot has the device come up as an access point serving a captive
-portal, and §6 gives Wi-Fi Error an "opens AP hotspot after 30s" behaviour. None of that exists.
-`config.wifi` is written by the admin panel and, since packaging, applied to NetworkManager by
-`deploy/wifi-apply.sh` — but only over a network that already works.
+**Problem.** `PRODUCT.md` §3 (First Boot) has the device come up as an access point serving a captive
+portal, and §6 gives Wi-Fi Error an "opens AP hotspot after 30s" behaviour. Milestones 1–3 below are
+now **built** — agent, supervisor, LED rung, portal UI, captive redirect, join — leaving milestone 4
+(packaging) and, more importantly, the fact that **none of it has run on a radio** (see the
+verification gap below).
 
-So the first-boot story is currently: the parent supplies Wi-Fi **before** first boot by editing
-`bloopbox-wifi.txt` on the boot partition, or the image is built with `--wifi-ssid`. A
-device that cannot reach the network cannot be configured over the network either.
+Before that work, the whole first-boot story was: the parent supplies Wi-Fi **before** first boot by
+editing `bloopbox-wifi.txt` on the boot partition, or the image is built with `--wifi-ssid`. That
+path still exists and is now the **recovery** route — a device that cannot reach the network and
+whose hotspot cannot be reached either is only recoverable through the boot partition.
 
 It used to be worse: `wifiDown` was never computed at all — initialised to `false` with the
 simulator's injector as its only writer, so the Wi-Fi Error rung of the LED ladder could not fire
@@ -142,7 +144,7 @@ it is already true today without any restart, and belongs to the queue as a whol
 
 ### Read-only root filesystem needs /data on its own partition
 
-**Problem.** `PRODUCT.md` §11 wants the root filesystem mounted read-only through overlayfs so an
+**Problem.** `PRODUCT.md` §8 wants the root filesystem mounted read-only through overlayfs so an
 abrupt power cut cannot corrupt the OS. `scripts/build-sd-image.sh` deliberately does not enable
 it, because `/data` currently lives **on** the root filesystem: with the overlay active, every
 config write and the WhatsApp credentials would land in a RAM overlay and vanish on reboot. That

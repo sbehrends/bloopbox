@@ -240,7 +240,9 @@ back is physical: pull the card and write `bloopbox-wifi.txt` on the boot partit
 
 Now the wiring. `src/hal/gpioDriver.ts` was written from datasheets and has never run.
 
-GPIO 17, 27, 22 for the buttons, pulled up in firmware; the LEDs through the ULN2003. If
+GPIO 17, 27, 22 for the buttons, pulled up in firmware; the LEDs through the ULN2003 on
+GPIO 23, 24, 25. [`hardware.md`](./hardware.md) has the wiring and the reason the pull-ups come
+from `config.txt` rather than from the library. If
 nothing lights, the first two suspects are both in `deploy/environment.example`, and both are
 one-line changes on the device followed by `sudo systemctl restart bloopbox-hardware`:
 

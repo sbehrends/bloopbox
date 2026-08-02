@@ -6,10 +6,27 @@ bloopbox. Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry 
 old send and receive WhatsApp voice notes. **Hold to send, tap to play.** No screen, ever.
 
 `docs/PRODUCT.md` is the authoritative behavioral spec (the `§` citations throughout the source
-point at its sections). This file records how we build it and the
+point at its sections; **do not renumber them**). This file records how we build it and the
 decisions the spec left open. `PENDING.md` is the backlog — known gaps, unverified claims and
 watch items. Check it before starting something and add to it rather than leaving a finding in
 conversation.
+
+The rest of the documentation, and who owns what:
+
+| Document                | Owns                                                                       |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `README.md`             | The user-facing story: install, set up, use, and get a dev environment      |
+| `docs/PRODUCT.md`       | What the device does. Behaviour, the LED matrix, the config schema           |
+| `docs/architecture.md`  | How the software is put together, for a human reader. The reader-facing twin of the Architecture and Decisions sections below |
+| `docs/hardware.md`      | Parts, wiring, GPIO pins, ALSA, the opengpio bias/debounce trap             |
+| `docs/deployment.md`    | Releases, the installer, the SD image, systemd, CI                          |
+| `docs/hardware-bringup.md` | The gated plan for the first real device, and the debugging kit           |
+| `docs/BRAND.md`         | Visual direction and the design system's locked decisions                   |
+
+**When you change behaviour, update the doc that owns it** — usually `docs/PRODUCT.md` for
+behaviour and `docs/architecture.md` for structure — and keep this file's copy of the same rule in
+step. Duplication between this file and `docs/architecture.md` is deliberate (this one has to work
+from context alone), which means drift is the risk to watch for.
 
 ## Before you report a task done
 
@@ -170,6 +187,9 @@ line floating, which on a button input means garbage reads.
 If you find yourself adding an options object to that `watch()` call, re-read this first.
 
 ## Architecture
+
+`docs/architecture.md` is the same material written out for a human reader, with diagrams. What
+follows is the short version plus the rules that constrain a change.
 
 Two decoupled Node processes (systemd units on the Pi):
 
@@ -356,7 +376,8 @@ The admin panel shows "device restarting", polls `/api/status`, and reloads once
 ## Decisions the spec left open
 
 These are **resolved and locked by tests**. If you think one is wrong, change it deliberately in
-one place and update the test — do not work around it locally.
+one place and update the test — do not work around it locally, and update `docs/PRODUCT.md` and
+`docs/architecture.md` in the same commit.
 
 ### LED priority ladder
 
@@ -466,8 +487,8 @@ the chord is released early, nothing at all happens.
 
 **Cue timing follows from this.** Spec §1 plays the "pop" the moment a button is held, but at press
 time we cannot tell a tap from a hold — popping immediately would mean every tap-to-play began with
-a spurious recording chime. So the pop is deferred to the 1.0 s threshold, where the press is
-unambiguously a recording. Audio capture still starts at t=0 (nothing the child says is lost), and
+a spurious recording chime. So the pop is deferred to `recordThresholdMs` (500 ms by default), where
+the press is unambiguously a recording. Audio capture still starts at t=0 (nothing said is lost), and
 the LED goes solid immediately, so they always get instant acknowledgement.
 
 ### Boot animation is held deliberately

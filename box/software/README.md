@@ -103,6 +103,8 @@ real sleep. Server-layer tests drive a real Express app on an ephemeral port wit
 | `npm run build`         | Compile the server to `dist/` and the UIs to `dist/public/` |
 | `npm run doctor`        | Verify ffmpeg and audio device prerequisites          |
 | `npm run sounds`        | Regenerate the audio cue WAVs                         |
+| `npm run clean`         | Delete build output: `dist/`, `release/`, `coverage/`  |
+| `npm run clean:all`     | The above plus `node_modules/` and the generated cues  |
 | `npm run release`       | Build the arm64 device tarball (Docker)               |
 | `npm run release:smoke` | Install and boot that tarball in an arm64 container   |
 | `npm run release:image` | Build a flashable SD card image (Linux + root)        |
@@ -129,6 +131,23 @@ scripts/         dev server, sound generation, doctor, release and SD-image buil
 `scripts/`, `deploy/` and `packaging/` have to stay in this directory together: the release scripts
 derive their root from their own location rather than from git, which is what let this whole package
 move without editing a single one of them.
+
+Everything generated lives in this directory too and is gitignored: `dist/` (compiled app),
+`release/` (the Pi tarball and SD image), `coverage/` (the test report), `node_modules/`, plus the
+cue WAVs and `data/`. None of them are needed to develop — `npm run dev:hw` runs `src/` through tsx
+and `npm run dev:web` serves `public/` through Vite.
+
+### Cleaning up
+
+```bash
+npm run clean        # dist/ release/ coverage/          — then `npm run build`
+npm run clean:all    # + node_modules/ + the cue WAVs    — then `npm install && npm run sounds`
+```
+
+**Neither touches `data/`, on purpose.** That directory holds `config.json` and the Baileys
+credentials, and deleting it drops the WhatsApp pairing — which no command can rebuild, only
+re-scanning a QR with the phone that owns it. It is gitignored, so `git clean -Xdf` at the repo root
+*will* take it: reach for that only when losing the pairing is what you actually want.
 
 [`../../docs/architecture.md`](../../docs/architecture.md) explains why it is split this way and
 which rules are load-bearing. [`../../CLAUDE.md`](../../CLAUDE.md) is the conventions and the

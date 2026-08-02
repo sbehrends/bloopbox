@@ -31,6 +31,8 @@
     "test:coverage": "vitest run --coverage",
     "doctor": "tsx scripts/doctor.ts",
     "sounds": "tsx scripts/generate-sounds.ts",
+    "clean": "rm -rf dist release coverage ./*.tsbuildinfo",
+    "clean:all": "npm run clean && rm -rf node_modules && find src/audio/sounds -name '*.wav' -delete",
     "release": "./scripts/build-release.sh",
     "release:smoke": "./scripts/smoke-test-release.sh",
     "release:image": "./scripts/build-sd-image.sh",

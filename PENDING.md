@@ -313,6 +313,18 @@ period rather than one per poll, serves the portal, 302s every captive probe whi
 up and **nothing at all** when it is down, and a join writes the config, hands the credentials to
 the agent and restarts.
 
+Since 2026-08-01 that container half is a script rather than an argument:
+`./scripts/test-onboarding.sh` unpacks a built release into a bare Trixie arm64 container,
+installs it with the real `install.sh`, and drives the whole flow — agent up, scan published,
+`ap-up`, the daemon reaching `SETUP_PORTAL`, the portal served, a captive probe 302'd, a join
+refused without an admin password and then accepted — against the **shipped** `net-agent.sh` and
+units rather than against the source tree. The one substitution is `nmcli`
+(`packaging/fake-nmcli.sh`); the agent cannot tell, so its own logic is genuinely exercised. It is
+not wired into `npm run check` or CI, and takes about a minute.
+
+Treat its passing as "the shipped artefact is wired up correctly", not as "onboarding works". The
+stub is a model of `nmcli`, and every item below is a way that model could be wrong.
+
 What only a radio and a phone can show:
 
 - that `802-11-wireless.mode ap` + `ipv4.method shared` comes up on `brcmfmac` at all

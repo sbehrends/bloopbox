@@ -5,6 +5,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bloopbox. Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry Pi Zero 2 W let a 2–5 year
 old send and receive WhatsApp voice notes. **Hold to send, tap to play.** No screen, ever.
 
+## Repository layout — this is a monorepo
+
+```
+box/
+├── software/     the two daemons, the four browser UIs, packaging, deploy. THE PROJECT TODAY.
+└── hardware/     enclosure models, PCB. Effectively empty; docs/hardware.md is the reference.
+website/          the marketing site. Empty placeholder; nothing built yet.
+docs/             all documentation, for every package. Deliberately flat.
+.github/          CI. Stays at root; its run steps are working-directory'd into box/software.
+.githooks/        the pre-commit gate. Must stay at root — see below.
+```
+
+**Almost every path in this file is relative to `box/software/`.** `src/core/ledAnimator.ts` means
+`box/software/src/core/ledAnimator.ts`. The exceptions are spelled out with their full path and are
+the six root-level things above: `docs/`, `.github/`, `.githooks/`, `CLAUDE.md`, `PENDING.md`,
+`README.md`.
+
+**Every npm command in this file runs from `box/software/`.** There are no npm workspaces and no
+root `package.json` — that is deliberate while there is exactly one package, because workspaces
+hoist `node_modules` away from the tree the release scripts assume. `cd box/software` first, or
+nothing works.
+
+The release scripts (`scripts/*.sh`) derive their own root from their own location
+(`dirname "${BASH_SOURCE[0]}"/..`), **not** from git. That is why `scripts/`, `deploy/`,
+`packaging/` and `.dockerignore` all had to move into `box/software/` together and must stay
+together. Separating them breaks the tarball build with no error message worth reading.
+
 `docs/PRODUCT.md` is the authoritative behavioral spec (the `§` citations throughout the source
 point at its sections; **do not renumber them**). This file records how we build it and the
 decisions the spec left open. `PENDING.md` is the backlog — known gaps, unverified claims and
@@ -15,7 +42,8 @@ The rest of the documentation, and who owns what:
 
 | Document                | Owns                                                                       |
 | ----------------------- | -------------------------------------------------------------------------- |
-| `README.md`             | The user-facing story: install, set up, use, and get a dev environment      |
+| `README.md`             | The monorepo front door: what bloopbox is, the layout, install, set up, use |
+| `box/software/README.md` | The dev-facing half: environment, the gate, the simulator, the scripts      |
 | `docs/PRODUCT.md`       | What the device does. Behaviour, the LED matrix, the config schema           |
 | `docs/architecture.md`  | How the software is put together, for a human reader. The reader-facing twin of the Architecture and Decisions sections below |
 | `docs/hardware.md`      | Parts, wiring, GPIO pins, ALSA, the opengpio bias/debounce trap             |
@@ -30,14 +58,22 @@ from context alone), which means drift is the risk to watch for.
 
 ## Before you report a task done
 
-Run `npm run check` (format + lint + typecheck + test). It must pass. That is the only gate.
+From `box/software/`, run `npm run check` (format + lint + typecheck + test). It must pass. That is
+the only gate.
 
-It is also a **pre-commit hook** (`.githooks/pre-commit`, wired up by the `prepare` script, so
-`npm install` installs it — no husky). The whole gate takes about six seconds, so the hook runs
-all of it rather than just a typecheck, plus `bash -n` over any staged shell script since neither
-prettier nor oxlint looks at those. `git commit --no-verify` bypasses it. The hook checks the
-working tree, not the staged snapshot: committing a subset of files can still pass here and be
-broken in isolation, which is what CI is for.
+It is also a **pre-commit hook** (`.githooks/pre-commit` — at the **repo root**, wired up by the
+`prepare` script in `box/software/package.json`, so `npm install` installs it — no husky). The whole
+gate takes about six seconds, so the hook runs all of it rather than just a typecheck, plus `bash -n`
+over any staged shell script since neither prettier nor oxlint looks at those.
+`git commit --no-verify` bypasses it. The hook checks the working tree, not the staged snapshot:
+committing a subset of files can still pass here and be broken in isolation, which is what CI is for.
+
+The hook lives at the root and **cannot be moved into `box/software/`**: `core.hooksPath` resolves a
+relative path against the top of the working tree and git runs hooks from there, so a hook one
+directory down is simply never found. It therefore has two working directories on purpose — shell
+checks run from the root, because `git diff --cached` yields root-relative paths, and `npm run check`
+runs inside `box/software`. It skips the npm half entirely when nothing under `box/software/` is
+staged, so a docs-only commit does not typecheck the daemon.
 
 `npm run doctor` verifies external prerequisites (ffmpeg, ALSA devices). Markdown is deliberately
 outside prettier's scope — see `.prettierignore`.
@@ -53,9 +89,12 @@ outside prettier's scope — see `.prettierignore`.
 
 ## Commands
 
+**All of these run from `box/software/`.**
+
 ```bash
+cd box/software         # once per shell — there is no root package.json
 npm run dev:hw          # terminal 1 — hardware server + API + Socket.io on :3000 (SIMULATOR_MODE=true)
-npm run dev:web         # terminal 2 — Vite for the two UIs on :5174, proxying /api and /socket.io to :3000
+npm run dev:web         # terminal 2 — Vite for the four UIs on :5174, proxying /api and /socket.io to :3000
 npm run dev:wa          # WhatsApp bridge (only needed for real pairing/sending)
 npm run dev             # dev:hw + dev:wa together (no Vite; use the built UIs or add dev:web)
 ```

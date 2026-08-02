@@ -51,12 +51,12 @@ take the buttons and lights with it.
 
 The two talk over Socket.io on localhost — process 2 connects to process 1's server as a *client*,
 on the `/bridge` namespace, authenticated with a shared `BRIDGE_TOKEN` compared in constant time.
-The event contract is [`src/ipc/events.ts`](../src/ipc/events.ts) and is the single source of truth
+The event contract is [`src/ipc/events.ts`](../box/software/src/ipc/events.ts) and is the single source of truth
 for both sides: adding an event means editing that file first.
 
 **Networking sits outside both.** The daemons run unprivileged under `ProtectSystem=strict`, so
 they cannot talk to NetworkManager and should not be able to. A third unit, `bloopbox-net.service`,
-runs [`deploy/net-agent.sh`](../deploy/net-agent.sh) as root, polls `nmcli` every 5 s and publishes
+runs [`deploy/net-agent.sh`](../box/software/deploy/net-agent.sh) as root, polls `nmcli` every 5 s and publishes
 one small JSON document. Requests go back the other way through a second file carrying a strictly
 enum-validated action (`ap-up` | `ap-down` | `join {ssid, psk}`), never evaluated as shell.
 
@@ -70,7 +70,7 @@ owning `/run/bloopbox`, which is the recordings tmpfs the daemon has to be able 
 
 ### Missing information is never an outage
 
-[`src/net/netState.ts`](../src/net/netState.ts) is the **only** way the daemon learns whether Wi-Fi
+[`src/net/netState.ts`](../box/software/src/net/netState.ts) is the **only** way the daemon learns whether Wi-Fi
 is up. A missing file, an unparseable one, a reading older than 30 s, or an agent that found no
 `nmcli` all mean *unknown*, and unknown is reported as **not down**. Only a fresh reading that
 explicitly says the network is gone lights the error pattern.
@@ -84,7 +84,7 @@ error".
 ## The HAL
 
 All physical I/O — buttons, LEDs, **and audio in and out** — sits behind one interface,
-[`src/hal/types.ts`](../src/hal/types.ts). Three drivers:
+[`src/hal/types.ts`](../box/software/src/hal/types.ts). Three drivers:
 
 | Driver             | Used for                                                                   |
 | ------------------ | -------------------------------------------------------------------------- |
@@ -95,7 +95,7 @@ All physical I/O — buttons, LEDs, **and audio in and out** — sits behind one
 `SIMULATOR_MODE=true` selects the simulator; `HAL_DRIVER=mock` wins over it; otherwise `gpio`.
 
 `opengpio` is an **optionalDependency** that does not build on macOS, so
-[`src/hal/index.ts`](../src/hal/index.ts) loads the GPIO driver through a dynamic `import()`. Never
+[`src/hal/index.ts`](../box/software/src/hal/index.ts) loads the GPIO driver through a dynamic `import()`. Never
 import it statically — importing the HAL factory has to stay safe on a dev machine.
 
 `gpioDriver.ts` has **never run on real hardware**. Treat it as unverified, and do not add code
@@ -124,7 +124,7 @@ and no sleeping. Keep it that way — `deviceController` is where I/O is allowed
 
 `PRODUCT.md` §6 lists the nine patterns independently, but they collide in practice: a silent-mode
 heartbeat wants LED 1 at the same moment an unread message does. `resolveLed()` in
-[`src/core/ledAnimator.ts`](../src/core/ledAnimator.ts) is the single place that arbitrates, and it
+[`src/core/ledAnimator.ts`](../box/software/src/core/ledAnimator.ts) is the single place that arbitrates, and it
 resolves **per LED, first match wins**:
 
 | # | Condition                                                                   | Result                       |
@@ -143,7 +143,7 @@ can act on.
 
 Physical presses are layered on top of all of it: `setPressed()` forces a held button solid, so a
 child gets acknowledgement in the same instant they push. Pinned by
-[`src/tests/ledPriority.test.ts`](../src/tests/ledPriority.test.ts).
+[`src/tests/ledPriority.test.ts`](../box/software/src/tests/ledPriority.test.ts).
 
 Timing constants live in `LED_TIMINGS`, exported so the tests assert against the same numbers the
 runtime uses. Only changed LEDs are written — a steady state costs one comparison per tick, which
@@ -181,7 +181,7 @@ resolved by press duration and unread state:
 
 **These are configuration, not constants.** They live in `config.buttons` and are editable from the
 admin panel, because finding the right feel by editing source and rebuilding was far too slow.
-`DEFAULT_BUTTON_TIMINGS` in [`src/config/schema.ts`](../src/config/schema.ts) is derived from the
+`DEFAULT_BUTTON_TIMINGS` in [`src/config/schema.ts`](../box/software/src/config/schema.ts) is derived from the
 schema's own field defaults, so nothing can drift.
 
 Two rules the schema enforces, because both break the device in ways a parent could not diagnose:
@@ -203,7 +203,7 @@ driver-side work at all. The gap's room noise lands in the message, which is wha
 actually sounds like and is bounded by the window. Stitching separate segments together was the
 alternative and is disproportionate.
 
-Rules, all locked by [`src/tests/button.test.ts`](../src/tests/button.test.ts):
+Rules, all locked by [`src/tests/button.test.ts`](../box/software/src/tests/button.test.ts):
 
 - Only a **confirmed** press opens a window. A tap never does, so tap-to-play is untouched.
 - `maxRecordingSeconds` is **not** restarted by a resume — the ceiling is carried across, so
@@ -248,7 +248,7 @@ audio back on without editing the schedule.
 
 `/data/config.json`, validated by a Zod schema that is also the single source of truth for the
 TypeScript types. Never hand-write a parallel interface — add the field to
-[`src/config/schema.ts`](../src/config/schema.ts) and the type follows.
+[`src/config/schema.ts`](../box/software/src/config/schema.ts) and the type follows.
 
 The schema guards both directions: reading the file at boot (a corrupt file falls back to
 `config.default.json` **in RAM** and boots into onboarding, never crashing the daemon) and writing
@@ -306,7 +306,7 @@ patchable two levels deep while `version` is not patchable at all. Forget `merge
 change**. `whatsapp.markPlayedAsRead` shipped that way for ten minutes; the test that caught it
 asserted on behaviour rather than on the response, which is why it caught it.
 
-Cover every migration with a test — see [`src/tests/config.test.ts`](../src/tests/config.test.ts).
+Cover every migration with a test — see [`src/tests/config.test.ts`](../box/software/src/tests/config.test.ts).
 
 ### A button targets a person **or** a group
 
@@ -346,7 +346,7 @@ could never set a password. Don't "fix" that. It stands aside on an empty `admin
 which means a config with `configured: true` and no hash is wide open — a **decided, accepted
 risk**, because the guard cannot tell that state from mid-onboarding, and refusing to serve would
 make the device recoverable only by pulling the SD card. Both halves are pinned by
-[`src/tests/adminAuth.test.ts`](../src/tests/adminAuth.test.ts); the watch item in `PENDING.md` has
+[`src/tests/adminAuth.test.ts`](../box/software/src/tests/adminAuth.test.ts); the watch item in `PENDING.md` has
 the full reasoning.
 
 `GET /api/wifi/scan` uses a looser gate than either: open while the device is unconfigured **or**
@@ -462,7 +462,7 @@ clamped to `audio.maxVolumeCapPercent`.
 
 ## The whitelist is the safety boundary
 
-[`src/whatsapp/whitelist.ts`](../src/whatsapp/whitelist.ts) is the most important file in the
+[`src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) is the most important file in the
 product. Only the configured JIDs are accepted; unknown numbers, groups nobody assigned, status
 broadcasts, newsletters and the device's own echoed sends are all dropped.
 
@@ -472,7 +472,7 @@ JIDs are normalised before comparison — `15551234567:12@s.whatsapp.net` is the
 `15551234567@s.whatsapp.net` — or the same contact would be accepted or rejected depending on which
 of their linked devices they happened to send from. LID-addressed contacts are handled too.
 
-[`src/tests/whitelist.test.ts`](../src/tests/whitelist.test.ts) is written from the position that
+[`src/tests/whitelist.test.ts`](../box/software/src/tests/whitelist.test.ts) is written from the position that
 anything not explicitly assigned must not get through.
 
 ---
@@ -488,7 +488,7 @@ fixed number of yields: fixed flushes passed in isolation and failed intermitten
 load.
 
 Server-layer tests drive a **real Express app on an ephemeral port with `fetch`**, assembled the way
-`hardware-server.ts` assembles it — see [`src/tests/support/apiHarness.ts`](../src/tests/support/apiHarness.ts),
+`hardware-server.ts` assembles it — see [`src/tests/support/apiHarness.ts`](../box/software/src/tests/support/apiHarness.ts),
 which is a helper rather than a suite. No supertest; nothing was worth a dependency here.
 `bridgeLink.test.ts` does the same with a real Socket.io server and client, because the token gate
 is handshake middleware and only exists during a connection.

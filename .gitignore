@@ -1,3 +1,8 @@
+# One .gitignore for the monorepo. Patterns without a slash match at any depth, so they
+# cover box/software/, website/ and anything added later. Patterns WITH a slash are
+# anchored to this directory and have to name the package explicitly — that is the trap
+# to watch when moving things around.
+
 node_modules/
 dist/
 build/
@@ -8,11 +13,12 @@ coverage/
 release/
 
 # Persistent writable device volume (config.json, WhatsApp auth). Never committed.
+# Unanchored, so it covers both box/software/data/ in development and /data on the device.
 data/
-/data/
 
-# Generated audio cues (rebuild with `npm run sounds`) and temp recordings
-src/audio/sounds/*.wav
+# Generated audio cues (rebuild with `npm run sounds`) and temp recordings.
+# Anchored — this path is package-specific and must be updated if the box software moves.
+box/software/src/audio/sounds/*.wav
 *.ogg
 
 __pycache__/
@@ -24,8 +30,6 @@ __pycache__/
 # Never commit: WhatsApp session credentials, device secrets, local overrides
 auth_info*/
 *.session
-config/local.yaml
-config/runtime.yaml
 .env
 .env.*
 !.env.example

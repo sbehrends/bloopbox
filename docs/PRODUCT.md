@@ -186,7 +186,7 @@ the passphrase does not sit in clear text.
 
 ### The config schema
 
-Inferred from the Zod schema in [`../src/config/schema.ts`](../src/config/schema.ts), which is the
+Inferred from the Zod schema in [`../src/config/schema.ts`](../box/software/src/config/schema.ts), which is the
 single source of truth — there is no hand-written parallel interface.
 
 ```json
@@ -312,7 +312,7 @@ reported as "not down"** — an outage is never invented from silence.
 
 ### The safety boundary
 
-[`../src/whatsapp/whitelist.ts`](../src/whatsapp/whitelist.ts) accepts **only** the configured
+[`../src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) accepts **only** the configured
 JIDs. Unknown numbers, groups nobody assigned, status broadcasts, newsletters and the device's own
 echoed sends are all dropped, **before download**, so a stranger's audio never reaches the disk.
 JIDs are normalised first, so a contact is recognised whichever of their linked devices they send
@@ -376,7 +376,7 @@ them — `src/whatsapp/` is the large remaining hole. See `PENDING.md`.
 
 All lighting is binary (on/off) with spatial meaning: **Button 1 (left), Button 2 (centre), Button 3
 (right)**. Timings are exported as `LED_TIMINGS` in
-[`../src/core/ledAnimator.ts`](../src/core/ledAnimator.ts), so the tests assert against the same
+[`../src/core/ledAnimator.ts`](../box/software/src/core/ledAnimator.ts), so the tests assert against the same
 numbers the runtime uses.
 
 | Device state | Pattern (1 / 2 / 3) | Animation and timing | Meaning |

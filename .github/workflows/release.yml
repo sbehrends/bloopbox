@@ -28,6 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       artifact: ${{ steps.build.outputs.artifact }}
+    # The release scripts derive their own root from their location, so running them from
+    # box/software is all it takes — `release/` resolves under it.
+    defaults:
+      run:
+        working-directory: box/software
     steps:
       - uses: actions/checkout@v5
 
@@ -56,9 +61,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-tarball
+          # Action input, so not covered by `defaults.run.working-directory`.
           path: |
-            release/*.tar.gz
-            release/*.tar.gz.sha256
+            box/software/release/*.tar.gz
+            box/software/release/*.tar.gz.sha256
           if-no-files-found: error
 
   image:
@@ -66,13 +72,17 @@ jobs:
     needs: package
     if: github.event_name == 'push' || inputs.build_image
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: box/software
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
           name: release-tarball
-          path: release
+          # Must land where build-sd-image.sh looks for it: <its own root>/release.
+          path: box/software/release
 
       - name: Install image build tools
         run: |
@@ -108,8 +118,8 @@ jobs:
         with:
           name: sd-card-image
           path: |
-            release/*.img.xz
-            release/*.img.xz.sha256
+            box/software/release/*.img.xz
+            box/software/release/*.img.xz.sha256
           if-no-files-found: error
 
       # Kept out of the image artifact above and never attached to a release: it holds the
@@ -117,7 +127,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: sd-card-credentials
-          path: release/*.credentials.txt
+          path: box/software/release/*.credentials.txt
           if-no-files-found: warn
 
   release:
@@ -125,6 +135,9 @@ jobs:
     needs: [package, image]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Deliberately NOT working-directory'd into box/software: this job runs no build script,
+    # it only downloads artifacts and hands them to `gh`. Its `release/` is a scratch dir at
+    # the runner root, self-consistent with the globs below.
     permissions:
       contents: write
     steps:

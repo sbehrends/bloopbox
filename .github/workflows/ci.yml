@@ -21,6 +21,11 @@ jobs:
   check:
     name: check (format, lint, typecheck, test)
     runs-on: ubuntu-latest
+    # Monorepo: every `run` step below is the box software's, so point them all at it once.
+    # `uses` steps are unaffected by this and pass paths explicitly.
+    defaults:
+      run:
+        working-directory: box/software
     steps:
       - uses: actions/checkout@v5
 
@@ -29,6 +34,8 @@ jobs:
           # Matches packaging/versions.env, so what CI validates is what the device runs.
           node-version: '24.18.1'
           cache: npm
+          # `defaults.run` does not reach an action's inputs, so the lockfile is named here.
+          cache-dependency-path: box/software/package-lock.json
 
       # The Opus pipeline, and `npm run sounds` synthesises the cue WAVs through it. Without
       # this, generate-sounds fails and every audio test has nothing to play.
@@ -55,6 +62,9 @@ jobs:
     # would run twice per release. `inputs` is null on a normal trigger, so this stays true.
     if: ${{ !inputs.gate_only }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: box/software
     steps:
       - uses: actions/checkout@v5
 
@@ -78,8 +88,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: bloopbox-release
+          # Action input, so not covered by `defaults.run.working-directory` above.
           path: |
-            release/*.tar.gz
-            release/*.tar.gz.sha256
+            box/software/release/*.tar.gz
+            box/software/release/*.tar.gz.sha256
           retention-days: 14
           if-no-files-found: error

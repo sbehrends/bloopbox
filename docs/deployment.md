@@ -24,7 +24,7 @@ Pi OS Lite arm64 image is Trixie anyway.
 Cortex-A53, so arm64 is both available and faster.
 
 Everything pinned — base images, the Pi OS image and its checksum, apt package lists — lives in
-[`packaging/versions.env`](../packaging/versions.env).
+[`packaging/versions.env`](../box/software/packaging/versions.env).
 
 ## Building a release
 
@@ -150,7 +150,7 @@ The boot partition is FAT32, so any Windows or macOS laptop can read and write i
 
 ## Wi-Fi at runtime
 
-[`deploy/wifi-apply.sh`](../deploy/wifi-apply.sh) is the only thing that turns Wi-Fi settings
+[`deploy/wifi-apply.sh`](../box/software/deploy/wifi-apply.sh) is the only thing that turns Wi-Fi settings
 into an actual network connection. It runs from two places:
 
 - `bloopbox-firstboot.service`, on every boot
@@ -173,7 +173,7 @@ one: it is what gets you back in when even the hotspot cannot be reached.
 ## How the device knows whether Wi-Fi is up
 
 The hardware daemon runs as `bloopbox` under `ProtectSystem=strict`; it cannot talk to
-NetworkManager and should not be able to. So [`deploy/net-agent.sh`](../deploy/net-agent.sh) runs
+NetworkManager and should not be able to. So [`deploy/net-agent.sh`](../box/software/deploy/net-agent.sh) runs
 as root from `bloopbox-net.service`, polls `nmcli` every 5s and publishes one small JSON document:
 
 ```

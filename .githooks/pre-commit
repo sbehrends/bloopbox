@@ -4,9 +4,18 @@
 # format, lint, typecheck, tests — because the whole thing takes about six seconds, which is
 # cheaper than noticing in CI ten minutes later.
 #
-# Committed to the repo and wired up by the `prepare` script in package.json
+# Committed to the repo and wired up by the `prepare` script in box/software/package.json
 # (`git config core.hooksPath .githooks`), so a fresh clone gets it from `npm install`
 # without adding husky or any other dependency.
+#
+# This file stays at the REPO ROOT even though the project it gates lives a directory down.
+# `core.hooksPath` resolves a relative path against the top of the working tree, and git runs
+# hooks from there — so a hook under box/software/ would simply never be found.
+#
+# The two halves therefore have different working directories, deliberately:
+#   - shell checks run from the repo root, because `git diff --cached` yields root-relative
+#     paths and will start returning website/... files as this monorepo grows.
+#   - `npm run check` runs inside box/software, which is where package.json lives.
 #
 # To skip it deliberately:  git commit --no-verify
 #
@@ -14,6 +23,9 @@
 # selected files can still pass here and be broken in isolation. Stashing to test the index
 # exactly is a good way to lose work in a hook, so it is not done.
 set -uo pipefail
+
+# Where the box software lives. One place to change if it ever moves again.
+SOFTWARE_DIR="box/software"
 
 fail() {
   printf '\n\033[31mpre-commit: %s\033[0m\n' "$1" >&2
@@ -41,14 +53,30 @@ if [[ -n "${SHELL_FILES}" ]]; then
   done <<<"${SHELL_FILES}"
 fi
 
-# The cue WAVs are generated rather than committed, and the audio tests need them. A fresh
-# clone has none, so the gate would fail for a reason that has nothing to do with the commit.
-if [[ ! -f src/audio/sounds/pop.wav ]]; then
-  echo "pre-commit: audio cues missing — running npm run sounds"
-  npm run sounds --silent || fail "could not generate the audio cues (is ffmpeg installed?)"
+# Everything below is the box software's gate, so it runs from there. A subshell rather than
+# a bare `cd`, so nothing after this block can inherit the wrong directory.
+#
+# Nothing staged under box/software means the gate has nothing to say — a docs-only or
+# website-only commit should not pay six seconds to typecheck the daemon.
+if ! printf '%s\n' "${STAGED}" | grep -q "^${SOFTWARE_DIR}/"; then
+  printf '\033[32mpre-commit: ok (nothing staged under %s)\033[0m\n' "${SOFTWARE_DIR}"
+  exit 0
 fi
 
-echo "pre-commit: npm run check"
-npm run check --silent || fail "npm run check failed"
+[[ -d "${SOFTWARE_DIR}" ]] || fail "${SOFTWARE_DIR} is missing — has the layout moved?"
+
+(
+  cd "${SOFTWARE_DIR}" || exit 1
+
+  # The cue WAVs are generated rather than committed, and the audio tests need them. A fresh
+  # clone has none, so the gate would fail for a reason unrelated to the commit.
+  if [[ ! -f src/audio/sounds/pop.wav ]]; then
+    echo "pre-commit: audio cues missing — running npm run sounds"
+    npm run sounds --silent || exit 1
+  fi
+
+  echo "pre-commit: npm run check"
+  npm run check --silent || exit 1
+) || fail "npm run check failed in ${SOFTWARE_DIR}"
 
 printf '\033[32mpre-commit: ok\033[0m\n'

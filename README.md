@@ -29,6 +29,21 @@ account. What has **never** run is any of it on a Pi with buttons and a speaker 
 numbers, LED polarity, ALSA device names and the hotspot are all unproven. See
 [`PENDING.md`](./PENDING.md) for the honest list.
 
+## Repository layout
+
+A monorepo. The box is what exists; the rest is scaffolding for what comes next.
+
+```
+box/
+├── software/     the two daemons, the four browser UIs, packaging, deploy  ← the project today
+└── hardware/     enclosure models and PCB. Empty; docs/hardware.md is the reference
+website/          the marketing site. Empty placeholder
+docs/             all documentation, for every package
+```
+
+There is no root `package.json`. **Every npm command runs from `box/software/`** —
+see [`box/software/README.md`](./box/software/README.md).
+
 ## What you need
 
 | Component  | Part                                    |
@@ -52,6 +67,7 @@ preference: the GPIO addon compiles against the libgpiod v2 API, which Bookworm 
 The easiest route is a card that needs no install step at all. On a Linux machine with root:
 
 ```bash
+cd box/software
 npm install
 sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
 ```
@@ -64,6 +80,7 @@ If the Pi is already running Raspberry Pi OS Trixie and reachable over ssh, inst
 tarball instead:
 
 ```bash
+cd box/software
 npm run release                                    # arm64 tarball, built in Docker
 scp release/bloopbox-*-linux-arm64.tar.gz pi@bloopbox.local:
 ssh pi@bloopbox.local 'tar xzf bloopbox-*.tar.gz && sudo ./bloopbox-*/install.sh && sudo reboot'
@@ -270,118 +287,30 @@ Any laptop can read that partition.
 
 ## Developing
 
-### Prerequisites
-
-- **Node.js ≥ 22** (developed on 24)
-- **ffmpeg** with Opus support — `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Linux)
+Everything is developed against a **browser-based hardware simulator**, so no Raspberry Pi is
+needed:
 
 ```bash
+cd box/software
 npm install
-npm run sounds      # generate the audio cue WAVs — they are not committed
-npm run doctor      # verify ffmpeg and the audio devices
-npm run check       # format + lint + typecheck + test. This is the gate; it must pass
+npm run sounds      # the cue WAVs are generated, not committed
+npm run dev:hw      # terminal 1 — daemon + API on :3000
+npm run dev:web     # terminal 2 — the four UIs on :5174
 ```
 
-`npm install` also installs a pre-commit hook that runs the same gate, so a broken commit is hard
-to make by accident. `git commit --no-verify` bypasses it.
+Then open <http://localhost:5174/simulator/>.
 
-### Running it
-
-Two terminals — the daemon and Vite for the browser UIs:
-
-```bash
-npm run dev:hw      # hardware server + API + Socket.io on :3000, with the simulator HAL
-npm run dev:web     # the four UIs with hot reload on :5174, proxying to :3000
-```
-
-Then open <http://localhost:5174/simulator/>. Add a third terminal for `npm run dev:wa` (the
-WhatsApp bridge) only when you need real pairing or sending.
-
-Set `CONFIG_PATH=./data/config.json` if you are testing anything that saves settings — the default
-is the device's `/data`, which does not exist on a dev machine, and without it every save fails.
-The full environment table is in [`docs/architecture.md`](./docs/architecture.md#environment).
-
-In production there is one server: `npm run build` emits `dist/` and `dist/public/`, and
-`npm run start:hw` serves both from :3000.
-
-### Driving the simulator
-
-The simulator is a virtual device on a browser canvas, and it is how essentially all of this was
-developed. It boots into `CONNECTING` and stays there, so start by clicking **"WhatsApp connected
-(go READY)"** in the event injector — that is where normal behaviour lives.
-
-| Action                                                        | What it does                                    |
-| ------------------------------------------------------------- | ----------------------------------------------- |
-| Click-and-hold a button, or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> | Records, then sends                   |
-| Tap a blinking button                                         | Plays that contact's queue                      |
-| Tap a dark button                                             | "Oops" double-beep                              |
-| Hold <kbd>1</kbd> + <kbd>3</kbd>                              | Toggles silent mode after three seconds         |
-| Event injector                                                | Reboot, go READY, inbound notes, Wi-Fi down and restored, hotspot up and down, session expiry |
-
-Injected notes are synthesised 1.4-second tones with a distinct pitch per button (G4 / C5 / E5),
-so you can hear both *that* playback worked and *which* contact it came from. Recording needs
-microphone permission.
-
-`npm run dev:hw` supervises the server, so the restart-on-save behaviour works in development too.
-`npm run dev:hw:watch` does not — `tsx watch` will not restart a process that exits cleanly, so a
-config save leaves the server down. Use it for editing source, not for testing config.
-
-### Tests
-
-```bash
-npx vitest run src/tests/button.test.ts        # one file
-npx vitest run -t 'discards a short recording' # one test by name
-npm run test:watch
-npm run test:coverage                          # v8; thresholds are declared but not yet met
-```
-
-Timing-sensitive suites — LED patterns, debounce, purge TTL — run on **fake timers**. Never add a
-real sleep. Server-layer tests drive a real Express app on an ephemeral port with `fetch`.
-
-### All the scripts
-
-| Command                 | Does                                                  |
-| ----------------------- | ----------------------------------------------------- |
-| `npm run check`         | **The gate.** Format check, lint, typecheck, tests    |
-| `npm run dev`           | Hardware server and WhatsApp bridge together          |
-| `npm run dev:hw`        | Hardware server, supervised — restarts on config save |
-| `npm run dev:hw:watch`  | Hardware server with file watching, no supervisor     |
-| `npm run dev:wa`        | WhatsApp bridge only                                  |
-| `npm run dev:web`       | Vite dev server for the four browser UIs              |
-| `npm run typecheck`     | Both tsconfigs — server and browser                   |
-| `npm run lint`          | oxlint, with type-aware rules                         |
-| `npm run format`        | prettier (markdown is deliberately out of scope)      |
-| `npm run test:watch`    | Vitest in watch mode                                  |
-| `npm run test:coverage` | Coverage report                                       |
-| `npm run build`         | Compile the server to `dist/` and the UIs to `dist/public/` |
-| `npm run doctor`        | Verify ffmpeg and audio device prerequisites          |
-| `npm run sounds`        | Regenerate the audio cue WAVs                         |
-| `npm run release`       | Build the arm64 device tarball (Docker)               |
-| `npm run release:smoke` | Install and boot that tarball in an arm64 container   |
-| `npm run release:image` | Build a flashable SD card image (Linux + root)        |
-
-### Where things live
-
-```
-src/core/        pure domain logic — button interpreter, LED animator, state, network supervisor
-src/hal/         everything physical, behind one interface: GPIO, simulator, mock
-src/audio/       ffmpeg pipeline, cues, the unread queue, the 48h purge
-src/whatsapp/    Baileys client and the contact whitelist
-src/config/      Zod schema and the atomic config manager
-src/server/      Express routes, admin auth, the bridge link, the captive portal
-src/net/         reads what the root network agent publishes
-src/processes/   the two daemons
-public/          the four browser UIs, on a shared design system — outside src/, built by Vite
-deploy/          systemd units, the installer, the root network agent, the debugging kit
-```
-
-[`docs/architecture.md`](./docs/architecture.md) explains why it is split that way, and which
-rules are load-bearing.
+There is no root `package.json` — every npm command runs from `box/software/`.
+[`box/software/README.md`](./box/software/README.md) is the full development guide: the gate, the
+simulator's event injector, the tests, every script, and where things live.
 
 ## Documentation
 
 | Document                                                   | What it is                                                       |
 | ---------------------------------------------------------- | ---------------------------------------------------------------- |
+| [`box/software/README.md`](./box/software/README.md)       | Development: the gate, the simulator, the tests, every script     |
+| [`box/hardware/README.md`](./box/hardware/README.md)       | What belongs in the hardware folder, and the enclosure's constraints |
+| [`website/README.md`](./website/README.md)                 | What the site will be, and the one rule to keep it decoupled      |
 | [`docs/PRODUCT.md`](./docs/PRODUCT.md)                     | The behavioural specification. `§` citations in the source point here |
 | [`docs/architecture.md`](./docs/architecture.md)           | How the software is put together, and the decisions behind it    |
 | [`docs/hardware.md`](./docs/hardware.md)                   | Bill of materials, wiring, GPIO pins, the enclosure              |

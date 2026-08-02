@@ -68,7 +68,7 @@ room stops matching the picture of it.
 | Buttons   | `GPIO17`, `GPIO27`, `GPIO22` | in       | Switch to ground; the line idles HIGH and reads LOW when pressed |
 | LED drive | `GPIO23`, `GPIO24`, `GPIO25` | out      | Into the ULN2003 inputs. The chip sinks current, so a HIGH input lights the lamp |
 
-The assignments are exported as `GPIO_PINS` in [`src/hal/gpioDriver.ts`](../src/hal/gpioDriver.ts).
+The assignments are exported as `GPIO_PINS` in [`src/hal/gpioDriver.ts`](../box/software/src/hal/gpioDriver.ts).
 They avoid the I2C, SPI and UART defaults so those buses stay available, and they are grouped for
 tidy ribbon wiring.
 

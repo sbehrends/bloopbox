@@ -9,6 +9,31 @@ Ordered roughly by priority within each group.
 
 ## Features
 
+### The monorepo defers two things until there is a second package
+
+The repository became a monorepo on 2026-08-02 (`box/software`, `box/hardware`, `website`, root
+`docs`). Two decisions were deliberately **not** taken, both waiting on `website/` getting a
+`package.json`. Recorded in `website/README.md` too, which is where someone starting that work will
+actually look.
+
+1. _No npm workspaces._ With one package they buy nothing, and hoisting `node_modules` to the repo
+   root moves it away from the tree `box/software/scripts/build-release.sh` assumes. When a second
+   package lands, a root `package.json` with `workspaces: ["box/software", "website"]` is worth it —
+   but **re-run `npm run release:smoke` afterwards**, because hoisting is exactly what it would
+   break, and the failure would be a device tarball missing a dependency rather than a build error.
+2. _No CI path filter._ `.github/workflows/ci.yml` runs the box's full gate, including the emulated
+   arm64 tarball build, on every push. A website-only change should not spend ten minutes on that.
+   Both jobs are `working-directory`'d into `box/software` already, so the filter is the only
+   missing piece — the catch is that a `paths:` filter on a required status check makes the check
+   never report at all on a filtered push, which blocks merges rather than speeding them up. The
+   usual answer is a path-filter job that other jobs `needs:`, not `on.push.paths`.
+
+Worth knowing about the layout itself, since it is easy to undo by accident: `scripts/`, `deploy/`,
+`packaging/` and `.dockerignore` must stay in `box/software/` **together**, because every release
+script derives its root from its own location rather than from git. And `.githooks/` must stay at the
+**repo root**, because `core.hooksPath` resolves relative paths against the top of the working tree —
+a hook under `box/software/` is never found.
+
 ### AP hotspot / captive portal for onboarding
 
 **Problem.** `PRODUCT.md` §3 (First Boot) has the device come up as an access point serving a captive

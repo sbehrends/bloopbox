@@ -53,6 +53,19 @@ if [[ -n "${SHELL_FILES}" ]]; then
   done <<<"${SHELL_FILES}"
 fi
 
+# Relative links across the monorepo, which is the thing that actually rots here — the layout has
+# moved once already. Python stdlib only, so this costs nothing and needs no node_modules.
+MARKDOWN_FILES="$(printf '%s\n' "${STAGED}" | { grep -E '\.md$' || true; })"
+if [[ -n "${MARKDOWN_FILES}" && -x .github/scripts/check-doc-links.py ]]; then
+  echo "pre-commit: checking doc links"
+  # Every tracked file, not just the staged ones: moving or renaming a document breaks links in
+  # files this commit does not touch, and those are exactly the ones nobody thinks to check.
+  .github/scripts/check-doc-links.py >/dev/null || {
+    .github/scripts/check-doc-links.py || true
+    fail "broken relative links in markdown"
+  }
+fi
+
 # Everything below is the box software's gate, so it runs from there. A subshell rather than
 # a bare `cd`, so nothing after this block can inherit the wrong directory.
 #

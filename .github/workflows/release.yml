@@ -17,6 +17,11 @@ concurrency:
 jobs:
   # The same gate as every push. A tag that cannot pass it must not become a release.
   # gate_only, because the packaging job below is this workflow's own.
+  #
+  # Deliberately NOT path-filtered, unlike ci.yml's own triggers: a tag has to rebuild and revalidate
+  # everything regardless of what its diff touched. `gate_only: true` is also what tells ci.yml's
+  # `changes` job to stop filtering — see the fail-safe there. Do not "optimize" this by adding a
+  # filter, or a release will eventually ship an artefact nothing validated.
   check:
     uses: ./.github/workflows/ci.yml
     with:

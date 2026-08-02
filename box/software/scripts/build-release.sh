@@ -83,10 +83,20 @@ echo
 
 mkdir -p "${OUTPUT_DIR}"
 
+# Extra buildx flags from the environment. CI sets it to `--cache-from/--cache-to type=gha`, which
+# turns the expensive layer (npm ci plus compiling opengpio, under QEMU) into a cache hit whenever
+# package-lock.json has not changed. Unset by default, so a local build is byte-identical to before.
+#
+# Unquoted and word-split deliberately — each flag has to become its own argv entry, and an empty
+# value has to vanish rather than become an empty argument. Not an array: `"${arr[@]}"` on an empty
+# array under `set -u` is an unbound-variable error on bash 3.2, which is what macOS ships as
+# /bin/bash, so that spelling would break the release build for anyone without a newer bash.
+# shellcheck disable=SC2086
 docker buildx build \
   --file packaging/Dockerfile.release \
   --platform "${PLATFORM}" \
   --target artifact \
+  ${BUILDX_EXTRA_ARGS:-} \
   --build-arg "NODE_IMAGE=${NODE_IMAGE}" \
   --build-arg "BUILD_PACKAGES=${BUILD_PACKAGES}" \
   --build-arg "APP_VERSION=${APP_VERSION}" \

@@ -239,6 +239,30 @@ const buttonTimingsSchema = buttonTimingsShape
     path: ['debounceMs'],
   });
 
+/**
+ * How the device behaves as a WhatsApp participant, as opposed to as a device.
+ *
+ * `prefault({})` for the same reason as the timings above: devices already have a config.json
+ * written before this section existed, and a required section would fail validation and reset
+ * a parent's contacts.
+ */
+const whatsappShape = z.object({
+  /**
+   * Send a read receipt when the child plays a message.
+   *
+   * On by default: the two ticks turning blue is how the person who recorded it learns their
+   * message landed, and on a device with no screen there is nothing else to tell them. It is
+   * optional because it also reports *when* a small child is at the box, which some parents
+   * will reasonably not want to broadcast — and because a grandparent watching for blue ticks
+   * that never come is its own kind of unhappiness.
+   *
+   * Off does not queue receipts for later. Nothing is sent, ever, for those messages.
+   */
+  markPlayedAsRead: z.boolean().default(true),
+});
+
+const whatsappSchema = whatsappShape.prefault({});
+
 export const configSchema = z.object({
   version: z.literal(1),
   system: systemSchema,
@@ -251,6 +275,7 @@ export const configSchema = z.object({
   audio: audioSchema,
   quietHours: quietHoursSchema,
   buttons: buttonTimingsSchema,
+  whatsapp: whatsappSchema,
 });
 
 export type DeviceConfig = z.infer<typeof configSchema>;
@@ -258,6 +283,7 @@ export type ContactConfig = z.infer<typeof contactSchema>;
 export type AudioConfig = z.infer<typeof audioSchema>;
 export type QuietHoursConfig = z.infer<typeof quietHoursSchema>;
 export type ButtonTimings = z.infer<typeof buttonTimingsSchema>;
+export type WhatsAppConfig = z.infer<typeof whatsappSchema>;
 
 /** The shipped timings, derived from the schema so they cannot drift out of step. */
 export const DEFAULT_BUTTON_TIMINGS: ButtonTimings = buttonTimingsSchema.parse(undefined);
@@ -293,6 +319,7 @@ export const configUpdateSchema = z
     audio: audioShape.partial(),
     quietHours: quietHoursSchema.partial(),
     buttons: buttonTimingsShape.partial(),
+    whatsapp: whatsappShape.partial(),
   })
   .partial();
 

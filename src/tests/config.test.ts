@@ -324,6 +324,35 @@ describe('schema validation rules', () => {
   });
 });
 
+describe('read receipts', () => {
+  it('sends them unless a parent says otherwise', async () => {
+    // The sender has no other way to learn a child heard them, so the default is on.
+    const config = await validConfig();
+    expect(config.whatsapp.markPlayedAsRead).toBe(true);
+  });
+
+  it('fills the section in for a config written before it existed', async () => {
+    const legacy: Record<string, unknown> = { ...(await validConfig()) };
+    delete legacy['whatsapp'];
+
+    const result = configSchema.safeParse(legacy);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.whatsapp.markPlayedAsRead).toBe(true);
+    // The parent's own settings must survive the migration, not reset to defaults.
+    expect(result.data?.contacts.button1.name).toBe('Mom');
+  });
+
+  it('takes the setting off', async () => {
+    const config = { ...(await validConfig()), whatsapp: { markPlayedAsRead: false } };
+
+    const result = configSchema.safeParse(config);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.whatsapp.markPlayedAsRead).toBe(false);
+  });
+});
+
 describe('button timings', () => {
   it('ships the tuned defaults in config.default.json', async () => {
     const config = await validConfig();

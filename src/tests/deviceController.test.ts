@@ -30,6 +30,7 @@ let hal: MockHal;
 let config: ConfigManager;
 let controller: DeviceController;
 let sent: OutboundRequest[];
+let marked: { index: number; messageIds: string[] }[];
 let sendResult: 'ok' | 'fail';
 
 async function buildConfig(): Promise<DeviceConfig> {
@@ -69,6 +70,7 @@ beforeEach(async () => {
   await hal.init();
 
   sent = [];
+  marked = [];
   sendResult = 'ok';
   controller = new DeviceController({
     hal,
@@ -77,6 +79,9 @@ beforeEach(async () => {
       if (sendResult === 'fail') return Promise.reject(new Error('bridge offline'));
       sent.push(request);
       return Promise.resolve();
+    },
+    markRead: (index, messageIds) => {
+      marked.push({ index, messageIds: [...messageIds] });
     },
   });
   controller.setStatus(DeviceStatus.Ready);
@@ -304,6 +309,44 @@ describe('receiving', () => {
 
     // WhatsApp redelivers ids on its own; a second chime announces nothing.
     expect(hal.playSequence()).toHaveLength(cuesAfterFirst);
+  });
+
+  it('tells the sender their message was heard', async () => {
+    controller.handleIncoming(1, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+
+    await press(1, 300);
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => marked.length > 0, 'the read receipt');
+
+    expect(marked).toEqual([{ index: 1, messageIds: ['m1'] }]);
+  });
+
+  it('stays quiet about it when a parent turns receipts off', async () => {
+    /*
+     * The receipt reports when a small child was at the box, which is a parent's call. Playing
+     * must not depend on it: the note is still heard, still cleared and still deleted — only
+     * the upstream half is withheld, and it is withheld rather than deferred.
+     */
+    await config.update({ whatsapp: { markPlayedAsRead: false } });
+
+    controller.handleIncoming(1, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+
+    await press(1, 300);
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => controller.state.unreadCount(1) === 0, 'the queue to drain');
+
+    expect(marked).toEqual([]);
+    expect(hal.playSequence()).toContain('/tmp/m1.ogg');
   });
 
   it('plays the queue on a tap and clears the light when it drains', async () => {

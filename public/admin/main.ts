@@ -47,6 +47,7 @@ type ConfigView = {
     resumeGraceMs: number;
     silentComboMs: number;
   };
+  whatsapp: { markPlayedAsRead: boolean };
 };
 
 type StatusView = {
@@ -324,6 +325,28 @@ function renderQuietHours(config: ConfigView, onSave: SaveFn): HTMLElement {
           endTime: end.value,
         },
       }),
+    ),
+  );
+
+  return section;
+}
+
+function renderReadReceipts(config: ConfigView, onSave: SaveFn): HTMLElement {
+  const section = card('Read receipts');
+
+  const markRead = checkbox(config.whatsapp.markPlayedAsRead);
+
+  section.append(
+    element(
+      'p',
+      'field-hint',
+      'When the child plays a message, WhatsApp shows the sender two blue ticks. ' +
+        'It is the only way they learn it was heard — but it also tells them when ' +
+        'the child was at the box.',
+    ),
+    checkboxField('Mark messages as read once played', markRead),
+    saveButton('Save read receipts', () =>
+      onSave({ whatsapp: { markPlayedAsRead: markRead.checked } }),
     ),
   );
 
@@ -738,6 +761,7 @@ async function main(): Promise<void> {
       renderAudio(config, onSave),
       renderButtonTimings(config, onSave),
       renderQuietHours(config, onSave),
+      renderReadReceipts(config, onSave),
       renderWifi(config, onSave),
     );
   }

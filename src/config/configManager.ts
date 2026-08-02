@@ -226,6 +226,7 @@ export type ConfigPatch = {
   readonly audio?: PatchSection<DeviceConfig['audio']> | undefined;
   readonly quietHours?: PatchSection<DeviceConfig['quietHours']> | undefined;
   readonly buttons?: PatchSection<ButtonTimings> | undefined;
+  readonly whatsapp?: PatchSection<DeviceConfig['whatsapp']> | undefined;
 };
 
 /** Falls back to `base` when the patch omits a field *or* sets it to undefined. */
@@ -283,6 +284,9 @@ export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfi
       endTime: pick(patch.quietHours?.endTime, base.quietHours.endTime),
     },
     buttons: mergeButtons(patch.buttons, base.buttons),
+    whatsapp: {
+      markPlayedAsRead: pick(patch.whatsapp?.markPlayedAsRead, base.whatsapp.markPlayedAsRead),
+    },
   };
 }
 

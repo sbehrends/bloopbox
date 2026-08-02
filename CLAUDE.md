@@ -451,6 +451,15 @@ _without_ parsing it, so `{}` comes back empty and every timing ends up `undefin
 `prefault` for any future section, and cover the migration with a test (see
 `src/tests/config.test.ts`).
 
+A section is wired up in **four** places, and missing the last one fails silently. Beyond
+`configSchema` and `configUpdateSchema`, both `ConfigPatch` and `mergeConfig` in
+`configManager.ts` name every section explicitly — deliberately, since a mapped type cannot
+express that `contacts` is patchable two levels deep while `version` is not patchable at all.
+Forget `mergeConfig` and `PUT /api/config` validates the patch, answers `200`, restarts the
+daemon, and discards the change. `whatsapp.markPlayedAsRead` shipped that way for ten minutes;
+the test that caught it asserted on behaviour rather than on the response, which is the reason it
+caught it.
+
 Button 1 + Button 3 held together for 3 s toggles silent mode. Both presses are swallowed the
 instant the chord forms, so a child mashing the outer buttons can never send two voice notes; if
 the chord is released early, nothing at all happens.

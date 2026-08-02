@@ -43,5 +43,8 @@
     "minRecordingMs": 500,
     "resumeGraceMs": 400,
     "silentComboMs": 3000
+  },
+  "whatsapp": {
+    "markPlayedAsRead": true
   }
 }

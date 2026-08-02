@@ -267,7 +267,14 @@ export class DeviceController {
       // Spec §1: the light goes out once the queue finishes.
       this.state.clearUnread(index);
       this.state.setPlaying(null);
-      this.#markRead?.(index, messageIds);
+      /*
+       * The receipt is the only way the sender learns a child heard them, and a parent can
+       * turn it off — playing a message should never depend on whether we are willing to
+       * report it, so the local half above happens either way.
+       */
+      if (this.#config.current.whatsapp.markPlayedAsRead) {
+        this.#markRead?.(index, messageIds);
+      }
       void this.#deletePlayed(messageIds, index);
     });
 

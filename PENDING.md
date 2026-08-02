@@ -21,12 +21,17 @@ actually look.
    package lands, a root `package.json` with `workspaces: ["box/software", "website"]` is worth it —
    but **re-run `npm run release:smoke` afterwards**, because hoisting is exactly what it would
    break, and the failure would be a device tarball missing a dependency rather than a build error.
-2. _No CI path filter._ `.github/workflows/ci.yml` runs the box's full gate, including the emulated
-   arm64 tarball build, on every push. A website-only change should not spend ten minutes on that.
-   Both jobs are `working-directory`'d into `box/software` already, so the filter is the only
-   missing piece — the catch is that a `paths:` filter on a required status check makes the check
-   never report at all on a filtered push, which blocks merges rather than speeding them up. The
-   usual answer is a path-filter job that other jobs `needs:`, not `on.push.paths`.
+2. ~~_No CI path filter._~~ **Done** on 2026-08-02: a `changes` job gates `box-gate`,
+   `box-package` and `docs-links`, and the aggregating `ci` job is what branch protection must
+   require — a job skipped by `if:` passes, whereas `on: push: paths:` would make a required check
+   never report and block the PR forever. Two things about it are **not yet proven on a real
+   runner**: the `type=gha` Docker layer cache passed through `BUILDX_EXTRA_ARGS` (a cache miss is
+   not an error, and the env block in `ci.yml` is deletable if it misbehaves), and the
+   `dorny/paths-filter` outputs themselves — the fail-safe reads an empty output as "run
+   everything", so the failure mode is a slow pipeline rather than a skipped gate.
+
+   **Branch protection still has to be repointed** at the `ci` check by hand; until that happens the
+   old required checks (`check`, `package`) no longer exist under those names.
 
 Worth knowing about the layout itself, since it is easy to undo by accident: `scripts/`, `deploy/`,
 `packaging/` and `.dockerignore` must stay in `box/software/` **together**, because every release

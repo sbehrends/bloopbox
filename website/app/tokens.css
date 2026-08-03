@@ -1,0 +1,160 @@
+/* bloopbox design tokens, for the website.
+
+   A DELIBERATE COPY of box/software/public/shared/tokens.css, not an import. The two share a
+   brand, not a build (see website/README.md): the box's stylesheet is served off a Pi Zero over
+   its own hotspot, and coupling a marketing tweak to the setup page a parent needs at 3am is
+   the one thing that must not happen here.
+
+   `docs/BRAND.md` is the prose, and it governs both. When a colour or a decision changes there,
+   it changes in two files — that is the accepted cost of the split.
+
+   This is the only file on the site allowed to contain a colour literal. Everything else
+   references the semantic layer: `var(--accent)`, never `var(--brand-teal)`. */
+
+:root {
+  /* ---- 1. brand palette — identical to the box, and it must stay identical ---- */
+  --brand-teal: #00a7e1; /* main accent — energetic, modern connection */
+  --brand-yellow: #f7b733; /* secondary — joy, warmth, classic arcade cue */
+  --brand-coral: #ff6f61; /* tertiary — fun, approachability */
+  --brand-navy: #1a2b48; /* primary text — trusted, stable */
+  --brand-cream: #f7f4ef; /* base — soft on the eyes, never stark white */
+
+  /* ---- 2. semantic, light (default) ---- */
+  --bg: var(--brand-cream);
+  --surface: #fffdfa;
+  --surface-sunken: #f0ebe1;
+  --border: #e0d9cb;
+  --border-strong: #c9bfab;
+  --text: var(--brand-navy);
+  --muted: #5b6b84;
+  --accent: var(--brand-teal);
+  /* Teal is 2.5:1 on cream and cannot carry text. Same hue, darkened until it passes AA. */
+  --accent-ink: #0a6e8f;
+  --accent-soft: #dff1fa;
+  --accent-deep: #0284b4;
+  /* Navy on teal is 4.6:1; white on teal is 2.9:1 and fails. Hence navy. */
+  --on-accent: var(--brand-navy);
+  --warm: var(--brand-yellow);
+  --pop: var(--brand-coral);
+  --danger: #b03a31;
+  --focus: var(--brand-teal);
+  --shadow: 0 1px 2px rgb(26 43 72 / 6%), 0 10px 24px -14px rgb(26 43 72 / 22%);
+  --shadow-lift: 0 2px 4px rgb(26 43 72 / 6%), 0 28px 60px -32px rgb(26 43 72 / 38%);
+
+  /* ---- 3. button channels ---- */
+  /* Button 1 left, 2 centre, 3 right — the order they run in the logo mark, so the site, the
+     simulator and the caps on the enclosure agree. Reordering means redrawing both SVGs. */
+  --ch-1: var(--brand-yellow);
+  --ch-2: var(--brand-coral);
+  --ch-3: var(--brand-teal);
+
+  /* ---- the physical device, as the hero draws it ---- */
+  /* Outside every theme block, exactly as on the box: an object in a child's room does not
+     change colour because a visitor's laptop is in dark mode. */
+  --device-body: #e6dac3;
+  --device-body-top: #d8c6a5;
+  --device-edge: #12203a;
+  --device-ink: #1a2b48;
+  /* An unlit lens: the channel colour dulled toward warm grey, the way a translucent cap looks
+     with the lamp off. Same order as the channels. */
+  --ch-1-off: #c4b58c;
+  --ch-2-off: #c39b93;
+  --ch-3-off: #8fa9b4;
+
+  /* ---- night: the site's one addition to the box's palette ---- */
+  /* The mark's ring interiors are opaque cream, so on navy the whole bubble lights up. Two
+     places take that literally and run on navy in both themes: the section about the three
+     buttons, where the channel colours finally read as lamps rather than as swatches, and the
+     footer — which is also what lets the wordmark sit there in amber, 10.8:1, where on cream it
+     would be 1.6:1. */
+  --night: #101a30;
+  --night-raised: #1a2740;
+  --night-border: #2c3b5b;
+  --night-text: #f4f1ea;
+  --night-muted: #9db0d0;
+
+  /* ---- type ---- */
+  /* The box refuses a webfont because it serves pages off a Pi over its own hotspot. The site
+     has no such constraint, so it ships the face the brand actually asks for — a chunky rounded
+     geometric sans — self-hosted by next/font, with the box's exact fallback stack behind it so
+     the two look like the same object while the font loads. */
+  --font-display:
+    var(--font-nunito), ui-rounded, 'SF Pro Rounded', 'Nunito', 'Quicksand', 'Varela Round',
+    'Hiragino Maru Gothic ProN', system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', monospace;
+
+  --text-xs: 0.78rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  /* The site pushes the display scale past the box's 2.25rem: a hero has room a Pi-served
+     admin panel does not. Fluid, so the headline never wraps mid-word on a phone. */
+  --text-display: clamp(2.25rem, 1.2rem + 4.6vw, 4.25rem);
+  --text-section: clamp(1.75rem, 1.2rem + 2.2vw, 2.75rem);
+
+  --weight-body: 400;
+  --weight-medium: 600;
+  --weight-display: 800;
+  --tracking-display: -0.02em;
+  --tracking-wordmark: -0.035em;
+  --tracking-label: 0.08em;
+
+  /* ---- space, shape, motion ---- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-24: 6rem;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  /* One parent, standing up, holding a child. Nothing tappable goes below this. */
+  --tap: 3rem;
+
+  --measure: 34rem;
+  --page: 74rem;
+
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+/* Dark: the same brand after dark, not a second brand. Only the semantic layer moves — all
+   three accents keep their exact hex, because they are bright enough on deep navy. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131a2c;
+    --surface: #1c2438;
+    --surface-sunken: #101627;
+    --border: #2e3852;
+    --border-strong: #45516f;
+    --text: #f1eee7;
+    --muted: #99a6c0;
+    --accent-ink: #4fc8f0;
+    --accent-soft: #1a3145;
+    --danger: #ff9b92;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 10px 24px -14px rgb(0 0 0 / 60%);
+    --shadow-lift: 0 2px 4px rgb(0 0 0 / 40%), 0 28px 60px -32px rgb(0 0 0 / 80%);
+    --night: #0c1424;
+    --night-raised: #16213a;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+  }
+}

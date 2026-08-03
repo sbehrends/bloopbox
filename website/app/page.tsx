@@ -1,0 +1,337 @@
+import { DeviceDemo } from '@/components/DeviceDemo'
+import { Lockup } from '@/components/Lockup'
+import { channels, links } from '@/lib/site'
+
+import styles from './page.module.css'
+
+/** Off-the-shelf, and the same table as the repository's — one bill of materials, two places
+ *  it is read. */
+const PARTS = [
+  ['Brain', 'Raspberry Pi Zero 2 W'],
+  ['Buttons', '3 × 60 mm illuminated arcade buttons'],
+  ['Lamp driver', 'ULN2003 — 3.3 V GPIO up to 5 V lamps'],
+  ['Audio', 'A USB speakerphone, or a USB soundcard and mic'],
+  ['Power', '5 V 2.5 A micro-USB — no battery, no power button'],
+  ['Card', '8 GB microSD, flashed from the repository'],
+] as const
+
+/** Who a button can be. The order is the order of the caps on the enclosure and of the rings in
+ *  the mark: yellow, coral, teal — so the swatch on each card means "which button", which is the
+ *  only thing a channel colour is ever allowed to mean. */
+const WHO = [
+  {
+    channel: 1,
+    title: 'A person',
+    body: 'A phone number, and that is the whole setup. Anyone with WhatsApp, anywhere in the world. Nothing for them to install, nothing to sign up for, nothing to remember.',
+  },
+  {
+    channel: 2,
+    title: 'Or a whole family',
+    body: 'Point a button at a group chat and everyone in it can send, and everyone hears what the child sends back. That is how “the cousins” fit behind one button.',
+  },
+  {
+    channel: 3,
+    title: 'And nobody else',
+    body: 'Only the three you assign can reach the box. Unknown numbers, groups nobody chose, broadcasts — dropped before a single second of audio is downloaded.',
+  },
+] as const
+
+export default function Home() {
+  return (
+    <>
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+
+      <header className={styles.header}>
+        <div className={`wrap ${styles.headerInner}`}>
+          <Lockup />
+          <nav className={styles.nav} aria-label="Sections">
+            <a href="#people">Three people</a>
+            <a href="#how">How it works</a>
+            <a href="#parents">For parents</a>
+            <a href="#build">Build one</a>
+          </nav>
+          <a className={`btn btn-secondary ${styles.headerCta}`} href={links.repo}>
+            GitHub
+          </a>
+        </div>
+      </header>
+
+      <main id="main">
+        {/* ---- hero ---- */}
+        <section className={`wrap ${styles.hero}`}>
+          <div className={styles.heroCopy}>
+            <p className={styles.kicker}>
+              <span className={styles.kickerDots} aria-hidden="true">
+                {channels.map((channel) => (
+                  <span key={channel.n} style={{ background: `var(--${channel.token})` }} />
+                ))}
+              </span>
+              A WhatsApp voice messenger for the little ones
+            </p>
+
+            <h1>Screenless connection for little humans.</h1>
+
+            <p className={`lede ${styles.heroLede}`}>
+              Three illuminated buttons, and one loved one behind each. Hold a button to send
+              a voice note; tap it when it lights up to hear what came back. No screen, no menus, no
+              reading — this is a thing a two-year-old can use on their own.
+            </p>
+
+            <div className={styles.ctas}>
+              <a className="btn btn-primary" href={links.build}>
+                Build one yourself
+              </a>
+              <a className="btn btn-secondary" href={links.releases}>
+                Download the software
+              </a>
+            </div>
+
+            <p className={styles.fineprint}>
+              Open source, and free. Off-the-shelf parts and a Raspberry Pi.
+            </p>
+          </div>
+
+          <div className={styles.heroDevice}>
+            <DeviceDemo />
+            <p className={styles.tryIt}>
+              Go on — hold a button for a moment, then let go. This is the real timing.
+            </p>
+          </div>
+        </section>
+
+        {/* ---- why ---- */}
+        <section className={`wrap ${styles.section}`}>
+          <p className="eyebrow">Why a box</p>
+          <div className={styles.split}>
+            <h2>
+              A two-year-old can’t work a phone.
+              <br />
+              They can work a button.
+            </h2>
+            <p className="lede">
+              A video call needs an adult to place it, a screen to hold, and a small person willing
+              to stay in front of it. A voice note needs none of that. It can be sent the moment a
+              two-year-old thinks of something, and heard the moment a light comes on — no calendars,
+              no time zones, and nobody standing in the middle of it.
+            </p>
+          </div>
+
+          <div className={styles.cards}>
+            <article className="card">
+              <h3>Theirs, not yours</h3>
+              <p>
+                No handing over a phone. No apps, no feed, no camera, no notifications from anywhere
+                else. The box does one thing, so there is nothing to get lost in and nothing to
+                close.
+              </p>
+            </article>
+            <article className="card">
+              <h3>Colour is the address</h3>
+              <p>
+                They can’t read a name, but they know yellow is Mum. Three colours and three lamps
+                is the whole interface, and it fits in a two-year-old’s head on the first day.
+              </p>
+            </article>
+            <article className="card">
+              <h3>Ordinary WhatsApp at the far end</h3>
+              <p>
+                The box is a linked device on an account you already have. Notes arrive in Grandma’s
+                normal chat, on her normal phone. She installs nothing and learns nothing.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        {/* ---- one person per button: the page's one dark band ---- */}
+        <section id="people" className={styles.night}>
+          <div className="wrap">
+            <p className={`eyebrow ${styles.nightEyebrow}`}>One button, one person</p>
+            <div className={styles.split}>
+              <h2>Every button is somebody.</h2>
+              <p className="lede">
+                You decide who lives behind each colour: Mum on the yellow one, Dad on the coral
+                one, Grandma on the blue. The child never picks from a list or says a name to a
+                machine — they press the person they want. And when that person answers, their
+                colour is the thing that lights up across the room.
+              </p>
+            </div>
+
+            <div className={styles.cards}>
+              {WHO.map((entry) => (
+                <article className={`card ${styles.whoCard}`} key={entry.title}>
+                  <span
+                    className={styles.swatch}
+                    style={{ '--cap': `var(--ch-${entry.channel})` } as React.CSSProperties}
+                    aria-hidden="true"
+                  />
+                  <h3>{entry.title}</h3>
+                  <p>{entry.body}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ---- how ---- */}
+        <section id="how" className={`wrap ${styles.section}`}>
+          <p className="eyebrow">How it works</p>
+          <h2 className={styles.sectionTitle}>Two gestures, in this order.</h2>
+
+          {/* Numbered because it genuinely is a sequence: press, release, reply. */}
+          <ol className={styles.steps}>
+            <li className={styles.step}>
+              <span className={styles.stepNumber}>01</span>
+              <h3>Hold, and talk</h3>
+              <p>
+                The lamp goes solid the instant they press, so the box has answered before they have
+                finished pressing. A grip that slips costs nothing: press again within a moment and
+                the same message carries on.
+              </p>
+            </li>
+            <li className={styles.step}>
+              <span className={styles.stepNumber}>02</span>
+              <h3>Let go</h3>
+              <p>
+                A whoosh, three quick flashes, and it is gone — a voice note in the chat, capped at
+                thirty seconds. A brush past the box, under a sixth of a second, is ignored
+                entirely.
+              </p>
+            </li>
+            <li className={styles.step}>
+              <span className={styles.stepNumber}>03</span>
+              <h3>Tap what’s blinking</h3>
+              <p>
+                A reply lights that person’s button. One tap plays everything they sent, oldest
+                first, and the lamp goes dark when the last one finishes.
+              </p>
+            </li>
+          </ol>
+        </section>
+
+        {/* ---- for parents ---- */}
+        <section id="parents" className={`wrap ${styles.section}`}>
+          <p className="eyebrow">For the adult who sets it up</p>
+          <h2 className={styles.sectionTitle}>Built for a child’s room.</h2>
+
+          <div className={styles.cards}>
+            <article className="card">
+              <h3>No screen, ever</h3>
+              <p>
+                Nothing to swipe, nothing to watch, no camera and no way out of it. The single thing
+                this object can do is talk to three people you chose.
+              </p>
+            </article>
+            <article className="card">
+              <h3>Nothing is kept</h3>
+              <p>
+                Recordings live in memory, never on the card. A played note is deleted the moment it
+                finishes; one nobody plays expires after 48 hours.
+              </p>
+            </article>
+            <article className="card">
+              <h3>You set the ceiling</h3>
+              <p>
+                A hard volume cap sits above whatever the volume is set to, and clamps everything.
+                This thing lives next to a small child’s ears.
+              </p>
+            </article>
+            <article className="card">
+              <h3>It goes quiet at night</h3>
+              <p>
+                Quiet hours run 20:00 to 07:00 by default, and holding the outer two buttons for
+                three seconds silences the cues on the spot. Playback still works — a child who taps
+                a light expects to hear something.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        {/* ---- build ---- */}
+        <section id="build" className={`wrap ${styles.section}`}>
+          <p className="eyebrow">Build one</p>
+          <div className={styles.split}>
+            <h2>Six parts, all off the shelf.</h2>
+            <p className="lede">
+              Everything is in the repository: the wiring diagram, the enclosure layout, an
+              installer, and a card image you can flash and boot. The Pi compiles nothing — the
+              release carries its own runtime.
+            </p>
+          </div>
+
+          <div className={styles.buildGrid}>
+            <div className={styles.parts}>
+              <h3 className={styles.subhead}>What you need</h3>
+              <dl className={styles.partsList}>
+                {PARTS.map(([role, part]) => (
+                  <div className={styles.part} key={role}>
+                    <dt>{role}</dt>
+                    <dd>{part}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+
+            <div className={styles.setup}>
+              <h3 className={styles.subhead}>Then, once</h3>
+              <ol className={styles.setupList}>
+                <li>
+                  Build the card image and flash it.
+                  <code className={styles.code}>sudo ./scripts/build-sd-image.sh</code>
+                </li>
+                <li>
+                  Power up. It joins your Wi-Fi — or raises its own, so you can tell it yours from a
+                  phone.
+                </li>
+                <li>Link WhatsApp: scan the QR, or type an eight-character pairing code.</li>
+                <li>
+                  Give each button a person: a phone number, or a family group chat. Save, and the
+                  lamps go dark.
+                </li>
+              </ol>
+              <p className={styles.setupNote}>
+                Dark means ready. From here the child never needs an adult again, and you never need
+                the settings page unless someone changes their number.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ---- closing ---- */}
+        <section className={`wrap ${styles.closing}`}>
+          <h2 className={styles.closingTitle}>Three buttons. Three people who love them.</h2>
+          <p className={styles.closingLede}>
+            The wiring, the enclosure, the daemons and the installer are all in the open. Take them
+            and build one.
+          </p>
+          <div className={styles.ctas}>
+            <a className="btn btn-primary" href={links.build}>
+              Build one yourself
+            </a>
+            <a className="btn btn-secondary" href={links.releases}>
+              Download the software
+            </a>
+          </div>
+        </section>
+      </main>
+
+      <footer className={styles.footer}>
+        <div className={`wrap ${styles.footerInner}`}>
+          <div>
+            <Lockup size="hero" />
+            <p className={styles.footerTag}>
+              A screenless WhatsApp voice messenger for children aged 2–5.
+            </p>
+          </div>
+          <nav className={styles.footerNav} aria-label="Elsewhere">
+            <a href={links.repo}>Source on GitHub</a>
+            <a href={links.releases}>Releases</a>
+            <a href={links.hardware}>Wiring and parts</a>
+            <a href={links.product}>What it does, precisely</a>
+          </nav>
+        </div>
+      </footer>
+    </>
+  )
+}

@@ -1,0 +1,185 @@
+.stage {
+  display: grid;
+  gap: var(--space-5);
+  justify-items: center;
+}
+
+/* The enclosure. It keeps its own colours in both themes: an object in a child's room does not
+   repaint itself because a visitor's laptop is in dark mode (BRAND.md). */
+.device {
+  inline-size: 100%;
+  max-inline-size: 30rem;
+  padding: clamp(1.1rem, 3.5vw, 2rem);
+  padding-block-end: clamp(1.4rem, 4vw, 2.25rem);
+  border: 3px solid var(--device-edge);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, var(--device-body-top), var(--device-body) 42%);
+  box-shadow:
+    0 14px 0 var(--device-edge),
+    var(--shadow-lift);
+}
+
+.grille {
+  block-size: 1.5rem;
+  inline-size: 4.5rem;
+  margin-block-end: clamp(1rem, 3vw, 1.75rem);
+  opacity: 0.4;
+  background-image: radial-gradient(circle, var(--device-ink) 1.5px, transparent 1.6px);
+  background-size: 9px 9px;
+}
+
+.caps {
+  display: flex;
+  justify-content: center;
+  gap: clamp(0.6rem, 3.5vw, 1.6rem);
+}
+
+.slot {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+}
+
+/* One arcade button: a navy-edged cap with real travel, and a lens that lights from behind. */
+.cap {
+  --size: clamp(4.25rem, 17vw, 6.5rem);
+
+  position: relative;
+  inline-size: var(--size);
+  block-size: var(--size);
+  padding: 0;
+  border: 3px solid var(--device-edge);
+  border-radius: 50%;
+  background: var(--cap-off);
+  cursor: pointer;
+  touch-action: none; /* A hold must not become a scroll on a phone. */
+  box-shadow:
+    0 7px 0 var(--device-edge),
+    inset 0 -8px 14px rgb(18 32 58 / 22%),
+    inset 0 9px 16px rgb(255 255 255 / 45%);
+  transition:
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.cap:active,
+.cap[data-state='recording'] {
+  transform: translateY(6px);
+  box-shadow:
+    0 1px 0 var(--device-edge),
+    inset 0 -8px 14px rgb(18 32 58 / 22%),
+    inset 0 9px 16px rgb(255 255 255 / 45%);
+}
+
+/* The lit layer. Separate from the cap so the lamp can blink without the cap moving, and so
+   the glow spills past the enclosure the way a real translucent cap does. */
+.lens {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--cap) 55%, #fff), var(--cap) 72%);
+  box-shadow:
+    0 0 26px 6px color-mix(in srgb, var(--cap) 55%, transparent),
+    inset 0 9px 16px rgb(255 255 255 / 40%);
+}
+
+/* Solid: recording, right now. */
+.cap[data-state='recording'] .lens {
+  opacity: 1;
+}
+
+/* 0.8 s on, 0.8 s off — a voice note is waiting from that person.
+   Base opacity is 1 and the animation dips it, so with reduced motion the lamp reads as lit
+   rather than dark: the lit state is the information, the blinking is only the emphasis. */
+.cap[data-state='unread'] .lens {
+  opacity: 1;
+  animation: dip 1.6s steps(1, end) infinite;
+}
+
+.cap[data-state='playing'] .lens {
+  opacity: 1;
+  animation: dip 0.7s steps(1, end) infinite;
+}
+
+/* Three quick flashes: delivered. */
+.cap[data-state='sent'] .lens {
+  opacity: 1;
+  animation: flash-three 0.9s steps(1, end) 1;
+}
+
+/* Nothing waiting. On the device this is a sound, not a light — the shake stands in for it. */
+.cap[data-state='oops'] {
+  animation: nudge 0.3s var(--ease) 2;
+}
+
+/* `steps(1, end)` holds each keyframe until the next: a lamp is on or off, never fading. */
+@keyframes dip {
+  0% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes flash-three {
+  0%,
+  22%,
+  44% {
+    opacity: 1;
+  }
+
+  11%,
+  33%,
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  25% {
+    transform: translateX(-3px);
+  }
+
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+.who {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-display);
+  color: var(--device-ink);
+  letter-spacing: 0.01em;
+}
+
+.nameplate {
+  display: block;
+  margin-block-start: clamp(1rem, 3vw, 1.6rem);
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  font-weight: 900;
+  letter-spacing: var(--tracking-wordmark);
+  color: var(--device-ink);
+  opacity: 0.5;
+}
+
+/* Reserved height, so the line changing under the device never moves the device. */
+.caption {
+  min-block-size: 3.2em;
+  max-inline-size: 26rem;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}

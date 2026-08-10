@@ -24,8 +24,9 @@
 # exactly is a good way to lose work in a hook, so it is not done.
 set -uo pipefail
 
-# Where the box software lives. One place to change if it ever moves again.
+# Where each package lives. One place to change if either ever moves again.
 SOFTWARE_DIR="box/software"
+WEBSITE_DIR="website"
 
 fail() {
   printf '\n\033[31mpre-commit: %s\033[0m\n' "$1" >&2
@@ -64,6 +65,19 @@ if [[ -n "${MARKDOWN_FILES}" && -x .github/scripts/check-doc-links.py ]]; then
     .github/scripts/check-doc-links.py || true
     fail "broken relative links in markdown"
   }
+fi
+
+# The website is its own package with its own gate. CI runs all of it (typecheck plus a full
+# static export); here it is the typecheck alone — two seconds against `next build`'s twenty,
+# and it catches what a commit actually gets wrong. Skipped when its node_modules is absent,
+# because a clone that has only installed the box should not fail on the site.
+WEBSITE_FILES="$(printf '%s\n' "${STAGED}" | { grep -E "^${WEBSITE_DIR}/" || true; })"
+if [[ -n "${WEBSITE_FILES}" && -d "${WEBSITE_DIR}/node_modules" ]]; then
+  echo "pre-commit: typechecking ${WEBSITE_DIR}"
+  (
+    cd "${WEBSITE_DIR}" || exit 1
+    npm run typecheck --silent || exit 1
+  ) || fail "typecheck failed in ${WEBSITE_DIR}"
 fi
 
 # Everything below is the box software's gate, so it runs from there. A subshell rather than

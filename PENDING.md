@@ -9,21 +9,48 @@ Ordered roughly by priority within each group.
 
 ## Features
 
-### The monorepo defers two things until there is a second package
+### The website is a first iteration, and three things are still missing
+
+The marketing site landed on 2026-08-02: `website/`, one statically exported Next.js 16 page. It is
+complete as a page — hero with an interactive device, one section per argument, and a build guide —
+but it cannot be published as it stands.
+
+Worth knowing before editing it: **the page deliberately carries no status or limitations section
+and no LED reference table.** Both were written and then cut — its job is to make a parent want one
+and click through to the repository, which is where the reference (`docs/PRODUCT.md` §6) and the
+honest list (this file) live. The line that must hold instead: **no copy on the page may imply the
+device is buyable or shipping.** Every call to action is "build one".
+
+1. **The repository URL is a placeholder.** `website/lib/site.ts` guesses
+   `github.com/sergiobehrends/bloopbox` because this repository still has no git remote. Every
+   GitHub link on the page derives from that one constant, so all of them are currently wrong.
+2. **Nothing hosts `out/`.** CI builds it and uploads it as an artifact; no host is configured, and
+   no domain is registered.
+3. **No social preview image.** `openGraph` declares a title and description but no `images`, so a
+   shared link renders as a bare text card.
+
+Smaller, and deliberate: the site has **no ESLint** (`npm run check` is `tsc --noEmit` plus a full
+export), and `npm audit` reports three high advisories that are all transitive inside Next itself
+(`postcss`, `sharp`) — the offered fix is `next@9`, so they stand until Next ships past them.
+
+### The monorepo defers one thing now that there is a second package
 
 The repository became a monorepo on 2026-08-02 (`box/software`, `box/hardware`, `website`, root
-`docs`). Two decisions were deliberately **not** taken, both waiting on `website/` getting a
-`package.json`. Recorded in `website/README.md` too, which is where someone starting that work will
-actually look.
+`docs`). Two decisions were deliberately **not** taken. `website/` now has a `package.json`, which
+was the trigger for both; one has since been done, and the first is still open **on purpose**.
+Recorded in `website/README.md` too, which is where someone starting that work will actually look.
 
-1. _No npm workspaces._ With one package they buy nothing, and hoisting `node_modules` to the repo
-   root moves it away from the tree `box/software/scripts/build-release.sh` assumes. When a second
-   package lands, a root `package.json` with `workspaces: ["box/software", "website"]` is worth it —
-   but **re-run `npm run release:smoke` afterwards**, because hoisting is exactly what it would
-   break, and the failure would be a device tarball missing a dependency rather than a build error.
+1. _No npm workspaces_, still. The trigger has arrived and the answer has not changed: hoisting
+   `node_modules` to the repo root moves it away from the tree
+   `box/software/scripts/build-release.sh` assumes, and the two packages share no dependency worth
+   deduplicating — they are not even allowed to import from each other. A root `package.json` with
+   `workspaces: ["box/software", "website"]` buys tidier installs and costs a release script;
+   if it is ever taken, **re-run `npm run release:smoke` afterwards**, because hoisting is exactly
+   what it would break, and the failure would be a device tarball missing a dependency rather than
+   a build error.
 2. ~~_No CI path filter._~~ **Done** on 2026-08-02: a `changes` job gates `box-gate`,
-   `box-package` and `docs-links`, and the aggregating `ci` job is what branch protection must
-   require — a job skipped by `if:` passes, whereas `on: push: paths:` would make a required check
+   `box-package`, `website` and `docs-links`, and the aggregating `ci` job is what branch protection
+   must require — a job skipped by `if:` passes, whereas `on: push: paths:` would make a required check
    never report and block the PR forever. Two things about it are **not yet proven on a real
    runner**: the `type=gha` Docker layer cache passed through `BUILDX_EXTRA_ARGS` (a cache miss is
    not an error, and the env block in `ci.yml` is deletable if it misbehaves), and the
@@ -213,6 +240,12 @@ late is a page a parent stares at. Revisit only with a subsetted self-hosted WOF
 weights actually used), `font-display: swap`, and a before/after measurement of the portal's first
 paint on a real phone over the hotspot — not on localhost, where the cost is invisible.
 
+**This applies to the box only.** The website (`website/`) ships Nunito, self-hosted by `next/font`,
+because it is not served off a Pi. So the two surfaces are not typographically identical on a
+non-Apple machine: the site shows the brand's letterform, the device's four UIs show the system
+face. That is the accepted consequence of the constraint, not drift — but it is the strongest
+argument yet for doing the subsetted WOFF2 work above, since the reference now exists.
+
 ### Coverage still fails its own thresholds
 
 `npm run test:coverage` reports 77% statements / 68% branches against declared thresholds of 80,
@@ -231,17 +264,24 @@ and `npm run check` does not run it. What is left, in order of size:
 - Three timeout paths in `bridgeLink.ts` (send 60s, pairing 20s, groups 10s) are deliberately
   uncovered: they need fake timers, which do not mix with real sockets.
 
-### The mark is drawn twice, and nothing enforces that they agree
+### The mark is drawn twice and copied twice more, and nothing enforces that the four agree
 
-`public/shared/bloopbox-mark.svg` (three concentric ring pairs, for 24px and up) and
-`public/shared/bloopbox-favicon.svg` (three solid discs, for browser tabs) are separate hand-drawn
-files sharing no code. They have to agree on five colours and on the left-to-right button order —
-**yellow, coral, teal** — and today the only thing keeping them in step is the comment in each and
-`/brand/`, which renders both side by side.
+`box/software/public/shared/bloopbox-mark.svg` (three concentric ring pairs, for 24px and up) and
+`bloopbox-favicon.svg` (three solid discs, for browser tabs) are separate hand-drawn files sharing
+no code. They have to agree on five colours and on the left-to-right button order — **yellow,
+coral, teal** — and today the only thing keeping them in step is the comment in each and `/brand/`,
+which renders both side by side.
+
+Since 2026-08-02 both are also **copied into `website/public/`**, along with the palette in
+`website/app/tokens.css`. The duplication is deliberate — the site and the box share a brand, not a
+build (`website/README.md`) — but it doubles the count: a colour or button-order change is now four
+files, and only the two in `box/software/` are ever seen side by side.
 
 Cheap guard if this ever drifts: a test that parses both SVGs and asserts the `fill` values appear
 in the same order, and that both match `--ch-1/2/3` in `tokens.css`. Three assertions, no browser.
-Not written yet because `src/tests` has no fixture that reads `public/`.
+Not written yet because `src/tests` has no fixture that reads `public/`. Extending it to the
+website's copies means reading across packages from a box test, which the decoupling rule argues
+against — the honest options are a root-level script or accepting the comment as the guard.
 
 ### The brand kit ships to the device and is not behind the admin gate
 

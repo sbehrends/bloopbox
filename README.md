@@ -37,12 +37,13 @@ A monorepo. The box is what exists; the rest is scaffolding for what comes next.
 box/
 ├── software/     the two daemons, the four browser UIs, packaging, deploy  ← the project today
 └── hardware/     enclosure models and PCB. Empty; docs/hardware.md is the reference
-website/          the marketing site. Empty placeholder
+website/          the marketing site: one statically exported Next.js page
 docs/             all documentation, for every package
 ```
 
-There is no root `package.json`. **Every npm command runs from `box/software/`** —
-see [`box/software/README.md`](./box/software/README.md).
+There is no root `package.json` and no npm workspaces. **Each package's npm commands run from its
+own directory** — `box/software/` for the device, `website/` for the site. See
+[`box/software/README.md`](./box/software/README.md) and [`website/README.md`](./website/README.md).
 
 ## What you need
 
@@ -310,7 +311,7 @@ simulator's event injector, the tests, every script, and where things live.
 | ---------------------------------------------------------- | ---------------------------------------------------------------- |
 | [`box/software/README.md`](./box/software/README.md)       | Development: the gate, the simulator, the tests, every script     |
 | [`box/hardware/README.md`](./box/hardware/README.md)       | What belongs in the hardware folder, and the enclosure's constraints |
-| [`website/README.md`](./website/README.md)                 | What the site will be, and the one rule to keep it decoupled      |
+| [`website/README.md`](./website/README.md)                 | The marketing site: commands, layout, and the rule keeping it decoupled |
 | [`docs/PRODUCT.md`](./docs/PRODUCT.md)                     | The behavioural specification. `§` citations in the source point here |
 | [`docs/architecture.md`](./docs/architecture.md)           | How the software is put together, and the decisions behind it    |
 | [`docs/hardware.md`](./docs/hardware.md)                   | Bill of materials, wiring, GPIO pins, the enclosure              |

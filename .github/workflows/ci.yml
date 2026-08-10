@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       box: ${{ steps.decide.outputs.box }}
+      web: ${{ steps.decide.outputs.web }}
       docs: ${{ steps.decide.outputs.docs }}
     steps:
       - uses: actions/checkout@v5
@@ -42,6 +43,9 @@ jobs:
               - 'box/software/**'
               - '.github/workflows/**'
               - '.githooks/**'
+            web:
+              - 'website/**'
+              - '.github/workflows/**'
             docs:
               - '**/*.md'
 
@@ -51,17 +55,20 @@ jobs:
       - id: decide
         env:
           FILTER_BOX: ${{ steps.filter.outputs.box }}
+          FILTER_WEB: ${{ steps.filter.outputs.web }}
           FILTER_DOCS: ${{ steps.filter.outputs.docs }}
           GATE_ONLY: ${{ inputs.gate_only }}
         run: |
           set -euo pipefail
           box="${FILTER_BOX:-true}"
+          web="${FILTER_WEB:-true}"
           docs="${FILTER_DOCS:-true}"
           # Called by release.yml: this is a tag being packaged, so nothing may be skipped.
-          if [[ "${GATE_ONLY}" == "true" ]]; then box=true; docs=true; fi
+          if [[ "${GATE_ONLY}" == "true" ]]; then box=true; web=true; docs=true; fi
           echo "box=${box}"   >> "$GITHUB_OUTPUT"
+          echo "web=${web}"   >> "$GITHUB_OUTPUT"
           echo "docs=${docs}" >> "$GITHUB_OUTPUT"
-          printf 'box=%s docs=%s\n' "${box}" "${docs}"
+          printf 'box=%s web=%s docs=%s\n' "${box}" "${web}" "${docs}"
 
   box-gate:
     name: box gate (format, lint, typecheck, test)
@@ -153,6 +160,38 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  website:
+    name: website (typecheck, static export)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    # Its own package, its own lockfile, its own node_modules — there are no npm workspaces at
+    # the root, deliberately (see website/README.md).
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.18.1'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - run: npm ci
+
+      # `next build` typechecks as well, but running tsc first fails in ten seconds instead of
+      # after a full compile, and it is what a developer runs locally.
+      - run: npm run check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bloopbox-website
+          path: website/out
+          retention-days: 14
+          if-no-files-found: error
+
   docs-links:
     name: docs links
     needs: changes
@@ -170,7 +209,7 @@ jobs:
   # leaving the PR blocked forever. One stable check name, whatever the filter decided.
   ci:
     name: ci
-    needs: [changes, box-gate, box-package, docs-links]
+    needs: [changes, box-gate, box-package, website, docs-links]
     if: always()
     runs-on: ubuntu-latest
     steps:

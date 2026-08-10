@@ -11,17 +11,19 @@ bloopbox. Screenless IoT appliance: 3 illuminated arcade buttons on a Raspberry 
 box/
 ├── software/     the two daemons, the four browser UIs, packaging, deploy  ← the project today
 └── hardware/     enclosure models, PCB. Effectively empty
-website/          the marketing site. Empty placeholder
+website/          the marketing site: one statically exported Next.js page
 docs/             all documentation, for every package. Deliberately flat
-.github/          CI. Its run steps are working-directory'd into box/software
+.github/          CI. Its box steps are working-directory'd into box/software, its site steps into website
 .githooks/        the pre-commit gate. Must stay at root
 ```
 
-**Every npm command runs from `box/software/`.** There is no root `package.json` and no npm
-workspaces — deliberate while there is one package, because workspaces hoist `node_modules` away
-from the tree the release scripts assume. The Bash tool's working directory persists between calls,
-so `cd box/software` **once** per session and then run bare commands; that also keeps them matching
-the allowlist in `.claude/settings.json`, which is written against bare `npm run …` forms.
+**Two packages, no root `package.json` and no npm workspaces.** npm commands run from
+`box/software/` (the device) or `website/` (the site), and the two never import from each other.
+Workspaces stay absent on purpose: hoisting `node_modules` to the root moves it away from the tree
+`box/software/scripts/build-release.sh` assumes. The Bash tool's working directory persists between
+calls, so `cd` into the right package **once** per session and then run bare commands; that also
+keeps them matching the allowlist in `.claude/settings.json`, which is written against bare
+`npm run …` forms.
 
 Three layout constraints that are easy to undo by accident:
 
@@ -53,9 +55,11 @@ ESLint and opengpio tripwires are duplicated below as single lines.
 
 ```bash
 cd box/software && npm run check     # format + lint + typecheck + test
+cd website      && npm run check     # typecheck + static export — only if you touched the site
 ```
 
-It must pass. That is the only gate.
+The box gate must pass. That is the only gate for device work; the site has its own, and neither
+knows about the other.
 
 It is also a **pre-commit hook** (`.githooks/pre-commit`, wired up by the `prepare` script in
 `box/software/package.json`, so `npm install` installs it — no husky). The whole gate takes about six

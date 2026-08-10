@@ -9,6 +9,11 @@ build/
 coverage/
 *.tsbuildinfo
 
+# Next.js: the build cache anywhere, and the website's static export. `out/` is anchored
+# because it is a name a future package could plausibly use for something committed.
+.next/
+website/out/
+
 # Release artefacts and the SD card image build scratch (a cached Pi OS image lives here)
 release/
 

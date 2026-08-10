@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 data/
+release/
 package-lock.json
 
 # Prose is human-authored and hand-wrapped; the formatter's reflowing buries the actual

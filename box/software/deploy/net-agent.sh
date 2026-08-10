@@ -43,6 +43,16 @@ AP_CONNECTION="${AP_CONNECTION_NAME:-bloopbox-ap}"
 # The connection wifi-apply.sh maintains from config.json — what "the real network" means.
 CONNECTION_NAME="${WIFI_CONNECTION_NAME:-bloopbox}"
 
+# How long a join is given to *show up as connected* before it is called a failure. Kept under
+# the supervisor's joinWindowMs (30s in src/core/networkSupervisor.ts) so the hotspot does not
+# come back while this is still waiting. See join_network for why the wait exists at all.
+JOIN_CONFIRM_SECONDS="${NET_JOIN_CONFIRM_SECONDS:-25}"
+
+# Fallback regulatory domain, used only when the device has never been told one. Not a
+# guess at where every device ships — see ensure_radio_unblocked for why a wrong-but-set
+# domain is never overwritten.
+AP_COUNTRY="${AP_COUNTRY:-DE}"
+
 # The network a parent looks for. Suffixed with the last four of the Pi's serial so two boxes
 # in one house are tellable apart — not a secret, and not treated as one: the hotspot is open
 # (see PENDING.md for why a published passphrase would be worth nothing).
@@ -131,12 +141,23 @@ ap_up() {
   nmcli con modify "${AP_CONNECTION}" \
     connection.interface-name "${device}" \
     802-11-wireless.mode ap 802-11-wireless.band bg 802-11-wireless.ssid "${AP_SSID}" \
-    wifi-sec.key-mgmt none ipv4.method shared ipv6.method ignore \
+    ipv4.method shared ipv6.method ignore \
     connection.autoconnect no >/dev/null 2>&1
+  # An open network means *no* security setting at all. `wifi-sec.key-mgmt none` reads as
+  # "open" but means **static WEP** to NetworkManager: it creates an
+  # 802-11-wireless-security setting, then refuses to activate because no WEP key was
+  # supplied — `need-auth -> failed (reason 'no-secrets')`, on real hardware, 2026-08-10.
+  # Removing the whole setting is the only way to say open. `build-sd-image.sh` already
+  # does the equivalent by omitting [wifi-security] when there is no passphrase.
+  nmcli con modify "${AP_CONNECTION}" remove 802-11-wireless-security >/dev/null 2>&1
   if nmcli con up "${AP_CONNECTION}" >/dev/null 2>&1; then
     log "hotspot up: ${AP_SSID}"
+    LAST_ERROR=
   else
     log "hotspot failed to come up"
+    # Published, not just logged: on a screenless device the journal is unreachable, and
+    # the daemon already reads lastError out of the state file.
+    LAST_ERROR="the setup hotspot would not start — check journalctl -u NetworkManager"
     return 1
   fi
 }
@@ -151,6 +172,19 @@ ap_down() {
   else
     log "no luck rejoining ${CONNECTION_NAME} yet"
   fi
+}
+
+# True once the radio is actually on `ssid`. NetworkManager only says `connected` after the
+# device has an address, which is the same bar the poll loop below uses for `online` — so this
+# answers "did it work" the way the rest of the file already means it.
+joined_ssid() {
+  local want="$1" state current
+  state="$(nmcli -t -f TYPE,STATE dev status 2>/dev/null | awk -F: '$1=="wifi"{print $2; exit}')"
+  [[ "${state}" == "connected" ]] || return 1
+  current="$(nmcli --escape yes -t -f active,ssid dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')"
+  # -t escapes a colon inside an SSID as `\:`; undo that before comparing with the raw one.
+  current="${current//\\:/:}"
+  [[ "${current}" == "${want}" ]]
 }
 
 # Joins the network the portal was given: teach the profile, drop the hotspot, associate.
@@ -175,20 +209,43 @@ join_network() {
     nmcli con modify "${CONNECTION_NAME}" \
       wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${psk}" >/dev/null 2>&1
   else
-    nmcli con modify "${CONNECTION_NAME}" wifi-sec.key-mgmt none >/dev/null 2>&1
+    # Same trap as ap_up: an open network needs the security setting *gone*, not set to
+    # `none`, which NetworkManager reads as WEP and then fails for want of a key.
+    nmcli con modify "${CONNECTION_NAME}" remove 802-11-wireless-security >/dev/null 2>&1
   fi
 
   # The hotspot has to go before the join can be attempted: one radio.
   nmcli con down "${AP_CONNECTION}" >/dev/null 2>&1
-  if nmcli con up "${CONNECTION_NAME}" >/dev/null 2>&1; then
-    log "joined ${ssid}"
-    LAST_ERROR=
-  else
-    # Reported, not retried here. The supervisor raises the hotspot again after its grace
-    # period, and the portal reads this line to explain what went wrong.
-    log "could not join ${ssid}"
-    LAST_ERROR="could not join ${ssid} — wrong passphrase, or out of range"
-  fi
+
+  # Started, then judged by the outcome — deliberately not `if nmcli con up ...`.
+  #
+  # `wifi-apply.sh` runs from the hardware unit's ExecStartPre, and the config save that
+  # produced this join restarts that unit, so both activate *this same profile* within a
+  # second or two of each other. NetworkManager cancels whichever loses with
+  # `reason 'new-activation'`, and that one exits non-zero even though the device ends up
+  # online. Observed on hardware 2026-08-10, where it told a parent that a correct passphrase
+  # was wrong — on the only screen this product has. The end state is the trustworthy answer.
+  #
+  # `--wait 5` keeps the call from blocking the poll loop for nmcli's 90s default; activation
+  # carries on afterwards and the loop below is what actually decides.
+  nmcli --wait 5 con up "${CONNECTION_NAME}" >/dev/null 2>&1 || true
+
+  local waited=0
+  while [[ "${waited}" -lt "${JOIN_CONFIRM_SECONDS}" ]]; do
+    if joined_ssid "${ssid}"; then
+      log "joined ${ssid}"
+      LAST_ERROR=
+      return 0
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+
+  # Reported, not retried here. The supervisor raises the hotspot again after its grace
+  # period, and the portal reads this line to explain what went wrong.
+  log "could not join ${ssid}"
+  LAST_ERROR="could not join ${ssid} — wrong passphrase, or out of range"
+  return 1
 }
 
 # Reads one request, acts on it, deletes it. Unknown actions are logged and dropped: this is
@@ -235,6 +292,37 @@ consume_request() {
 }
 
 log() { echo "net-agent: $*"; }
+
+# cfg80211 refuses to let the radio transmit — not just "join a network", *scan* included —
+# until something has told it a regulatory domain. `scripts/build-sd-image.sh` only calls
+# `raspi-config nonint do_wifi_country` when a Wi-Fi SSID was supplied at build time, so an
+# image built with none (the onboarding case this whole file exists for) leaves the country
+# unset forever. Found on real hardware 2026-08-10: with no country ever set, `wlan0` read as
+# `unavailable` rather than `disconnected` — `rfkill list` showed the wifi radio soft-blocked,
+# `iw reg get` read `country 00: DFS-UNSET`, and NetworkManager's own `WirelessEnabled` toggle
+# was independently `false` on top of that. All three block scanning as well as the hotspot,
+# so this runs once at startup, before the main loop's first publish — not only inside ap_up.
+#
+# Never overwrites a domain that is already set: "00" is cfg80211's own placeholder for
+# "nobody has said yet", and a device already told where it lives should never be silently
+# relocated to AP_COUNTRY.
+ensure_radio_unblocked() {
+  command -v rfkill >/dev/null 2>&1 && rfkill unblock wifi >/dev/null 2>&1
+  nmcli radio wifi on >/dev/null 2>&1
+
+  command -v iw >/dev/null 2>&1 || return 0
+  local domain
+  domain="$(iw reg get 2>/dev/null | awk '/^country/{print $2; exit}' | tr -d ':')"
+  if [[ -z "${domain}" || "${domain}" == "00" ]]; then
+    if iw reg set "${AP_COUNTRY}" >/dev/null 2>&1; then
+      log "no regulatory domain was set — defaulted to ${AP_COUNTRY}"
+    else
+      log "no regulatory domain was set, and could not default to ${AP_COUNTRY}"
+    fi
+  fi
+}
+
+ensure_radio_unblocked
 
 mkdir -p "${STATE_DIR}"
 chmod 0755 "${STATE_DIR}"

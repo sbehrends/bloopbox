@@ -33,6 +33,16 @@ Smaller, and deliberate: the site has **no ESLint** (`npm run check` is `tsc --n
 export), and `npm audit` reports three high advisories that are all transitive inside Next itself
 (`postcss`, `sharp`) — the offered fix is `next@9`, so they stand until Next ships past them.
 
+### Quiet hours have no timezone configuration
+
+`config.quietHours` (`box/software/src/config/schema.ts`) is just `enabled` / `startTime` /
+`endTime` — the window is evaluated against whatever timezone the device's system clock is set to,
+which is not necessarily the child's actual timezone and is not exposed anywhere in the admin panel
+for a parent to set or confirm. Worth adding a `timezone` field to the schema (IANA name, e.g.
+`America/New_York`) and wiring it into `src/core/quietHours.ts`'s evaluation, with a sane default
+and a picker in the admin UI. Raised while rewording the website's "It goes quiet at night" card to
+stop implying the hours are fixed — they're configurable in time-of-day, but not yet in timezone.
+
 ### The monorepo defers one thing now that there is a second package
 
 The repository became a monorepo on 2026-08-02 (`box/software`, `box/hardware`, `website`, root

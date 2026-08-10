@@ -158,14 +158,6 @@
   margin-block-end: var(--space-8);
 }
 
-.subhead {
-  font-size: var(--text-base);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-block-end: var(--space-4);
-}
-
 .split {
   display: grid;
   gap: var(--space-6);
@@ -269,79 +261,6 @@ p.nightEyebrow {
   font-weight: 900;
   letter-spacing: var(--tracking-label);
   color: var(--accent-ink);
-}
-
-/* ---- build ---- */
-
-.buildGrid {
-  display: grid;
-  gap: var(--space-8);
-}
-
-@media (width >= 60rem) {
-  .buildGrid {
-    grid-template-columns: 0.85fr 1.15fr;
-    gap: var(--space-16);
-  }
-}
-
-.partsList {
-  margin: 0;
-  display: grid;
-  gap: var(--space-3);
-}
-
-.part {
-  display: grid;
-  grid-template-columns: 7rem 1fr;
-  gap: var(--space-4);
-  padding-block-end: var(--space-3);
-  border-block-end: 1px solid var(--border);
-  font-size: var(--text-sm);
-}
-
-.part dt {
-  font-weight: var(--weight-medium);
-}
-
-.part dd {
-  margin: 0;
-  color: var(--muted);
-}
-
-.setupList {
-  margin: 0;
-  padding-inline-start: var(--space-5);
-  display: grid;
-  gap: var(--space-4);
-  color: var(--muted);
-}
-
-.setupList li {
-  padding-inline-start: var(--space-2);
-}
-
-.setupList li::marker {
-  color: var(--accent-ink);
-  font-family: var(--font-display);
-  font-weight: var(--weight-display);
-}
-
-.code {
-  display: block;
-  margin-block-start: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  overflow-x: auto;
-}
-
-.setupNote {
-  margin-block-start: var(--space-6);
-  font-size: var(--text-sm);
-  color: var(--muted);
 }
 
 /* ---- closing ---- */

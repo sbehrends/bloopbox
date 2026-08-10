@@ -4,17 +4,6 @@ import { channels, links } from '@/lib/site'
 
 import styles from './page.module.css'
 
-/** Off-the-shelf, and the same table as the repository's — one bill of materials, two places
- *  it is read. */
-const PARTS = [
-  ['Brain', 'Raspberry Pi Zero 2 W'],
-  ['Buttons', '3 × 60 mm illuminated arcade buttons'],
-  ['Lamp driver', 'ULN2003 — 3.3 V GPIO up to 5 V lamps'],
-  ['Audio', 'A USB speakerphone, or a USB soundcard and mic'],
-  ['Power', '5 V 2.5 A micro-USB — no battery, no power button'],
-  ['Card', '8 GB microSD, flashed from the repository'],
-] as const
-
 /** Who a button can be. The order is the order of the caps on the enclosure and of the rings in
  *  the mark: yellow, coral, teal — so the swatch on each card means "which button", which is the
  *  only thing a channel colour is ever allowed to mean. */
@@ -50,7 +39,6 @@ export default function Home() {
             <a href="#people">Three people</a>
             <a href="#how">How it works</a>
             <a href="#parents">For parents</a>
-            <a href="#build">Build one</a>
           </nav>
           <a className={`btn btn-secondary ${styles.headerCta}`} href={links.repo}>
             GitHub
@@ -231,70 +219,13 @@ export default function Home() {
               </p>
             </article>
             <article className="card">
-              <h3>You set the ceiling</h3>
-              <p>
-                A hard volume cap sits above whatever the volume is set to, and clamps everything.
-                This thing lives next to a small child’s ears.
-              </p>
-            </article>
-            <article className="card">
               <h3>It goes quiet at night</h3>
               <p>
-                Quiet hours run 20:00 to 07:00 by default, and holding the outer two buttons for
-                three seconds silences the cues on the spot. Playback still works — a child who taps
-                a light expects to hear something.
+                Quiet hours default to 20:00–07:00 and are yours to change, and holding the outer
+                two buttons for three seconds silences the cues on the spot. Playback still works —
+                a child who taps a light expects to hear something.
               </p>
             </article>
-          </div>
-        </section>
-
-        {/* ---- build ---- */}
-        <section id="build" className={`wrap ${styles.section}`}>
-          <p className="eyebrow">Build one</p>
-          <div className={styles.split}>
-            <h2>Six parts, all off the shelf.</h2>
-            <p className="lede">
-              Everything is in the repository: the wiring diagram, the enclosure layout, an
-              installer, and a card image you can flash and boot. The Pi compiles nothing — the
-              release carries its own runtime.
-            </p>
-          </div>
-
-          <div className={styles.buildGrid}>
-            <div className={styles.parts}>
-              <h3 className={styles.subhead}>What you need</h3>
-              <dl className={styles.partsList}>
-                {PARTS.map(([role, part]) => (
-                  <div className={styles.part} key={role}>
-                    <dt>{role}</dt>
-                    <dd>{part}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-
-            <div className={styles.setup}>
-              <h3 className={styles.subhead}>Then, once</h3>
-              <ol className={styles.setupList}>
-                <li>
-                  Build the card image and flash it.
-                  <code className={styles.code}>sudo ./scripts/build-sd-image.sh</code>
-                </li>
-                <li>
-                  Power up. It joins your Wi-Fi — or raises its own, so you can tell it yours from a
-                  phone.
-                </li>
-                <li>Link WhatsApp: scan the QR, or type an eight-character pairing code.</li>
-                <li>
-                  Give each button a person: a phone number, or a family group chat. Save, and the
-                  lamps go dark.
-                </li>
-              </ol>
-              <p className={styles.setupNote}>
-                Dark means ready. From here the child never needs an adult again, and you never need
-                the settings page unless someone changes their number.
-              </p>
-            </div>
           </div>
         </section>
 
@@ -302,8 +233,8 @@ export default function Home() {
         <section className={`wrap ${styles.closing}`}>
           <h2 className={styles.closingTitle}>Three buttons. Three people who love them.</h2>
           <p className={styles.closingLede}>
-            The wiring, the enclosure, the daemons and the installer are all in the open. Take them
-            and build one.
+            Everything that makes this work — hardware to software — is open source. Take it and
+            build one.
           </p>
           <div className={styles.ctas}>
             <a className="btn btn-primary" href={links.build}>

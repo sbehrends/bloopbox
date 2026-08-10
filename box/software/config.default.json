@@ -29,7 +29,7 @@
   "audio": {
     "speakerVolumePercent": 70,
     "maxVolumeCapPercent": 85,
-    "micGainPercent": 60,
+    "micGainPercent": 80,
     "maxRecordingSeconds": 30
   },
   "quietHours": {

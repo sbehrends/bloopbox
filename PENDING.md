@@ -9,6 +9,10 @@ Ordered roughly by priority within each group.
 
 ## Features
 
+### Loading after config save
+
+When a change is made in the Admin, the server restarts. Add a loading in the admin page that blocks the page. Ping the server until is back responsive.
+
 ### The website is a first iteration, and three things are still missing
 
 The marketing site landed on 2026-08-02: `website/`, one statically exported Next.js 16 page. It is
@@ -353,10 +357,11 @@ and `npm run check` does not run it. What is left, in order of size:
 
 ### The mark is drawn twice and copied twice more, and nothing enforces that the four agree
 
-`box/software/public/shared/bloopbox-mark.svg` (three concentric ring pairs, for 24px and up) and
-`bloopbox-favicon.svg` (three solid discs, for browser tabs) are separate hand-drawn files sharing
-no code. They have to agree on five colours and on the left-to-right button order — **yellow,
-coral, teal** — and today the only thing keeping them in step is the comment in each and `/brand/`,
+`box/software/public/shared/bloopbox-mark.svg` (the pill, its three colour fields and three ring
+buttons, for 24px and up) and `bloopbox-favicon.svg` (the pill and its colour fields, no buttons,
+for browser tabs) are separate hand-drawn files sharing no code. They have to agree on five
+colours and on the left-to-right button order — **yellow, coral, teal** — and today the only thing
+keeping them in step is the comment in each and `/brand/`,
 which renders both side by side.
 
 Since 2026-08-02 both are also **copied into `website/public/`**, along with the palette in
@@ -499,6 +504,71 @@ example, so the mistake is less likely in the first place. Covered by two new ca
 Left open: the upstream Baileys issues linked above are real and worth knowing about if a future
 pairing failure looks like this again with a correctly-formatted number — they just were not the
 cause this time.
+
+### Sending a voice note killed the bridge, and the restart reported the device as never linked — both fixed
+
+Reported 2026-08-10, the first real send attempt on hardware: button 1 recorded (the whoosh
+played), then the "oops" cue, no message delivered, and the admin panel afterwards claiming the
+device was not linked. Two independent bugs, which only together produce that story — and the
+second is the dangerous one, because it invites a parent to fix it by re-pairing.
+
+**1. `/tmp` is read-only, and Baileys writes there on every send.** `encryptedStream`
+(`Utils/messages-media.js`) stages outbound media at `join(os.tmpdir(), type + id + '-enc')`
+before uploading. The unit runs `ProtectSystem=strict` with `ReadWritePaths=/data`, so `/tmp` is
+read-only and the write failed `EROFS` — as an unhandled `'error'` event on a `WriteStream`, not
+a rejected promise, so nothing in `handleSend`'s `try`/`catch` could see it and the process
+exited 1. `Restart=always` brought it back five seconds later, which is why the only visible
+trace was a failed send. Fixed by giving the unit a second runtime directory and pointing
+`os.tmpdir()` at it: `RuntimeDirectory=bloopbox bloopbox-tmp` plus
+`Environment=TMPDIR=/run/bloopbox-tmp`. Deliberately **not** `/run/bloopbox` — `audio/recovery.ts`
+treats every file in the recordings directory as an unread note, so scratch there would be
+recovered and played at a child. Verified on the device by replicating the unit's sandbox with
+`systemd-run`: the exact `-enc` write now succeeds while bare `/tmp` is still read-only, so the
+sandbox was not loosened to get there.
+
+**2. `creds.registered` is false after a QR scan, and `start()` believed it.** The flag is
+assigned in exactly one place in Baileys — `Socket/messages-recv.js`, handling
+`link_code_companion_reg`, which is the **phone-number** path. A QR scan finishes through
+`configureSuccessfulPairing`, which writes `me`, `account`, `platform` and the signal identities
+and never touches `registered`. Nothing notices while the process stays up, because the live
+socket is authenticated either way and the flag is only read at boot. The crash above forced that
+boot, and `start()` — gating solely on `state.creds.registered` — reported `notLinked` over a
+session that was completely intact: 1544 files, valid `me`, `account` present, `pairingCode:
+null` confirming the scan. The device on the bench was recovered by flipping that one boolean and
+restarting the bridge; it went straight to `connected` with no re-pairing.
+
+The trap: the offered remedy is to scan a QR, and `beginLinking()` opens a *fresh* socket — so
+following the panel's own advice is what would finally destroy the working session. Fixed with
+`isPaired()` in `src/whatsapp/client.ts`, which honours `registered` when set and otherwise asks
+whether `me.id` and `account` are both present (a half-written `requestPairingCode` state, which
+sets `me` but no `account`, is correctly rejected). The flag is also normalised to `true` when a
+connection reaches `open`, so credentials on disk agree with what WhatsApp just accepted and the
+fallback stays a safety net rather than the thing every boot rests on. Four `isPaired` cases and
+two behavioural tests in `src/tests/whatsappClient.test.ts`.
+
+**Still open — the device is running a drop-in, not the fix.** The `/tmp` repair was applied live
+as `/etc/systemd/system/bloopbox-whatsapp.service.d/tmpdir.conf` so sending could be tested the
+same evening. The unit file in `deploy/systemd/` now carries the same settings, so a reinstall
+supersedes it, but **the drop-in must be deleted when that happens** or it will keep shadowing the
+packaged unit. A pre-fix backup of the credentials is on the device at
+`/data/auth_info.backup-1786383903.tar.gz`.
+
+### Baileys writes its credentials non-atomically
+
+Noticed while testing the fix above, and reproduced accidentally: `useMultiFileAuthState`'s
+`writeData` is a plain `writeFile`, which truncates before it writes. Polling `creds.json` in a
+loop hits the empty window often enough to fail a test on a fast machine — which means a crash or
+a power cut in that window leaves a truncated file. `readData` then swallows the `JSON.parse`
+failure and returns `null`, and `useMultiFileAuthState` falls back to `initAuthCreds()`, so a
+destroyed pairing presents as a device that was never linked — silently, with nothing in the log.
+
+This is the same hazard `/data/config.json` is already protected against (tmp file → `fsync` →
+`rename`, because a half-written config would brick the device), except the credentials are
+written by the library rather than by us and are equally unrecoverable. Not the cause of the
+2026-08-10 failure — the file on that device was a healthy 2546 bytes — but the same symptom, so
+worth ruling in or out first if this recurs. Worth wrapping `saveCreds` with an atomic write and
+keeping one last-good copy to fall back on; `WhatsAppClient` already owns the auth directory, so
+it is the natural place.
 
 ### Read receipts do not survive a bridge restart
 
@@ -781,6 +851,53 @@ part of activation, which is the only plausible link between an AP that would no
 interface that stopped answering — but nothing was captured to support that, which is what item 1
 is for.
 
+#### It happened again, 2026-08-10, on a fresh flash — still item 1's fault, now fixed
+
+Same device, brand-new SD image (the WhatsApp-pairing fixes above), first boot. Symptom this time:
+the AP did not appear for over five minutes; a full power cycle (not a soft reboot) with a USB
+Ethernet adapter plugged in brought it up within its normal ~66s window, confirmed live over
+`ssh bloop@192.168.1.154`. `iw` really was checked this time — `which iw` came back empty for the
+`bloop` user, but `journalctl -u bloopbox-net -b` showed `ensure_radio_unblocked` succeeding
+(`no regulatory domain was set — defaulted to DE`) within a second of the unit starting, so `iw`
+is reachable from root's service environment even though it is not on an interactive login's
+`PATH` — worth settling properly (see item 2 above; this session did not `dpkg -l iw` before losing
+the connection, so **still not fully confirmed either way**).
+
+While checking that, **the device went dark again** — `ssh` and `ping` both stopped answering,
+`bloopbox.local` stopped resolving, mid-session, with no warning. Same address
+(`192.168.1.154`) as the earlier incident. Evidence was lost the same way: item 1 above
+(`sudo bloopbox-debug on`) had not been run, because the device was not reachable yet when this
+session started and there was no way to turn it on in advance.
+
+**Fixed the actual gap this exposes, not the incident itself, then removed once it had done its
+job:** `deploy/install.sh` briefly installed a second, separate journald drop-in
+(`05-bloopbox-bringup.conf`, persistent, capped at 128M, alongside — not replacing —
+`debug-mode.sh`'s own `10-bloopbox-debug.conf`) so every boot's journal survived without anyone
+having to reach the device first to turn it on. **Reflashed the same day and it worked cleanly on
+the first try** — AP up in ~66s, straight through onboarding to a joined home network, no repeat of
+the dark-device symptom. With the immediate question answered, the drop-in was removed from
+`install.sh` and purged from the live device (`rm -rf /var/log/journal`, config deleted, journald
+restarted) the same session — it was never meant to be permanent. If a device goes dark like this
+again, this is the tool to reach for again, but it does not stay on by default.
+
+**What checking those logs turned up instead: `MemoryHigh`/`MemoryMax` have likely never been
+enforced on real hardware at all.** `/proc/cmdline` on the live device read
+`cgroup_disable=memory` — the Pi's own firmware adds this on boards with this little RAM, to save
+the accounting overhead, and it is not present in `/boot/firmware/cmdline.txt` itself so it is easy
+to miss. Without the memory controller, every `MemoryHigh=`/`MemoryMax=` in all four unit files is
+inert, not just generous — and so was the `RuntimeDirectorySize=64M` that used to sit next to
+`RuntimeDirectory=bloopbox` in the two units that share that tmpfs directory, which turned out to
+never have been a real per-service directive in the first place (that name belongs to
+`logind.conf`'s per-user `XDG_RUNTIME_DIR` sizing) — `Unknown key 'RuntimeDirectorySize'... ignoring`
+on every boot, silently. **Fixed 2026-08-10:** removed the fake directive from both unit files, and
+`install.sh` now appends `cgroup_enable=memory cgroup_memory=1` to `cmdline.txt` (same
+idempotent-append pattern as the `config.txt` step next to it) — which turns `MemoryHigh`/`MemoryMax`
+on for real, and since cgroup v2 charges tmpfs pages to the cgroup of whoever wrote them, that is
+also what actually bounds `/run/bloopbox` now, without a dedicated mount unit. **Not yet reverified
+on real hardware** — needs a reflash and a check of `cat /proc/cmdline` plus
+`systemctl show bloopbox-hardware -p MemoryCurrent` for a real number where "file not found" was
+before.
+
 ### GPIO driver on real hardware
 
 **Partly closed on 2026-08-10** — first real boot, from a `build-sd-image.sh` image, on a
@@ -791,6 +908,9 @@ is for.
   and 22 as `input edges=both` and 23, 24, 25 as `output`, each with an `opengpio_…` consumer
 - the firmware pull-up block (`gpio=17,27,22=ip,pu`) is present in `/boot/firmware/config.txt`
 - no GPIO error appears in `journalctl -u bloopbox-hardware` across a full boot
+
+That boot also settles the board map: `RaspberryPi_Zero2W` resolves BCM names to the right lines on a
+3B+, which is what `PI_BOARD` defaults to. The override exists for a board that does not agree.
 
 Still unproven, and needing a finger and an eye rather than a shell: whether a **press registers**
 (no button was pressed during this session), whether `BUTTON_ACTIVE_LOW` matches the wiring, and
@@ -815,23 +935,172 @@ comment out the hardening block in the systemd unit before suspecting the driver
 
 ### Audio capture and playback on real ALSA devices
 
-**Blocked on hardware as of 2026-08-10:** the first device has **no capture device at all**.
-`arecord -l` lists nothing, `/proc/asound/cards` shows only `bcm2835 Headphones` and `vc4-hdmi`, and
-`lsusb` shows no audio device — only the internal hubs and the LAN7800. `bloopbox-doctor` reports
-this correctly as `✗ capture device — none — is the USB microphone plugged in?`. Until a USB
-microphone is attached, recording cannot be exercised at all, so everything below is still open.
+**The first end-to-end run happened on 2026-08-10** — device on the network, WhatsApp linked, cues
+audible on button press — and both audio directions were broken, in two unrelated ways. One was a
+code bug and is fixed; the other is a mixer default and is only partly settled.
 
-`arecord`, `aplay` and `amixer` have never been run by this code against a real sound card. The
-`amixer` control name in particular differs across USB adapters (`PCM`, `Speaker`, `Master`), and
-`GpioHal` treats a mixer failure as non-fatal — so a wrong name means playback at whatever volume
-the adapter booted with, silently, including the volume cap being ignored. Worth an explicit
-check during bring-up: set the volume, then read it back.
+1. **Received voice notes played as noise. Fixed.** `aplay` is not a decoder: it reads WAV, AU and
+   VOC, and given a header it does not recognise it plays the bytes as raw PCM rather than failing.
+   Inbound notes are saved as Ogg/Opus (`wa-<index>-<id>.ogg`), so every received message was
+   full-volume noise while `aplay` exited 0 and nothing was logged. `toPlayableWav` had been written
+   for exactly this and was **never called from anywhere** — a dead export. `GpioHal.play()` now
+   decodes to a `play-*.wav` in the same tmpfs and removes it afterwards; `playCue` skips the decode
+   because cues are generated as WAV. Locked by `src/tests/gpioPlayback.test.ts`.
+2. **Recordings came out the right length and completely silent. Partly fixed.** The WM8960's input
+   PGAs power up **muted** (`LINMUTE`/`RINMUTE` default to 1) and `amixer sset Capture 60% cap` moves
+   the volume register without touching the mute bit, so capture streamed correctly and carried no
+   signal — the same shape of failure as the `… Output Mixer PCM` switches, one stage earlier.
+   `GpioHal` now unmutes in a **separate** `amixer` call (a parameter the adapter's control does not
+   have would fail the whole line and take the gain with it), and `bloopbox-audio-init.service`
+   unmutes at boot so `bloopbox-audio-test` and a bare `arecord` see the same routing, persisted by
+   the `alsactl store` it already ran.
+
+**The mute was not the whole cause — settled the same evening over ssh, on the device.** Playback
+was confirmed fixed by ear. Capture then produced faint static, which turned out to be two more
+defaults plus a measurement problem of my own:
+
+- `Left/Right Input Mixer Boost` (LMIC2B) defaults **off**, disconnecting the input PGA from the
+  boost mixer that feeds the ADC. Worth **42 dB**.
+- The mic boost stage `Left/Right Input Boost Mixer LINPUT1` defaults to **0 dB**; 3 is +29 dB.
+- `config.audio.micGainPercent` 60 mapped to PGA 49/63. Now **80** → 57 (+25.5 dB) — 100 (+30 dB)
+  was tried first and was audibly too hot on a real voice.
+
+Both switches are now in `ALSA_ENABLE_SWITCHES`, whose grammar gained `Name=Value` so a gain stage
+can be expressed at all. The measurement that settled it: a full-scale 1 kHz tone played through the
+HAT's own speaker while `arecord` ran, comparing the tone window against a silent window **of the
+same recording** — the tone read −62 dB with the boost switch off, −20 dB with it on, −8.4 dB with
+the boost stage at 3. Selecting LINPUT2 or LINPUT3 instead read −80.8 dB (digital silence), which is
+what proves the mics are on **LINPUT1/RINPUT1** rather than merely suggesting it.
+
+Four things worth not re-deriving:
+
+1. **Ambient room noise is useless as a stimulus.** Two passes of the same sweep disagreed by 18 dB.
+   Every conclusion here rests on the tone, and on two windows of one recording rather than two
+   recordings.
+2. **MICBIAS is not needed.** It reads `MICB=0` and the mics work. An earlier "test" of it was void:
+   `i2cset` was not installed, and the failure was swallowed — see the item below.
+3. **The codec's registers must be read during an open capture.** ASoC powers the input path down at
+   idle, so `AINL/AINR/ADCL/ADCR=0` at rest is normal and means nothing. `/sys/kernel/debug/regmap/
+   1-001a/registers` while `arecord` runs is the real reading.
+4. **`ADC PCM Capture Volume` is not a simple mixer element.** `amixer sset` cannot address it and
+   fails silently; `amixer cset name=…` can. It stays at its 0 dB default — digital gain lifts the
+   noise floor with the signal.
+
+**Closed by ear the same evening:** a real voice at PGA 63 (+30 dB) was too hot, so the default is
+`micGainPercent` **80** → PGA 57, where the tone peaks at −15.3 dB with the floor at −29.9 dB. What
+is still unmeasured is the extreme: a child shouting into the box at 10 cm. If that clips, the same
+knob is the answer, and the +29 dB boost stage carries enough that the PGA can come down a long way
+before the faint-static failure returns.
+
+### `--audio-hat wm8960` promises i2c-tools and the SD-image path does not deliver it
+
+Found 2026-08-10 while debugging capture: `command -v i2cset` on a device flashed from
+`…-wm8960-noleds.img.xz` returns nothing, although `install.sh --audio-hat wm8960` documents
+installing `i2c-tools`. The image builder runs the installer with `--skip-deps` (a chroot cannot
+usefully apt-get for the target in every case), and `i2c-tools` is not in the package list
+`build-sd-image.sh` installs itself. Nothing in the product needs it — it matters only because it is
+the tool for talking to the codec directly, so its absence turns a diagnostic into a silent no-op.
+Either add it to the image builder's list or stop claiming it in `--help`.
+
+Unchanged and still worth an explicit check: the `amixer` control name differs across USB adapters
+(`PCM`, `Speaker`, `Master`), and `GpioHal` treats a mixer failure as non-fatal — so a wrong name
+means playback at whatever volume the adapter booted with, silently, including the volume cap being
+ignored. Set the volume in the admin panel, then read it back with `amixer sget <control>`.
+
+### The MVP board (Pi 3B+ + WM8960 HAT) is configured from documentation, not measurement
+
+Added 2026-08-10. The first real device is a Pi 3B+ with a **Waveshare WM8960 audio HAT**, using the
+HAT's own button as button 1 and **no LEDs at all** — `install.sh --audio-hat wm8960 --no-leds`.
+`docs/hardware.md` describes the board and `docs/hardware-bringup.md` gate 4a is the order to prove
+it in. Everything below was reasoned from vendor tables, the kernel overlay source and third-party
+wikis; **waveshare.com returns 403 to every fetch from here**, so none of it is measured, and all four
+are cheap to check on the bench.
+
+1. **That the HAT's P17 button is a populated switch.** Waveshare's pin table lists
+   `BUTTON → P17 (header pin 11), configurable` and its own procedure reads `1` released / `0`
+   pressed — active-low, matching `BUTTON_ACTIVE_LOW`. But a pin table entry is not a photograph, and
+   P17 may be broken out rather than fitted with a switch. `gpiomon gpiochip0 17` settles it. If it
+   is not populated, the fallback is a wire from GPIO17 to ground through any momentary switch.
+2. **That the card is called `wm8960soundcard`.** The in-tree overlay sets
+   `simple-audio-card,name = "wm8960-soundcard"`, and ALSA derives an id by stripping punctuation —
+   hence `plughw:CARD=wm8960soundcard,DEV=0` in the environment. Addressed by name rather than number
+   on purpose, so a card enumerating differently cannot silently move the daemon onto the Pi's own
+   headphone jack. `aplay -L` prints the truth; `bloopbox-doctor` and `bloopbox-audio-test` both now
+   check the configured name against it.
+3. **That the mixer controls are `Master` and `Capture`.** Both are silent failures by design
+   (`GpioHal` treats mixer errors as non-fatal), which is why doctor checks them. The WM8960 also
+   has input **boost** switches whose names vary by kernel version; if capture is silence at a
+   plausible gain, that is the next suspect and `amixer contents` is where to look.
+4. **That `CAPTURE_RATE=48000` is needed.** Predicted, not observed: the codec is the clock consumer
+   on a shared I²S bit clock, so it cannot hold two rates at once, and the cues are 48 kHz
+   (`scripts/generate-sounds.ts`) while capture defaults to 16 kHz. The **record pop fires at
+   `recordThresholdMs`, while capture is open** — the one place in the product where both directions
+   are live at the same rate-critical moment. Setting 48 kHz makes them agree and lets ffmpeg
+   resample during encode, which it already does; the cost is a larger intermediate WAV in tmpfs.
+   If the conflict turns out not to exist, dropping the variable restores the no-resample path.
+
+Also unproven and specific to this board: **whether the device records itself.** Speaker and
+microphone are centimetres apart on one HAT. `#commitCapture` finalises before the whoosh for exactly
+this reason, but the inbound chime and the record pop still play while the mic is live.
+
+Two decisions worth not re-litigating:
+
+- **Use the in-tree `wm8960-soundcard` overlay, never the vendor DKMS driver.** Waveshare's
+  `WM8960-Audio-HAT` repository is unmaintained and its module breaks on new kernels — a bad bet on a
+  Trixie target. The overlay needs nothing installed.
+- **The Pi 3B+'s own ACT and PWR LEDs were considered and rejected** as a two-channel light show.
+  On the 3B+ specifically both hang off a GPIO expander reachable only from the VPU, so every write is
+  a firmware mailbox round-trip against a `setLed` the animator calls at 20 Hz; `/sys` is read-only
+  under `ProtectKernelTunables=yes` and the files are root-owned, so it needs a udev rule and a
+  hardening exception; and two fixed-colour LEDs cannot express the matrix. If lamps are wanted on
+  this board, a 2×20 stacking header exposes 22/23/24/25/27 — the pins the code already defaults to.
+
+### An MVP-profile SD image now exists, but has never been booted
+
+Added 2026-08-10. `build-sd-image.sh` gained `--audio-hat` / `--no-leds`, passed straight through to
+`install.sh` inside the image, so gate 4a can start from a flashed card instead of an ssh install —
+which is the point of the image, and was previously impossible for this board: the builder hardcoded
+`install.sh --skip-deps --no-start` and produced a card configured for USB audio and three LED lines.
+
+`release/bloopbox-0.1.0-…-wm8960-noleds.img.xz` is built and its contents verified by mounting it:
+seven cue WAVs in `/opt/bloopbox/dist/audio/sounds/`, `LED_PINS=` empty, `CAPTURE_RATE=48000`,
+`plughw:CARD=wm8960soundcard` both directions, `Master`/`Capture` mixers, `dtoverlay=wm8960-soundcard`
+and `gpio=17,27,22=ip,pu` in `config.txt`, four units enabled. **None of that has been booted** — a
+mounted filesystem proves the installer wrote what it claims, not that the board comes up.
+
+One thing to watch on first boot: `config.txt` ends up with stock Pi OS's `dtparam=audio=on` *and*
+the installer's later `dtparam=audio=off`, which is how the onboard bcm2835 codec is meant to get out
+of the WM8960's way. Later wins, so this should be right, but if `aplay -l` shows two cards the
+ordering is the first place to look.
 
 ### Simulator playback timing
 
 In headless Chrome each 140ms clip took ~5s to report `ended`, because there is no audio output
 device to drive the media clock. Order and completion were correct. Worth confirming on a real
 browser with speakers that playback runs at the right speed.
+
+### The three designed cues have only been measured, never heard on the device
+
+Added 2026-08-10, when `boot`, `notify` and `swoosh` became designed recordings
+(`box/software/src/audio/samples/*.mp3`) instead of synthesised tones. What is verified is arithmetic:
+each masters to mono 48 kHz PCM at its declared peak (−7.1 / −8.0 / −7.0 dBFS) and to its audible
+length (825 / 318 / 456 ms), and `dist/audio/sounds/` carries all seven cues after a build. What is
+not verified is how any of it sounds through a small speaker at a toddler's ear.
+
+Three specific things to listen for during bring-up, in gate 4a's audio pass:
+
+1. **Whether the designed cues sit at the same loudness as the remaining beeps.** They were matched
+   by peak amplitude, which is the honest measure to match on but not the one ears use — a 456 ms
+   sound with sustain is perceived louder than a 90 ms click at the same peak. If `swoosh` and
+   `notify` come out obviously hotter than `pop` and `oops`, the fix is their `peak` in
+   `scripts/generate-sounds.ts`, and the tones are the ones to leave alone.
+2. **Whether `boot` at 825 ms is too long to sit under a 2.6 s LED chase**, and whether it reads as
+   "the box came back" rather than as a noise the box made.
+3. **The tail trim.** Trimming stops `MIN_SILENCE_S` (100 ms) after the last audible 100 ms window and
+   keeps `TAIL_PAD_S` (30 ms), so a long soft decay could in principle be clipped where a sudden stop
+   would not be. Nothing in the three current sources looks close to that boundary, but a redesigned
+   cue with a reverb tail is exactly the case that would hit it — and it would be audible as a cut,
+   not visible in the numbers.
 
 ---
 
@@ -900,11 +1169,18 @@ Not work, but things that could bite.
   `libgpiod3` (upstream 2.2.x). A future Debian bumping to libgpiod 3.x upstream would break it
   the same way Bookworm's 1.6 does today, and the failure is a build error in CI rather than
   anything subtle.
-- **`MemoryMax` on the two units is a guess, not a measurement.** 128/192 MB for the hardware
-  server and 192/288 MB for the bridge, on a 512 MB device. `bloopbox-debug on` samples
-  `MemoryCurrent` for every unit every 10s, so this is now a `jq` one-liner over
-  `/var/log/bloopbox/trace.jsonl` rather than a guess — see `docs/hardware-bringup.md`. Worth
-  doing especially for the bridge during a media download.
+- **`MemoryMax` on the two units is a guess, not a measurement — and was likely never enforced at
+  all until 2026-08-10.** 128/192 MB for the hardware server and 192/288 MB for the bridge, on a
+  512 MB device. Found live: the Pi's firmware disables the memory cgroup controller by default on
+  boards this small, and nothing had turned it back on, so `MemoryHigh=`/`MemoryMax=` on all four
+  units had nothing to attach to. Fixed by having `install.sh` set `cgroup_enable=memory
+  cgroup_memory=1` on the kernel command line — see the hotspot "went dark" entries above for the
+  full story. Once that is confirmed live on a reflashed device, the original ask still stands:
+  `bloopbox-debug on` samples `MemoryCurrent` for every unit every 10s, so measuring the real
+  numbers (rather than guessing) is a `jq` one-liner over `/var/log/bloopbox/trace.jsonl` — see
+  `docs/hardware-bringup.md`. Worth doing especially for the bridge during a media download, and
+  worth checking the two units don't now start OOM-killing each other where they silently didn't
+  before.
 - **Tests that depend on filesystem work must use `waitFor`, not a fixed `flush(n)`.**
   `deviceController.test.ts` runs on fake timers with `setImmediate` left real, because the
   commit path awaits `rm`. A fixed number of yields passed in isolation and failed

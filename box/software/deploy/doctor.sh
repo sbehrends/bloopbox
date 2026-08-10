@@ -123,6 +123,54 @@ if command -v arecord >/dev/null 2>&1; then
   else
     fail "playback device" "none — is the USB speaker plugged in?"
   fi
+
+  # A device named in the environment that ALSA does not know is the failure mode behind a
+  # daemon that starts, reports healthy, and is silent in both directions. Checked against
+  # `aplay -L`, which lists every name a `-D` argument may take.
+  PCM_NAMES="$(aplay -L 2>/dev/null || true)"
+  for variable in ALSA_PLAYBACK_DEVICE ALSA_CAPTURE_DEVICE; do
+    configured="${!variable:-}"
+    [[ -z "${configured}" || "${configured}" == default ]] && continue
+    if [[ "${PCM_NAMES}" == *"${configured}"* ]]; then
+      pass "${variable}" "${configured}"
+    else
+      fail "${variable}" "${configured} is not in aplay -L"
+    fi
+  done
+fi
+
+# Both checks below exist because of the same afternoon on the first real device, 2026-08-10:
+# the box was completely silent while every check above passed. Two independent causes, and
+# neither could announce itself, because `GpioHal` treats a mixer failure as non-fatal.
+if command -v amixer >/dev/null 2>&1; then
+  CONTROLS="$(amixer scontrols 2>/dev/null || true)"
+
+  # 1. A mixer control this codec does not have. The WM8960 has no `Master`, which is what the
+  #    installer wrote for months — so every volume change, and the child-safety cap with it,
+  #    was quietly discarded.
+  for variable in ALSA_MIXER_CONTROL ALSA_CAPTURE_MIXER_CONTROL; do
+    configured="${!variable:-}"
+    [[ -z "${configured}" ]] && continue
+    if [[ "${CONTROLS}" == *"'${configured}'"* ]]; then
+      pass "${variable}" "${configured}"
+    else
+      fail "${variable}" "no '${configured}' control here — volume changes are ignored"
+    fi
+  done
+
+  # 2. The DAC-to-output-amp routing. Off is total silence: the card enumerates, `aplay`
+  #    streams the file and exits 0, and every level reads healthy.
+  if [[ -n "${ALSA_ENABLE_SWITCHES:-}" ]]; then
+    while IFS= read -r switch_name; do
+      [[ -n "${switch_name}" ]] || continue
+      switch_state="$(amixer sget "${switch_name}" 2>/dev/null | grep -oE '\[(on|off)\]' | head -1)"
+      case "${switch_state}" in
+        '[on]') pass "routing: ${switch_name}" "on" ;;
+        '[off]') fail "routing: ${switch_name}" "OFF — DAC not connected to the amps, so no sound" ;;
+        *) fail "routing: ${switch_name}" "not a switch on this card" ;;
+      esac
+    done <<<"${ALSA_ENABLE_SWITCHES//,/$'\n'}"
+  fi
 fi
 
 section "gpio"

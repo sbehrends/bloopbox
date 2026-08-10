@@ -209,7 +209,7 @@ single source of truth — there is no hand-written parallel interface.
   "audio": {
     "speakerVolumePercent": 70,
     "maxVolumeCapPercent": 85,
-    "micGainPercent": 60,
+    "micGainPercent": 80,
     "maxRecordingSeconds": 30
   },
   "quietHours": {
@@ -409,18 +409,37 @@ Two things this table cannot express on its own:
 
 ### The cues
 
-| Cue           | Sound                                | When                                          |
-| ------------- | ------------------------------------ | --------------------------------------------- |
-| `pop.wav`     | High, ultra-short (< 200 ms)          | A press has passed `recordThresholdMs`         |
-| `whoosh.wav`  | Upward sweep                          | A recording has been committed                 |
-| `swoosh.wav`  | Success                               | Delivered to WhatsApp                          |
-| `oops.wav`    | Low double-beep                       | A tap that sends nothing, or a failed send      |
-| `chime.wav`   | Short soft chime                      | Separator between queued notes during playback |
-| `notify.wav`  | Soft arrival tone                     | A voice note arrived                           |
+| Cue           | Sound                                | Source    | When                                          |
+| ------------- | ------------------------------------ | --------- | --------------------------------------------- |
+| `boot.wav`    | Designed startup sound (825 ms)       | Recorded  | The device has come up                         |
+| `pop.wav`     | High, ultra-short (< 200 ms)          | Tones     | A press has passed `recordThresholdMs`         |
+| `whoosh.wav`  | Upward sweep                          | Tones     | A recording has been committed                 |
+| `swoosh.wav`  | Designed success sound (456 ms)       | Recorded  | Delivered to WhatsApp                          |
+| `oops.wav`    | Low double-beep                       | Tones     | A tap that sends nothing, or a failed send      |
+| `chime.wav`   | Short soft chime                      | Tones     | Separator between queued notes during playback |
+| `notify.wav`  | Designed arrival sound (318 ms)       | Recorded  | A voice note arrived                           |
 
-`notify.wav` is **beyond the original cue list**: §7 never named an inbound chime but stated that
-silent mode suppresses one, which implies it exists. The WAVs are **generated, not committed** —
-`npm run sounds` synthesises them from `scripts/generate-sounds.ts`.
+Two cues are **beyond the original cue list**. `notify.wav`: §7 never named an inbound chime but
+stated that silent mode suppresses one, which implies it exists. `boot.wav`: §6 defines a boot LED
+pattern but names no sound, and on a box with no screen the noise it makes when power returns is the
+only way a parent across the room learns it came back.
+
+**The WAVs are generated, not committed** — `npm run sounds` builds all seven, and a fresh clone has
+none. Three of them are **designed recordings**, committed as MP3 under `box/software/src/audio/samples/`
+and mastered by that script; the rest are synthesised from tone recipes in it. Both halves write one
+WAV per cue into the same directory under the cue's own name, so nothing downstream — the HAL, the
+`/sounds` route, the simulator — can tell which kind a cue is. `aplay` on the device reads WAV and
+nothing else, which is why even the designed sounds are transcoded rather than shipped as authored.
+
+Mastering is a decision in `scripts/generate-sounds.ts`, not a filter's side effect:
+
+- **Every cue is trimmed to its audible span.** The three sources arrive padded out to a round two or
+  three seconds of silence, and a cue file's length is dwell time on the audio device — untrimmed,
+  "delivered" would hold the speaker for 2 s to say something that takes 400 ms, and the chime
+  separating two queued notes would land on top of it.
+- **Peak level is declared per cue on one 0–1 scale**, shared with the synthesised tones' `gain`. The
+  designed sounds and the beeps come out of the same small speaker next to a child's ear, so a cue
+  twice as loud as its neighbour is a defect however good it sounds alone.
 
 ### Silence and quiet hours
 
@@ -436,6 +455,7 @@ Behaviour while silent:
 | Path                       | Silent mode                                                        |
 | -------------------------- | ------------------------------------------------------------------ |
 | Inbound notification chime | **Suppressed.** The lamp blinks silently                            |
+| Boot sound                 | **Suppressed.** Power returns at whatever hour the grid decides; the boot LED chase still runs |
 | Record start / stop cues   | **Suppressed**                                                     |
 | Sent / oops cues           | **Suppressed**                                                     |
 | **Playback of a voice note** | **Not suppressed.** Always plays at the configured volume         |

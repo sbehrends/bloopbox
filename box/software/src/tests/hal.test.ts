@@ -373,6 +373,11 @@ describe('silent-mode cue gating', () => {
     expect(shouldPlayCue(AudioCue.Notify, true)).toBe(false);
   });
 
+  it('suppresses the boot sound, since power returns at whatever hour it likes', () => {
+    expect(shouldPlayCue(AudioCue.Boot, true)).toBe(false);
+    expect(shouldPlayCue(AudioCue.Boot, false)).toBe(true);
+  });
+
   it('keeps the inter-message chime audible, since playback itself is not suppressed', () => {
     expect(shouldPlayCue(AudioCue.Chime, true)).toBe(true);
   });

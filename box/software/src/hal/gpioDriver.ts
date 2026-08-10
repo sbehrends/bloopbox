@@ -1,10 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { Output, Watch } from 'opengpio';
+import { basename, extname, join } from 'node:path';
+import type { Device, Output, Watch } from 'opengpio';
 import type { AudioCue } from '../audio/cues.ts';
-import { toVoiceNote } from '../audio/ffmpeg.ts';
+import { toPlayableWav, toVoiceNote } from '../audio/ffmpeg.ts';
 import { cuePath } from '../audio/soundFiles.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import type { Hal, HalEvents, HalOptions, RecordingHandle, RecordingResult } from './types.ts';
@@ -18,6 +18,7 @@ import type { Hal, HalEvents, HalOptions, RecordingHandle, RecordingResult } fro
  *   - LEDs inverted -> set LED_ACTIVE_HIGH=false.
  *   - Buttons read backwards or float -> the firmware pull-ups are not applied (see below).
  *   - ALSA device names differ -> set ALSA_CAPTURE_DEVICE / ALSA_PLAYBACK_DEVICE.
+ *   - Pin names resolve to the wrong lines on a non-Zero board -> set PI_BOARD.
  *
  * Nothing above the HAL depends on any detail here, so bring-up stays contained.
  * ===============================================================================
@@ -26,6 +27,9 @@ import type { Hal, HalEvents, HalOptions, RecordingHandle, RecordingResult } fro
 /**
  * BCM pin assignments (PRODUCT.md §2). Chosen to avoid the I2C/SPI/UART defaults so those
  * buses stay available, and grouped for tidy ribbon wiring.
+ *
+ * These are the **defaults**. `BUTTON_PINS` / `LED_PINS` below override them per device,
+ * which is what lets a reduced MVP board run the same driver — see `docs/hardware.md`.
  */
 export const GPIO_PINS = {
   /** Buttons: switch to ground, so the line idles HIGH and reads LOW when pressed. */
@@ -33,6 +37,31 @@ export const GPIO_PINS = {
   /** LED drive lines into the ULN2003 inputs. */
   leds: ['GPIO23', 'GPIO24', 'GPIO25'] as const,
 } as const;
+
+/** Upper bound on either pin list: the product has exactly three channels. */
+const MAX_CHANNELS = 3;
+
+/**
+ * Which opengpio board map to resolve pin names like "GPIO17" through.
+ *
+ * Every BCM283x board maps a BCM name to the same gpiochip0 line, so the Zero 2 W map is
+ * correct on a 3B+ too — observed on 2026-08-10, where `gpioinfo` on a real 3B+ showed all
+ * six lines claimed with the intended directions (PENDING.md). The override stays because
+ * opengpio ships per-board maps and a future board may not agree: `PI_BOARD` takes any
+ * board name it exports, and a wrong one fails at startup listing the valid ones.
+ */
+export const PI_BOARD = process.env['PI_BOARD'] ?? 'RaspberryPi_Zero2W';
+
+/**
+ * The pins actually wired on *this* device, in channel order (left, centre, right).
+ *
+ * A shorter list means fewer physical channels: the remaining logical channels still
+ * exist everywhere above the HAL, they simply have no hardware behind them. An empty
+ * value (`LED_PINS=`) claims no lines at all, which is the MVP case — a board with the
+ * audio HAT's single button and no lamps.
+ */
+export const BUTTON_PINS = parsePinList('BUTTON_PINS', GPIO_PINS.buttons);
+export const LED_PINS = parsePinList('LED_PINS', GPIO_PINS.leds);
 
 /**
  * The ULN2003 sinks current: the LED cathode ties to the chip output, so a HIGH input
@@ -49,12 +78,35 @@ export const BUTTON_ACTIVE_LOW = process.env['BUTTON_ACTIVE_LOW'] !== 'false';
 const ALSA_CAPTURE_DEVICE = process.env['ALSA_CAPTURE_DEVICE'] ?? 'default';
 const ALSA_PLAYBACK_DEVICE = process.env['ALSA_PLAYBACK_DEVICE'] ?? 'default';
 const ALSA_MIXER_CONTROL = process.env['ALSA_MIXER_CONTROL'] ?? 'PCM';
+/** Capture-side mixer control. `Mic` on a USB adapter, `Capture` on the WM8960 codec. */
+const ALSA_CAPTURE_MIXER_CONTROL = process.env['ALSA_CAPTURE_MIXER_CONTROL'] ?? 'Mic';
 
-/** Capture format matching the encode target, avoiding a resample on a slow CPU. */
-const CAPTURE_FORMAT = { rate: 16_000, channels: 1, format: 'S16_LE' } as const;
+/**
+ * Capture format. The rate defaults to the encode target so a slow CPU never resamples.
+ *
+ * `CAPTURE_RATE` exists for codecs that cannot run capture and playback at different rates
+ * at the same time. The WM8960 HAT is one: it is the clock consumer on a shared I2S bit
+ * clock, and the record cues are 48 kHz (`scripts/generate-sounds.ts`) — so the "pop" that
+ * fires at `recordThresholdMs`, *while* capture is open, would be a second rate on the same
+ * clock. Setting 48000 makes both directions agree and lets ffmpeg resample during encode,
+ * which it already does. Costs a larger intermediate WAV in tmpfs.
+ */
+const CAPTURE_RATE = parseRate('CAPTURE_RATE', 16_000);
+export const CAPTURE_FORMAT = { rate: CAPTURE_RATE, channels: 1, format: 'S16_LE' } as const;
 
 /** Grace period for arecord to finalise its WAV header before we SIGKILL. */
 const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
+
+/**
+ * The container formats `aplay` can read by itself: WAV, AU/SND and VOC. It is not a
+ * decoder — it hands PCM to ALSA.
+ *
+ * Anything else has to go through ffmpeg first, and **must**: given a file whose header it
+ * does not recognise, `aplay` does not fail, it plays the bytes as raw PCM. An inbound
+ * WhatsApp voice note is Ogg/Opus, so on the first real device every received message came
+ * out as full-volume noise while `aplay` exited 0 and nothing was logged.
+ */
+const APLAY_CONTAINERS = new Set(['.wav', '.au', '.snd', '.voc']);
 
 export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   readonly name = 'gpio';
@@ -71,6 +123,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   #captureProcess: ChildProcess | null = null;
   #captureId: string | null = null;
   #playbackProcess: ChildProcess | null = null;
+  /** Bumped by every `stopPlayback()`, so a decode still in flight knows it was cancelled. */
+  #playbackEpoch = 0;
 
   constructor(options: HalOptions) {
     super();
@@ -90,7 +144,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   async init(): Promise<void> {
     await mkdir(this.#recordingDirectory, { recursive: true });
 
-    const { Edge, RaspberryPi_Zero2W } = await import('opengpio').catch((error: unknown) => {
+    const opengpio = await import('opengpio').catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
         'opengpio unavailable — this driver needs a Pi with libgpiod v2 installed ' +
@@ -98,12 +152,14 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
           `build or load against libgpiod 1.x). Underlying error: ${detail}`,
       );
     });
+    const { Edge } = opengpio;
+    const board = resolveBoard(opengpio, PI_BOARD);
 
-    for (const [index, pin] of GPIO_PINS.leds.entries()) {
-      this.#ledLines[index] = RaspberryPi_Zero2W.output(pin);
+    for (const [index, pin] of LED_PINS.entries()) {
+      this.#ledLines[index] = board.output(pin);
     }
 
-    for (const [index, pin] of GPIO_PINS.buttons.entries()) {
+    for (const [index, pin] of BUTTON_PINS.entries()) {
       /*
        * No options passed on purpose. opengpio@2.0.2 transposes `bias` and `debounce`
        * when calling its native binding, so requesting a pull-up here would instead set a
@@ -112,7 +168,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
        * /boot/firmware/config.txt, applied by scripts/provision.sh) and debouncing is
        * software-side in core/buttonInterpreter.ts.
        */
-      const watch = RaspberryPi_Zero2W.watch(pin, Edge.Both);
+      const watch = board.watch(pin, Edge.Both);
       this.#buttonWatches[index] = watch;
       this.#attachButton(watch, toButtonIndex(index));
     }
@@ -214,18 +270,49 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     await rm(this.#wavPath(handle.id), { force: true });
   }
 
+  /**
+   * Plays a voice note. Decoded to WAV first unless it already is one — see
+   * `APLAY_CONTAINERS`. The decode is a few hundred milliseconds of a Pi's CPU against
+   * playing noise, so it is not conditional on anything but the container.
+   */
   async play(path: string): Promise<void> {
     await this.stopPlayback();
-    await this.#spawnPlayback(path);
+
+    if (APLAY_CONTAINERS.has(extname(path).toLowerCase())) {
+      await this.#spawnPlayback(path);
+      return;
+    }
+
+    /*
+     * Decoded beside the note, in the same tmpfs: the RAM disk is the only writable path
+     * either daemon has. The `play-` prefix keeps it out of `audio/recovery.ts`'s
+     * `wa-<index>-<id>.ogg` pattern, so a leftover from a power cut is never mistaken for
+     * an unread message — and `audio/purge.ts` already sweeps `.wav` here.
+     */
+    const decodedPath = join(this.#recordingDirectory, `play-${stem(path)}.wav`);
+    const epoch = this.#playbackEpoch;
+    try {
+      await toPlayableWav(path, decodedPath);
+      /*
+       * A `stopPlayback()` that lands mid-decode has no process to kill, so it is honoured
+       * here instead. Without this, a button pressed to interrupt the queue would start the
+       * note playing a moment *after* the microphone opened.
+       */
+      if (epoch === this.#playbackEpoch) await this.#spawnPlayback(decodedPath);
+    } finally {
+      await rm(decodedPath, { force: true });
+    }
   }
 
   async playCue(cue: AudioCue): Promise<void> {
     // Cues are short; letting them interrupt each other beats queueing them.
+    // Always WAV (scripts/generate-sounds.ts), so they never need decoding.
     await this.stopPlayback();
     await this.#spawnPlayback(cuePath(cue));
   }
 
   async stopPlayback(): Promise<void> {
+    this.#playbackEpoch += 1;
     const child = this.#playbackProcess;
     if (!child) return;
     this.#playbackProcess = null;
@@ -305,13 +392,34 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   }
 
   async #applyMicGain(): Promise<void> {
-    // Capture control names vary by USB adapter; failure here is not fatal.
-    await runQuiet('amixer', ['-M', 'sset', 'Mic', `${this.#micGainPercent}%`, 'cap']);
+    // Capture control names vary by adapter and codec; failure here is not fatal.
+    await runQuiet('amixer', [
+      '-M',
+      'sset',
+      ALSA_CAPTURE_MIXER_CONTROL,
+      `${this.#micGainPercent}%`,
+      'cap',
+    ]);
+    /*
+     * Unmuting is a separate call, not another word on the one above: a parameter the
+     * adapter's control does not have would fail the whole line and take the gain with it.
+     *
+     * It has to happen at all because the WM8960's input PGAs power up muted (LINMUTE /
+     * RINMUTE default to 1) and nothing else clears it — setting a percentage moves the
+     * volume register and leaves the mute bit alone. The symptom is a recording of exactly
+     * the right length containing pure silence.
+     */
+    await runQuiet('amixer', ['-q', 'sset', ALSA_CAPTURE_MIXER_CONTROL, 'cap', 'unmute']);
   }
 
   #wavPath(recordingId: string): string {
     return join(this.#recordingDirectory, `${recordingId}.wav`);
   }
+}
+
+/** A file's name without its directory or extension, for naming a derived file after it. */
+function stem(path: string): string {
+  return basename(path, extname(path));
 }
 
 /** Runs a command, ignoring failure. Mixer controls differ across audio adapters. */
@@ -321,6 +429,75 @@ async function runQuiet(command: string, args: readonly string[]): Promise<void>
     child.on('error', () => resolve());
     child.on('close', () => resolve());
   });
+}
+
+/**
+ * Reads a comma-separated pin list from the environment.
+ *
+ * Unset falls back to the compiled-in default; **set but empty means none**, which is how a
+ * board with no LEDs is expressed. Too many entries throws rather than truncating: a
+ * silently dropped channel is a button that does nothing for no visible reason.
+ */
+function parsePinList(variable: string, fallback: readonly string[]): readonly string[] {
+  const raw = process.env[variable];
+  if (raw === undefined) return fallback;
+
+  const pins = raw
+    .split(',')
+    .map((pin) => pin.trim())
+    .filter((pin) => pin.length > 0);
+
+  if (pins.length > MAX_CHANNELS) {
+    throw new RangeError(
+      `${variable} lists ${pins.length} pins but the device has ${MAX_CHANNELS} channels: ${raw}`,
+    );
+  }
+  return pins;
+}
+
+/**
+ * Reads a sample rate from the environment.
+ *
+ * Validated here rather than passed through, because `Number('')` is 0 and `Number('abc')` is
+ * NaN — both would reach `arecord -r` and fail at the first recording with an ALSA error
+ * nobody would trace back to a typo in the environment file.
+ */
+function parseRate(variable: string, fallback: number): number {
+  const raw = process.env[variable];
+  if (raw === undefined || raw === '') return fallback;
+
+  const rate = Number(raw);
+  if (!Number.isInteger(rate) || rate <= 0) {
+    throw new RangeError(`${variable} must be a positive whole number of Hz, got: ${raw}`);
+  }
+  return rate;
+}
+
+/** The slice of an opengpio board map this driver uses. */
+type BoardMap = Pick<typeof Device, 'output' | 'watch'>;
+
+function isBoardMap(value: unknown): value is BoardMap {
+  return typeof value === 'function' && 'output' in value && 'watch' in value;
+}
+
+/**
+ * Finds a board map on the opengpio module by name.
+ *
+ * Resolved by string rather than destructured so `PI_BOARD` can name any board the
+ * installed version ships, and so a wrong name reports the valid ones instead of failing
+ * as an undefined pin lookup deep inside the addon.
+ *
+ * Exported because it is the only part of this driver that can be tested without a Pi.
+ */
+export function resolveBoard(module: object, name: string): BoardMap {
+  const entries: [string, unknown][] = Object.entries(module);
+  const found = entries.find(([key]) => key === name)?.[1];
+  if (isBoardMap(found)) return found;
+
+  const available = entries.filter(([, value]) => isBoardMap(value)).map(([key]) => key);
+  throw new Error(
+    `PI_BOARD=${name} is not a board this opengpio exports. Available: ${available.join(', ')}`,
+  );
 }
 
 /** Narrows an iteration index over the fixed 3-pin arrays. */

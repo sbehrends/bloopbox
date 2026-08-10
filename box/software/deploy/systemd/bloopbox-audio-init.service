@@ -1,0 +1,23 @@
+[Unit]
+# Connects the codec's DAC to its output amplifiers before the daemon starts. On the WM8960
+# HAT those switches default to off, which makes the device completely silent while every
+# other indicator looks healthy — see deploy/audio-init.sh for the full story.
+Description=bloopbox — route the codec's DAC to its output amps
+After=sound.target alsa-restore.service
+# After alsa-restore so this has the last word: a stale saved state must not win over the
+# routing the installed profile asks for.
+Wants=sound.target
+Before=bloopbox-hardware.service
+ConditionPathExists=@ETC_DIR@/environment
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=@ETC_DIR@/environment
+ExecStart=@PREFIX@/deploy/audio-init.sh
+# Deliberately NOT a Requires= of the hardware service. A failure here should be visible in
+# `systemctl status` and `bloopbox-doctor`, not turn a mute speaker into a device that refuses
+# to boot: a box that still records and blinks is far more recoverable than one that is dead.
+
+[Install]
+WantedBy=multi-user.target

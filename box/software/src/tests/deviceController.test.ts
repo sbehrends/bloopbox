@@ -382,6 +382,38 @@ describe('receiving', () => {
   });
 });
 
+describe('boot announcement', () => {
+  it('plays the boot sound once when the boot window opens', async () => {
+    hal.clearHistory();
+
+    controller.announceBoot();
+    await flush();
+
+    expect(hal.cueSequence()).toEqual([AudioCue.Boot]);
+  });
+
+  it('stays quiet at night — power comes back at any hour', async () => {
+    controller.state.setManualSilent(true);
+    hal.clearHistory();
+
+    controller.announceBoot();
+    await flush();
+
+    expect(hal.cueSequence()).toEqual([]);
+  });
+
+  it('never lets a mute speaker hold up the boot', async () => {
+    hal.failPlayback = true;
+    hal.clearHistory();
+
+    // Synchronous and swallowing: a cue is a courtesy, a boot is not optional.
+    expect(() => {
+      controller.announceBoot();
+    }).not.toThrow();
+    await flush();
+  });
+});
+
 describe('silent mode', () => {
   it('suppresses record cues but still plays voice notes', async () => {
     controller.state.setManualSilent(true);

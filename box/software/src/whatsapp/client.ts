@@ -10,6 +10,7 @@ import {
   fetchLatestBaileysVersion,
   makeWASocket,
   useMultiFileAuthState,
+  type AuthenticationCreds,
   type ConnectionState,
   type WAMessage,
   type WASocket,
@@ -106,6 +107,33 @@ export function messageAgeMs(
   return Math.max(0, now - seconds * 1000);
 }
 
+/**
+ * Whether credentials on disk describe a device that is already paired.
+ *
+ * **`creds.registered` alone is not that question**, however much it reads like it. Baileys
+ * sets the flag in exactly one place — `Socket/messages-recv.ts`, handling the
+ * `link_code_companion_reg` notification — which is the **phone-number** pairing path. A QR
+ * scan finishes through `configureSuccessfulPairing`, which fills in `me`, `account`,
+ * `platform` and the signal identities and never touches `registered` at all.
+ *
+ * So a device paired by scanning ends up with a complete, working session on disk and
+ * `registered: false` sitting beside it. Nothing notices while the process stays up, because
+ * the live socket is authenticated either way; the flag is only ever read at boot. The next
+ * restart then reports a perfectly good pairing as `notLinked` and offers a parent a QR for
+ * an account that is already linked — and, because `beginLinking()` opens a fresh socket,
+ * scanning it is what would finally destroy the session that was there all along.
+ *
+ * `me.id` plus `account` is what actually proves a pairing happened, so that is what this
+ * asks. `registered` is still honoured first: it is authoritative when set.
+ */
+export function isPaired(
+  creds: Pick<AuthenticationCreds, 'registered' | 'me' | 'account'>,
+): boolean {
+  if (creds.registered) return true;
+  const id = creds.me?.id;
+  return typeof id === 'string' && id.length > 0 && creds.account !== undefined;
+}
+
 export type GroupSummary = { readonly id: string; readonly subject: string };
 
 export type WhatsAppClientEvents = {
@@ -168,7 +196,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     this.#stopping = false;
     await mkdir(this.#authDirectory, { recursive: true });
     const { state } = await useMultiFileAuthState(this.#authDirectory);
-    if (state.creds.registered) {
+    if (isPaired(state.creds)) {
       await this.#connect();
     } else {
       this.#setState('notLinked', 'waiting for a method to be chosen before linking');
@@ -320,6 +348,16 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     });
 
     socket.ev.on('connection.update', (update) => {
+      /*
+       * Reaching `open` means WhatsApp accepted these credentials, which is the only proof
+       * of pairing that matters. Writing it down normalises the flag Baileys leaves false
+       * on the QR path (see `isPaired`), so the credentials on disk agree with reality and
+       * `isPaired`'s fallback stays a safety net rather than the thing every boot rests on.
+       */
+      if (update.connection === 'open' && !state.creds.registered) {
+        state.creds.registered = true;
+        void saveCreds();
+      }
       this.#handleConnectionUpdate(update, socket);
     });
 

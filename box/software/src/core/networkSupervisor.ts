@@ -25,9 +25,10 @@ export type NetworkTimings = {
 export const DEFAULT_NETWORK_TIMINGS: NetworkTimings = {
   /**
    * Unconfigured: the parent is standing there waiting, and there is nothing to lose by
-   * raising the hotspot. `PRODUCT.md` §6 says 30s; 20s is the same intent, less standing about.
+   * raising the hotspot. `PRODUCT.md` §6's original spec said 30s; 10s is the same intent,
+   * less standing about.
    */
-  unconfiguredGraceMs: 20_000,
+  unconfiguredGraceMs: 10_000,
   /**
    * Configured: deliberately slow. A flat 30s here pops a hotspot into the house every time
    * the router reboots, which is both alarming and useless — the device would be back on the

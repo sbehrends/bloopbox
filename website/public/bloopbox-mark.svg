@@ -1,45 +1,84 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="bloopbox">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="bloopbox">
   <title>bloopbox</title>
   <!-- A COPY of box/software/public/shared/. The site and the box share a brand, not a
        build, so this file is duplicated on purpose. Change one, change the other. -->
   <!--
-    The Retro-Futurist Intercom mark, traced from the logo artwork (docs/BRAND.md).
+    The Speech Bubble mark, traced from the logo artwork (docs/BRAND.md).
 
-    Three concentric ring pairs read as one speech bubble with a tail: the big rings overlap
-    tightly so the silhouette closes up, while the three small "buttons" fan out evenly across
-    it. Left to right they are yellow, coral, teal — the same order as the ch-1/2/3 tokens and
-    the caps on the enclosure. (No double hyphens in here: XML forbids them inside a comment,
-    and a broken SVG fails as a silent broken-image icon on every page.)
+    A pill with a tail, holding three overlapping colour fields — yellow, coral, teal, left to
+    right, the same order as the buttons on the enclosure and the ch-1/2/3 tokens — and three
+    small ring "buttons" laid across them, echoing the caps on the enclosure the way the old
+    ring mark's buttons did. Every field and button carries a navy hairline, cartoon-outline
+    style, so the overlaps read as distinct shapes rather than a colour blend.
 
-    Structure of every ring: a colour disc with a navy hairline, then a cream disc with a navy
-    hairline punched out of it. That leaves a colour band edged in navy with a cream interior,
-    and the cream is opaque, so a ring drawn later cleanly occludes the one behind it — which is
-    what makes the overlaps read. The interior is cream in both colour schemes: on cream it
-    disappears into the page and the mark is three rings, on navy the bubble lights up.
+    The fields cover the pill's interior edge to edge — there is no opaque neutral interior like
+    the ring mark this replaced had — so the outer edge sits directly against whatever the page
+    is behind it, and that boundary is the one thing that cannot be a single fixed colour any
+    more: deep navy disappears into a navy page exactly as it needs to stand out on cream. The
+    .ink class is the fix, the same trick tokens.css already uses for the rest of the page: navy
+    at the default light rendering, cream under prefers-color-scheme dark.
 
-    Also the favicon. Terse on purpose: Vite inlines this as a data URI where it fits.
+    The button holes are the same idea taken one step further, straight from the artwork: on a
+    light background they are genuine cutouts, not a painted cream disc — the mask below punches
+    them clean through every coloured shape, so whatever is actually behind the mark (cream,
+    a coloured tile, anything) shows through undisguised. Only under prefers-color-scheme dark
+    does a disc get painted into that cutout, because on navy a real cutout would just look like
+    a hole to black. Everything else here keeps its exact brand hex regardless of theme.
+
+    Unreadable below about 24px — the fields, hairlines and holes all collapse into one blur —
+    which is what bloopbox-favicon.svg is for. They share no code, so a colour or button-order
+    change has to be made in both.
   -->
-  <g stroke="#1a2b48" stroke-width="1.1" stroke-linejoin="round">
-    <!-- Tail first, so the yellow ring's band closes over where it attaches. A hook, not a
-         petal: the left edge carries the ring's outer curve straight down to the point, and the
-         right edge runs back up to it in one diagonal. Solid, not hollow — the artwork's cream
-         notch is a few pixels wide at logo size and became a stray triangle at ours. -->
-    <path fill="#f7b733" d="M12.6 41 L13.2 52.5 Q13.4 54 14.8 53 L25.4 45.5 Q27.5 43.6 24 40.8 Z" />
+  <style>
+    .ink {
+      fill: #1a2b48;
+    }
+    .hole-backing circle {
+      fill: none;
+    }
+    @media (prefers-color-scheme: dark) {
+      .ink {
+        fill: #f7f4ef;
+      }
+      .hole-backing circle {
+        fill: #f7f4ef;
+      }
+    }
+  </style>
+  <defs>
+    <mask id="buttonHoles" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="120">
+      <rect x="0" y="0" width="120" height="120" fill="#fff" />
+      <circle cx="45.3" cy="56.5" r="2.8" fill="#000" />
+      <circle cx="59" cy="56.5" r="2.8" fill="#000" />
+      <circle cx="73" cy="56.5" r="2.8" fill="#000" />
+    </mask>
+  </defs>
+  <path
+    class="ink"
+    d="M30 56.5C30 47.964 36.8381 41 45.3271 41V43L44.9824 43.0049C37.7814 43.1899 32 49.1608 32 56.5C32 62.7226 36.1559 67.9624 41.8096 69.5254L41.2549 76L49.0283 70H74.4414C81.9295 70 88 63.9558 88 56.5C88 49.0442 81.741 43 74.2529 43V41C82.8014 41 90 47.8959 90 56.5C90 65.0685 83.026 72 74.4414 72H49.7109L38.873 80.3643L39.6836 70.9121C34.0019 68.6353 30 63.0339 30 56.5ZM59 41V43H45.3271V41H59ZM64 41V43H59V41H64ZM74.2529 41V43H64V41H74.2529Z"
+  />
+  <g class="hole-backing">
+    <circle cx="45.3" cy="56.5" r="2.8" />
+    <circle cx="59" cy="56.5" r="2.8" />
+    <circle cx="73" cy="56.5" r="2.8" />
+  </g>
+  <g mask="url(#buttonHoles)">
+    <g stroke="#1a2b48" stroke-width="1.1" stroke-linejoin="round">
+      <path
+        fill="#f7b733"
+        d="M45.3268 43C37.9666 43 32 49.0442 32 56.5C32 62.7227 36.1562 67.9621 41.81 69.525L41.2547 76L49.0287 70L64 70V43H45.3268Z"
+      />
+      <path
+        fill="#00a7e1"
+        d="M88 56.5C88 49.0442 81.7414 43 74.2532 43L59 43L59.1883 70L74.4416 70C81.9297 70 88 63.9558 88 56.5Z"
+      />
+      <circle fill="#ff6f61" cx="59" cy="56.5" r="13" />
+      <circle fill="#00a7e1" cx="73" cy="56.5" r="13" />
 
-    <!-- Big rings. Coral last: it sits on top in the artwork. -->
-    <circle cx="20.8" cy="28.1" r="17" fill="#f7b733" />
-    <circle cx="20.8" cy="28.1" r="13.4" fill="#f7f4ef" />
-    <circle cx="43.4" cy="28.1" r="17" fill="#00a7e1" />
-    <circle cx="43.4" cy="28.1" r="13.4" fill="#f7f4ef" />
-    <circle cx="32" cy="28.1" r="17" fill="#ff6f61" />
-    <circle cx="32" cy="28.1" r="13.4" fill="#f7f4ef" />
-
-    <!-- The three buttons, above every ring so none of them is ever clipped. -->
-    <circle cx="17.2" cy="28.1" r="6.1" fill="#f7b733" />
-    <circle cx="17.2" cy="28.1" r="3.1" fill="#f7f4ef" />
-    <circle cx="32" cy="28.1" r="6.1" fill="#ff6f61" />
-    <circle cx="32" cy="28.1" r="3.1" fill="#f7f4ef" />
-    <circle cx="47.2" cy="28.1" r="6.1" fill="#00a7e1" />
-    <circle cx="47.2" cy="28.1" r="3.1" fill="#f7f4ef" />
+      <!-- The three buttons, above every field so none of them is ever clipped. -->
+      <circle fill="#f7b733" cx="45.3" cy="56.5" r="5.6" />
+      <circle fill="#ff6f61" cx="59" cy="56.5" r="5.6" />
+      <circle fill="#00a7e1" cx="73" cy="56.5" r="5.6" />
+    </g>
   </g>
 </svg>

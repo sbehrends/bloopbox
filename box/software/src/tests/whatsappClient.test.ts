@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino from 'pino';
@@ -41,7 +41,24 @@ vi.mock('baileys', async (importOriginal) => {
   };
 });
 
-const { extractStatusCode, WhatsAppClient } = await import('../whatsapp/client.ts');
+const { extractStatusCode, isPaired, WhatsAppClient } = await import('../whatsapp/client.ts');
+
+/**
+ * Polls rather than flushing a fixed number of times — `saveCreds` is fire-and-forget, so an
+ * assertion about the file on disk depends on real filesystem work finishing. Same reasoning
+ * as `deviceController.test.ts`.
+ */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  label: string,
+  attempts = 500,
+): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`waitFor timed out waiting for: ${label}`);
+}
 
 function createFakeSocket(): FakeSocket {
   return {
@@ -60,6 +77,90 @@ async function markRegistered(authDirectory: string): Promise<void> {
   creds.registered = true;
   await writeFile(join(authDirectory, 'creds.json'), JSON.stringify(creds, BufferJSON.replacer));
 }
+
+/**
+ * Credentials exactly as a **QR scan** leaves them: a complete, working session, and
+ * `registered` still false.
+ *
+ * This is not a contrived shape — it is what `configureSuccessfulPairing` writes, and it was
+ * read off a real device on 2026-08-10 after a scan, which is how the bug was found.
+ */
+function qrPairedCreds(): ReturnType<typeof initAuthCreds> {
+  const creds = initAuthCreds();
+  creds.me = {
+    id: '15551234567:10@s.whatsapp.net',
+    name: 'A Parent',
+    lid: '46309042069587:10@lid',
+  };
+  creds.account = {
+    details: new Uint8Array([1]),
+    accountSignatureKey: new Uint8Array([2]),
+    accountSignature: new Uint8Array([3]),
+    deviceSignature: new Uint8Array([4]),
+  };
+  creds.platform = 'smbi';
+  return creds;
+}
+
+async function markPairedByQrScan(authDirectory: string): Promise<void> {
+  await writeFile(
+    join(authDirectory, 'creds.json'),
+    JSON.stringify(qrPairedCreds(), BufferJSON.replacer),
+  );
+}
+
+/**
+ * Returns `undefined` for a file caught mid-write rather than throwing.
+ *
+ * Not defensive padding: Baileys' `useMultiFileAuthState` saves with a plain `writeFile`,
+ * which truncates before it writes, and polling this in a loop hits the empty window often
+ * enough to fail the test outright. That the window is reachable at all is the point — see
+ * `PENDING.md`, "Baileys writes its credentials non-atomically".
+ */
+async function readRegisteredFlag(authDirectory: string): Promise<unknown> {
+  const raw = await readFile(join(authDirectory, 'creds.json'), 'utf8');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || !('registered' in parsed)) return undefined;
+  return parsed.registered;
+}
+
+describe('isPaired', () => {
+  it('accepts the flag Baileys sets on the phone-number pairing path', () => {
+    const creds = initAuthCreds();
+    creds.registered = true;
+
+    expect(isPaired(creds)).toBe(true);
+  });
+
+  it('accepts a QR-scanned session, which Baileys leaves with registered false', () => {
+    // The regression this exists for: on 2026-08-10 a real device held 1544 session files, a
+    // valid `me` and `account` — and reported itself as never linked after a restart, because
+    // `configureSuccessfulPairing` never touches `registered`.
+    const creds = qrPairedCreds();
+
+    expect(creds.registered).toBe(false);
+    expect(isPaired(creds)).toBe(true);
+  });
+
+  it('rejects a genuinely fresh credentials file', () => {
+    expect(isPaired(initAuthCreds())).toBe(false);
+  });
+
+  it('rejects a half-written pairing rather than guessing', () => {
+    // `me` without `account` is what `requestPairingCode` leaves behind before the code is
+    // ever typed in — it sets `me` from the phone number and `registered` to false. Treating
+    // that as paired would skip the QR and connect with credentials WhatsApp never accepted.
+    const withoutAccount = initAuthCreds();
+    withoutAccount.me = { id: '15551234567@s.whatsapp.net', name: '~' };
+
+    expect(isPaired(withoutAccount)).toBe(false);
+  });
+});
 
 describe('extractStatusCode', () => {
   it('reads the code out of a Boom-shaped error, which is how Baileys reports why', () => {
@@ -240,5 +341,38 @@ describe('WhatsAppClient#start and #beginLinking', () => {
 
     expect(makeWASocketMock).toHaveBeenCalledTimes(1);
     expect(client.state).toBe('connecting');
+  });
+
+  it('reconnects a QR-scanned device instead of asking a parent to link it again', async () => {
+    // The device this was found on had been linked for two minutes and was working. A crash
+    // restarted the daemon, `registered` was false because the pairing came from a scan, and
+    // the box offered a QR for the account it was already connected to — where scanning it
+    // would have replaced the session that was sitting there intact.
+    await markPairedByQrScan(authDirectory);
+    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    await client.start();
+
+    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+    expect(client.state).toBe('connecting');
+  });
+
+  it('writes the flag down once WhatsApp accepts the credentials', async () => {
+    await markPairedByQrScan(authDirectory);
+    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    await client.start();
+
+    expect(await readRegisteredFlag(authDirectory)).toBe(false);
+
+    // Reaching `open` is WhatsApp accepting these credentials — the only proof that counts.
+    const handler = sockets[0]?.ev.on.mock.calls.find(
+      ([event]) => event === 'connection.update',
+    )?.[1];
+    handler?.({ connection: 'open' });
+
+    await waitFor(
+      async () => (await readRegisteredFlag(authDirectory)) === true,
+      'the registered flag to be persisted',
+    );
+    expect(client.state).toBe('connected');
   });
 });

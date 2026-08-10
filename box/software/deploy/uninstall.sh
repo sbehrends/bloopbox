@@ -46,7 +46,8 @@ rm -f /etc/systemd/system.conf.d/10-bloopbox-watchdog.conf
 step "removing the application"
 rm -rf "${PREFIX}" "${PREFIX}.new" "${PREFIX}.old"
 rm -f /usr/local/bin/bloopbox-doctor /usr/local/bin/bloopbox-diagnostics \
-      /usr/local/bin/bloopbox-hotspot-test /usr/local/bin/bloopbox-debug
+      /usr/local/bin/bloopbox-hotspot-test /usr/local/bin/bloopbox-debug \
+      /usr/local/bin/bloopbox-audio-test
 # Debug mode leaves state outside the app directory: a journald drop-in, the trace, and a
 # deadline file. None of it is wanted once bloopbox is gone.
 rm -f /etc/systemd/journald.conf.d/10-bloopbox-debug.conf

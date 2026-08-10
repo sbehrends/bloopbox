@@ -131,6 +131,20 @@ export class DeviceController {
   }
 
   /**
+   * Says hello, once, as the boot window opens.
+   *
+   * The LED chase already announces a boot, but only to someone looking at the box. This is
+   * the sound that tells a parent across the room that the power cut is over and the device
+   * came back on its own — the one piece of feedback a screenless appliance cannot express
+   * any other way. Silenced at night like every other courtesy cue.
+   */
+  announceBoot(): void {
+    if (!shouldPlayCue(AudioCue.Boot, this.state.silentMode)) return;
+    // Not awaited: nothing about coming up should wait on a speaker.
+    void this.#safeCue(AudioCue.Boot);
+  }
+
+  /**
    * A voice note arrived for a contact.
    *
    * Synchronous on purpose. The blinking LED is the signal that matters, so queue and

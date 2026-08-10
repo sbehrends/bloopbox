@@ -231,6 +231,7 @@ export default function Home() {
 
         {/* ---- closing ---- */}
         <section className={`wrap ${styles.closing}`}>
+          <img src="/bloopbox-logo-light.svg" alt="" className={styles.mark} />
           <h2 className={styles.closingTitle}>Three buttons. Three people who love them.</h2>
           <p className={styles.closingLede}>
             Everything that makes this work — hardware to software — is open source. Take it and

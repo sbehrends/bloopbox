@@ -143,7 +143,7 @@ function renderNetworks(networks: ScannedNetwork[]): void {
     // hosting this hotspot. Typing the name always works.
     empty.textContent = 'No networks found from here. Type your network name below.';
     networksBox.append(empty);
-    setManual(true);
+    setManual(true, { focus: false });
     return;
   }
 
@@ -170,7 +170,12 @@ function renderNetworks(networks: ScannedNetwork[]): void {
   }
 }
 
-function setManual(on: boolean): void {
+/**
+ * `focus` defaults to true for the manual-toggle button click, which should pop the keyboard
+ * straight away. The no-networks-found path on initial load also lands here, and must not steal
+ * focus before the user has touched the page.
+ */
+function setManual(on: boolean, { focus = true }: { focus?: boolean } = {}): void {
   manual = on;
   manualField.hidden = !on;
   if (on) {
@@ -179,7 +184,7 @@ function setManual(on: boolean): void {
       other.setAttribute('aria-checked', 'false');
     }
     passphraseLabel.textContent = 'Password for your network';
-    manualSsid.focus();
+    if (focus) manualSsid.focus();
   }
   refresh();
 }

@@ -155,15 +155,29 @@ The hotspot double-pulse is a **rhythm**, not another rate. Every other pattern 
 square wave or a chase, and people tell a heartbeat from a blink across a room far more reliably
 than they tell 0.5 s blinking from 1.5 s blinking. Solid-on stays the language of error.
 
-There is deliberately no sound attached to any of this. The hotspot can come up at 3am because the
-router died, and a chime in a child's bedroom is the worse failure.
+There is deliberately no sound attached to any *status* here. The hotspot can come up at 3am because
+the router died, and a chime in a child's bedroom is the worse failure. Status is a condition that
+persists, so the light carries it and nothing has to be heard to learn it.
 
-### The boot animation is held on purpose
+### The boot animation is held on purpose, and it has a sound
 
 The daemon derives its status from Wi-Fi and WhatsApp health, which resolves instantly, so
 `BOOTING` would never be visible even though §6 defines a chase for it. `BOOT_ANIMATION_MS`
 (2.6 s) holds it, and the simulator has a **Reboot** injector to replay it, since a browser opened
 after startup would otherwise never see it.
+
+Coming up is the one lifecycle event that does make a noise (`boot.wav`, PRODUCT.md §7), and it is
+the exception the paragraph above is worth reading against. A boot is a **transition, not a
+condition**: it happens once, it is over in under a second, and the LED chase that expresses it is
+only visible to someone already looking at the box. The thing a parent actually wants to know after a
+power cut — *did it come back by itself?* — has no other channel on a device with no screen. The 3am
+objection still applies, and is answered by suppression rather than by silence: the boot cue is
+gated by `shouldPlayCue` like every other courtesy sound, so scheduled quiet hours and the silent
+chord both mute it while the chase runs regardless.
+
+`DeviceController.announceBoot()` owns the decision and the hardware server's `beginBoot()` is the
+only caller, used for both the real boot and the simulator's replay — one function, so the sound and
+the chase cannot drift into disagreeing about what booting is.
 
 ---
 

@@ -66,6 +66,60 @@ script derives its root from its own location rather than from git. And `.githoo
 **repo root**, because `core.hooksPath` resolves relative paths against the top of the working tree —
 a hook under `box/software/` is never found.
 
+### A way to force the setup hotspot back up without pulling the card
+
+Requested 2026-08-10, right after the hotspot path was first proven end to end. Today there is
+exactly one way back onto the setup flow once a device is configured: pull the SD card and edit
+`bloopbox-wifi.txt` on the boot partition (`docs/deployment.md`), which only works because that
+file is read *and deleted* on every boot regardless of `system.configured`. There is no way to ask
+the device to forget its Wi-Fi and raise the hotspot again while it is sitting in the room — useful
+when a family moves, replaces their router, or the passphrase changes and the admin panel (which
+needs the network to be reachable at all) is the wrong place to ask.
+
+**Where it plausibly lives:**
+- The admin panel already has the network in front of it — a "forget this network" action there is
+  the reachable-device case, and cheap: delete the `bloopbox` NM profile (or hand the agent an
+  action for it — `NET_ACTIONS` in `src/net/netState.ts` would need a fourth entry) and let
+  `NetworkSupervisor`'s existing `unconfiguredGraceMs` path do the rest.
+- The unreachable-device case is the one this is actually for, and it needs a **physical**
+  trigger, since that is the only interface a screenless device has. `buttonInterpreter.ts`
+  already has one precedent for a chord meaning something outside normal record/play — buttons 1
+  and 3 held for `silentComboMs` toggles silent mode (`PRODUCT.md` §6, `button.test.ts`). A
+  Wi-Fi-forget chord would need its own hold duration, long enough that a toddler's hands cannot
+  produce it by accident, and a cue distinct enough from every existing pattern that a parent
+  doesn't mistake it for silent mode.
+
+Scope this one narrowly: it must forget Wi-Fi only. Anything that also touches contacts, the admin
+password or WhatsApp pairing is the factory-reset item below, and conflating the two means a parent
+who only wanted to change routers loses the whole device's setup.
+
+### A factory-reset control that wipes all user configuration
+
+Requested 2026-08-10, alongside the Wi-Fi-forget item above — related, but a different blast
+radius and worth keeping separate rather than building one control that tries to be both.
+
+**What it should do.** Delete `/data/config.json` (falls back to `config.default.json` in RAM per
+the existing safety constraint), clear the WhatsApp auth state so the next boot needs a fresh QR
+pairing, and land the device back at onboarding exactly as it behaves on a first boot with no
+config. What it should *not* touch: the SD image itself, the installed application, or the
+`bloopbox` system user — this is a config wipe, not a re-flash.
+
+**Trigger, and why it needs care.** This is the most destructive control the device can expose to a
+child's room, so the bar for "impossible to trigger by accident" is higher than the silent chord or
+the Wi-Fi-forget idea above. Worth deciding deliberately rather than defaulting to "all three
+buttons, held a while": consider a hold duration well past `maxRecordingSeconds` (so it cannot be
+reached by an unusually long recording attempt), and whether it needs a two-step confirmation the
+existing LED vocabulary can express (`PRODUCT.md` §6's patterns are all currently spoken for, so a
+new one needs a priority-ladder slot in `ledPriority.test.ts`, not just a cue). The admin panel is
+the safer primary path — a button behind confirmation, no timing tricks needed — with the physical
+chord reserved for the case the panel is exactly what a factory reset needs to route around: a
+device nobody can reach.
+
+**Acceptance.** From a fully configured device: trigger the reset, confirm `/data/config.json` is
+gone and `system.configured` reads `false`, confirm WhatsApp requires a fresh pairing QR rather than
+resuming the old session, and confirm the three buttons and their contacts are all unassigned —
+covered by a test in the same family as `adminAuth.test.ts`'s onboarding-boundary checks.
+
 ### AP hotspot / captive portal for onboarding
 
 **Problem.** `PRODUCT.md` §3 (First Boot) has the device come up as an access point serving a captive
@@ -216,6 +270,29 @@ expansion in the image builder rather than on the device.
 **Acceptance.** A built image where pulling power during a settings save leaves both the OS and
 the previous config intact, and `sudo bloopbox-doctor` reports `/data` writable with `/`
 read-only.
+
+### `RuntimeDirectorySize=` is not a systemd directive, so the tmpfs cap is silently absent
+
+Found on the first real device, 2026-08-10. `bloopbox-hardware.service:48` and
+`bloopbox-whatsapp.service:32` both set `RuntimeDirectorySize=64M`. systemd 257 rejects it:
+
+```
+$ sudo systemd-analyze verify /etc/systemd/system/bloopbox-hardware.service
+/etc/systemd/system/bloopbox-hardware.service:48: Unknown key 'RuntimeDirectorySize' ...
+/etc/systemd/system/bloopbox-whatsapp.service:32: Unknown key 'RuntimeDirectorySize' ...
+```
+
+The key is ignored, the units start fine, and nothing else complains — which is why it survived
+review. The consequence: `/run/bloopbox` is **not a mount of its own**, just a directory inside the
+`/run` tmpfs (`findmnt /run/bloopbox` returns nothing; `df` shows it sharing `/run`'s 182 MB on a
+1 GB Pi). Recordings are therefore bounded by `/run`, not by 64 MB, and a purge failure would eat
+the space `systemd`, `NetworkManager` and the net-agent's state file all need.
+
+Not urgent — the 48 h purge and `maxRecordingSeconds` keep real usage far under 182 MB — but the
+protection everyone believes is there is not there. `RuntimeDirectory=` has no size option; the fix
+is a `TemporaryFileSystem=` entry or a real `run-bloopbox.mount` unit, which is what the note in
+`box/software/CLAUDE.md` ("audio-in-RAM with no mount unit") was trying to avoid. Whichever way it
+goes, that note and `docs/deployment.md` need updating with it.
 
 ### On-device doctor duplicates the tsx one
 
@@ -374,7 +451,15 @@ rotation also refetches `qr.svg`, which re-renders the QR server-side. Separatel
 rebuilds the whole panel from scratch and the daemon restarts on config writes, which is a couple
 of seconds where nothing answers — expected, but indistinguishable from a hang without a spinner.
 
-### The setup hotspot and its portal have never touched a radio or a phone
+### ~~The setup hotspot and its portal have never touched a radio or a phone~~ — now closed, 2026-08-10
+
+**Closed end to end, 2026-08-10.** A genuinely blank SD image (no Wi-Fi anywhere in it) booted, the
+radio came up, the hotspot raised itself with no manual trigger, `bloopbox-7971` appeared on a
+phone, the captive portal popped by itself, the nearby-network list rendered, and joining a network
+through the UI landed the device back online with `system.configured: true` — all without a single
+step performed from a shell. Three bugs were found and fixed along the way (below), and the full
+history is kept here rather than deleted, since it is the record of what "never touched a radio or
+a phone" actually cost to close.
 
 The whole path is built — agent, supervisor, LED rung, portal UI, captive redirect, join — and
 none of it has run on a Pi. What stubs and a container proved: the agent publishes valid JSON for
@@ -407,15 +492,232 @@ What only a radio and a phone can show:
   settling delay between the two, which would be a change to `ap_down` in the agent
 - that an unset Wi-Fi country does not stop the AP from starting
 
-Also unseen: the portal rendered in a browser. It is plain HTML and CSS, built and served
-correctly, but nobody has looked at it.
+~~Also unseen: the portal rendered in a browser.~~ **Seen and working, 2026-08-10.** On a phone:
+the captive portal popped up by itself, the nearby-network list rendered — which also proves the
+"scan captured just before the radio becomes an AP" design does its job — and joining a network
+from the UI completed. `system.configured` flipped to `true` and the device came back on the home
+network. The whole first-boot path now works end to end on real hardware.
+
+#### But the join reports failure to the parent, and blames the passphrase
+
+Caught in the same run. Two things activate the **same** `bloopbox` profile, both set off by the
+one portal save, and they race:
+
+```
+01:24:04  bloopbox-hardware.service: Deactivated successfully   <- the config save exits the daemon
+01:24:05  Scheduled restart job, restart counter is at 1
+01:24:08  net-agent: ap_down, then `nmcli con up bloopbox`      <- writer #1, join_network
+01:24:09  NM: Activation: starting connection 'bloopbox'
+01:24:10  NM: state change: config -> deactivating (reason 'new-activation')
+01:24:10  NM: disconnecting for new activation request          <- writer #1 is preempted
+01:24:20  wifi-apply.sh: joined Behrends-P (from /data/config.json)   <- writer #2, ExecStartPre
+01:24:20  Started bloopbox-hardware.service
+```
+
+`join_network`'s `nmcli con up` is cancelled by the second activation, returns non-zero, and the
+agent sets `LAST_ERROR="could not join Behrends-P — wrong passphrase, or out of range"`. The
+passphrase was correct. The device joined. **The portal still shows the parent a wrong-password
+error** — the single most discouraging thing it could say, on the one screen the product has, at
+the one moment a parent is most likely to give up and retype a password that was right.
+
+The two writers are both deliberate and documented (`deployment.md` explains why `wifi-apply.sh`
+runs from `ExecStartPre` — so a Wi-Fi save takes effect on the restart the save already triggers).
+Nothing anticipated them overlapping, because until the portal existed only one of them ever ran.
+
+**Fixed and verified on hardware, 2026-08-10**, on a genuinely blank SD image (no Wi-Fi baked in
+at all): `join_network` now starts the activation with `nmcli --wait 5`, then polls a new
+`joined_ssid()` helper against `nmcli dev status` / `dev wifi` for up to `JOIN_CONFIRM_SECONDS`
+(25s) before deciding, rather than trusting `nmcli con up`'s exit code. The device joined
+`Behrends-P` through the portal on the very first real end-to-end run this project has done —
+```
+net-agent: hotspot up: bloopbox-7971
+net-agent: joined Behrends-P
+```
+— with no false "wrong passphrase" report and `system.configured` correctly `true` afterward.
+
+Related and worth doing at the same time: PENDING already predicted "the radio may need a settling
+delay between `ap_down` and `nmcli con up`". That is **not** what happened here — the failure was a
+race, not a settle — so the settling-delay idea can be dropped unless it shows up on its own.
+
+#### A device with genuinely no Wi-Fi configured could not raise the hotspot at all
+
+Found 2026-08-10, on an SD image deliberately built with **no `--wifi-ssid`** — the exact shape of
+a real unboxing, and the first time this project built one. `wlan0` came up as `unavailable`, not
+`disconnected`: `rfkill list` showed the wifi radio soft-blocked, `iw reg get` read
+`country 00: DFS-UNSET`, and NetworkManager's own `WirelessEnabled` toggle was independently
+`false` on top of that. All three block *scanning*, not only `ap_up` — so the hotspot's own network
+picker would have shown nothing even if activation had somehow succeeded.
+
+Root cause: `scripts/build-sd-image.sh` only calls `raspi-config nonint do_wifi_country` inside the
+`if [[ -n "${WIFI_SSID}" ]]` branch. An image built with no Wi-Fi at all — the case the setup
+hotspot exists to handle — never sets a country, and Raspberry Pi OS refuses to let the radio
+transmit until something does. The mechanism meant to route around "no Wi-Fi known yet" turned out
+to depend on Wi-Fi having been known at build time. Confirmed live: `sudo rfkill unblock wifi` and
+`sudo nmcli radio wifi on` were both independently required before `wlan0` went from `unavailable`
+to `disconnected`.
+
+**Fixed and verified on hardware, 2026-08-10.** `ensure_radio_unblocked`, called once at startup
+before the first scan or publish, unblocks rfkill, turns NetworkManager's radio on, and — only when
+the regulatory domain reads as `00` (cfg80211's own "nobody has said yet" placeholder) — sets a
+fallback via `iw reg set "${AP_COUNTRY:-DE}"`. A domain that is already set, right or wrong, is
+never touched; this only fills a genuine gap. On a fresh flash with no Wi-Fi anywhere in the image,
+the log read exactly as designed:
+```
+net-agent: no regulatory domain was set — defaulted to DE
+net-agent: publishing to /run/bloopbox-net/net-state.json every 5s; hotspot would be bloopbox-7971
+net-agent: hotspot up: bloopbox-7971
+```
+`rfkill list` showed the radio unblocked, `iw reg get` read `country DE: DFS-ETSI`, and — unlike
+every earlier attempt tonight — `eth0` stayed `connected` throughout the AP transition instead of
+going dark with `wlan0`. Still worth deciding deliberately: `DE` is this project's bring-up
+location, not a claim about where any given device ships; the better long-term answer may be
+asking during onboarding rather than defaulting silently, but *something* has to unblock the radio
+before onboarding can ask anything at all.
+
+#### The device went dark on every interface four times before the fixes above — none of it recurred after
+
+Every occurrence happened while the agent was still running old, buggy code: the `no-secrets` WEP
+trap (which left a real `nmcli` call hung on a secrets prompt), or a build with no country at all
+(which left `wlan0` `unavailable` and every AP attempt failing in a loop). Once all four fixes were
+in — no-secrets, the join race, and the radio unblock — a full flash-to-configured run went start to
+finish with `eth0` staying `connected` the entire time and no lost session. Recorded as **probably
+explained by the bugs above, not a separate hardware fault** — but "probably" is doing real work in
+that sentence: nothing was captured that pins the mechanism, and `bloopbox-debug on`'s persistent
+journal was only running for the later occurrences. If a device goes dark on both interfaces again
+with none of tonight's bugs in play, treat it as a new, unexplained finding rather than folding it
+into this one.
+
+**`hotspot-test.sh` cannot test the portal without `--keep-daemon`, and its output does not make
+that clear enough.** The script stops `bloopbox-hardware` for the duration, so `10.42.0.1` answers
+nothing — which looks exactly like a broken portal to whoever is holding the phone. It cost one
+round of "the captive portal is dead" on 2026-08-10 before the listeners were checked and found
+healthy (`*:80` and `*:3000`, same pid, wildcard). Two cheap fixes: make the "the web server is
+stopped for the duration" paragraph **conditional** — it currently prints verbatim even when
+`--keep-daemon` was passed, which actively misleads — and have the tool suggest `--keep-daemon`
+whenever the run is about to be looked at from a phone.
+
+#### First attempt on real hardware, 2026-08-10 — the decision chain works, the radio does not
+
+Run on the Pi 3B+ with an ethernet cable in, so the operator kept a shell while `wlan0` was taken
+away — something a Zero 2 W cannot offer, and the reason `hotspot-test.sh`'s header says the test
+must detach itself. Worth reusing: `deploy/net-agent.sh:325` judges the network from the **wifi
+device only**, so a wired fallback is invisible to it and does not suppress the hotspot.
+
+`nmcli con down bloopbox`, then watched `/run/bloopbox-net/net-state.json` and
+`/run/bloopbox/net-request.json` for 80 s.
+
+**Proven, outside a container, for the first time:** the agent published `online:false` with a full
+20-network scan; the supervisor honoured `unconfiguredGraceMs` (20 s) and wrote exactly one
+`{"action":"ap-up"}` at t=25 s; the agent consumed it; the daemon re-requested at t=65 s when
+nothing changed. Agent → state file → daemon → request file is real.
+
+**Three defects, in the order they will bite:**
+
+1. **ROOT CAUSE FOUND — `wifi-sec.key-mgmt none` means WEP, not "open".** A second run with
+   `bloopbox-debug on` (persistent journal) caught NetworkManager saying it outright:
+
+   ```
+   device (wlan0): Activation: (wifi) access point 'bloopbox-ap' has security,
+                   but secrets are required.
+   device (wlan0): state change: need-auth -> failed (reason 'no-secrets')
+   ```
+
+   `ap_up` asked for `wifi-sec.key-mgmt none` intending an open network. In NetworkManager that
+   creates an `802-11-wireless-security` setting meaning **static WEP**, which then fails
+   activation for want of a WEP key. An open network needs the setting **removed**:
+   `nmcli con modify <profile> remove 802-11-wireless-security` (verified on the device — the
+   property disappears from `nmcli con show`). `build-sd-image.sh` already had this right, by
+   omitting `[wifi-security]` from the keyfile when there is no passphrase; only the agent was
+   wrong.
+
+   `join_network` carried **the same bug** in its no-passphrase branch, so joining an open network
+   from the setup portal would have failed identically — a path no test covers because the
+   container harness never activates a real profile.
+
+   **Fixed in `deploy/net-agent.sh`** (both sites, plus `ap_up` now sets `LAST_ERROR`), and
+   **verified on hardware with a phone in the room, 2026-08-10.** With the fixed agent deployed,
+   `wlan0` left the home network within 2 s of the request, the open `bloopbox-7971` network
+   appeared on a phone, and NetworkManager's shared mode handed out a `10.42.0.x` lease with
+   `10.42.0.1` as the gateway. That closes three of the bullets above at once: `mode ap` +
+   `ipv4.method shared` **does** come up on `brcmfmac`, a phone **does** get a lease, and the
+   radio returns to the real network afterwards on its own.
+2. **`ap_up`'s failure never leaves the journal.** `deploy/net-agent.sh:136-141` logs
+   `"hotspot failed to come up"` and returns 1, but nothing writes that into `lastError`, which the
+   state file already carries and the daemon already reads. So the one visible symptom on a
+   screenless device — LEDs stuck on `WIFI_ERROR` while the retry loop spins forever — is
+   indistinguishable from "no network yet". Publishing the failure is cheap and should come first:
+   it is what makes the rest of this debuggable at all.
+3. **The device drops off the network entirely, and it has now happened twice.** Both times
+   `wlan0` *and* `eth0` went silent together — no ssh, no `:3000` — and only a power cycle brought
+   it back.
+
+   The first occurrence is explained: a manual `sudo nmcli con up bloopbox-ap` blocked waiting for
+   the WEP secret that item 1 describes, which is why subsequent `nmcli` calls appeared to wedge.
+   That was a secrets prompt, not a crash — **the earlier reading of this as a hang was wrong.**
+
+   The second is not explained. It followed a bare
+   `nmcli con modify bloopbox-ap remove 802-11-wireless-security` — a config write with no
+   activation, no AP, and `wlan0` associated normally — and the very next ssh timed out. Nothing
+   was captured. Worth pinning down before trusting the device unattended, and worth checking
+   whether `bloopbox-debug on`'s 10 s sampler is implicated, since it was running both times and
+   was not during the healthy hours before it.
+
+   Practical rule until it is understood: **do not run network tests on this device without
+   physical access to it.** A wired fallback is not sufficient — `eth0` went with it, twice.
+
+The failure mode nobody designed for: the device ends up with *neither* the real network *nor* the
+hotspot, and the retry loop has no terminal state and no way to say so. `hotspot-test.sh`'s EXIT
+trap covers the opposite case (stuck as an AP) and would not have helped here.
+
+**Recovery was clean.** A power cycle brought it straight back: `nmcli con down` is not persistent,
+the `bloopbox` profile still carries `autoconnect=true, autoconnect-priority=10`, and NetworkManager
+rejoined on its own. No card was pulled and nothing was lost — except the evidence.
+
+**Set this up before repeating the test, in this order:**
+
+1. **`sudo bloopbox-debug on` first.** The post-mortem was impossible because
+   `journalctl -b -1` answers `no persistent journal was found` — Pi OS keeps the journal in RAM, so
+   the hang took its own explanation with it. `deploy/debug-mode.sh:90-107` already fixes exactly
+   this (`Storage=persistent`, capped at 128 M) and its header says so. The tooling was right; it
+   was simply not switched on. **Nothing about this run is worth repeating until it is.**
+2. **Install `iw`.** It is not in `RUNTIME_PACKAGES` and not on the device, so neither
+   `bloopbox-doctor` nor `hotspot-test.sh` can read the regulatory domain or ask whether the radio
+   even advertises an `AP` interface combination — the first two things to check when
+   `mode ap` will not activate. Worth adding to the debug kit rather than the runtime.
+3. **Do not trust ethernet as the fallback without checking the subnet.** `eth0` and `wlan0` both
+   landed on `192.168.1.0/24`; with both up, `192.168.1.154` (eth0) stops answering from another
+   host on that subnet while `192.168.1.69` (wlan0) answers fine. Fine during the test itself, when
+   `wlan0` is down — but it means the wired route cannot be verified in advance from the same LAN.
+   A separate subnet, or a direct cable, removes the doubt.
+
+Also unexplained, and worth watching rather than concluding: `eth0` went down *with* the box during
+the hang, when `wlan0` was already disconnected. `ipv4.method shared` installs masquerade rules as
+part of activation, which is the only plausible link between an AP that would not start and a wired
+interface that stopped answering — but nothing was captured to support that, which is what item 1
+is for.
 
 ### GPIO driver on real hardware
 
-`src/hal/gpioDriver.ts` is written from datasheets and the opengpio API but has never run on a
-Pi Zero 2 W. Pin numbers, ULN2003 polarity and ALSA device names are all unverified. See the
-`TODO(hardware)` banner in the driver; `docs/hardware-bringup.md` is the order to prove things
-in and what to reach for when one of them does not work.
+**Partly closed on 2026-08-10** — first real boot, from a `build-sd-image.sh` image, on a
+**Raspberry Pi 3 Model B Plus** (not a Zero 2 W). What that boot proved:
+
+- the addon loads against `libgpiod3` on real silicon, and the daemon reports `"driver":"gpio"`
+- **all six lines are claimed**, with the intended directions and edges — `gpioinfo` shows 17, 27
+  and 22 as `input edges=both` and 23, 24, 25 as `output`, each with an `opengpio_…` consumer
+- the firmware pull-up block (`gpio=17,27,22=ip,pu`) is present in `/boot/firmware/config.txt`
+- no GPIO error appears in `journalctl -u bloopbox-hardware` across a full boot
+
+Still unproven, and needing a finger and an eye rather than a shell: whether a **press registers**
+(no button was pressed during this session), whether `BUTTON_ACTIVE_LOW` matches the wiring, and
+whether the LEDs light the right colour in the right order — `--ch-1/2/3` are yellow, coral, teal
+and nothing enforces it. The board also matters for what comes next: a 3B+ has an analog audio jack
+that a **Zero 2 W does not have at all**, so any playback verified here says nothing about the real
+target.
+
+`src/hal/gpioDriver.ts` is written from datasheets and the opengpio API. ULN2003 polarity and ALSA
+device names remain unverified. See the `TODO(hardware)` banner in the driver;
+`docs/hardware-bringup.md` is the order to prove things in and what to reach for when one of them
+does not work.
 Contained behind the HAL, so bring-up should be a debugging session rather than a rewrite.
 
 What packaging did settle: the addon **compiles and loads on arm64 Trixie** against `libgpiod3`,
@@ -427,6 +729,12 @@ the ALSA device names are right. First moves are in `deploy/environment.example`
 comment out the hardening block in the systemd unit before suspecting the driver.
 
 ### Audio capture and playback on real ALSA devices
+
+**Blocked on hardware as of 2026-08-10:** the first device has **no capture device at all**.
+`arecord -l` lists nothing, `/proc/asound/cards` shows only `bcm2835 Headphones` and `vc4-hdmi`, and
+`lsusb` shows no audio device — only the internal hubs and the LAN7800. `bloopbox-doctor` reports
+this correctly as `✗ capture device — none — is the USB microphone plugged in?`. Until a USB
+microphone is attached, recording cannot be exercised at all, so everything below is still open.
 
 `arecord`, `aplay` and `amixer` have never been run by this code against a real sound card. The
 `amixer` control name in particular differs across USB adapters (`PCM`, `Speaker`, `Master`), and

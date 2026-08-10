@@ -47,6 +47,8 @@ export type RoutesContext = {
   readonly requestJoin: (credentials: { ssid: string; psk: string }) => Promise<boolean>;
   /** Drops WhatsApp credentials so the device can be re-paired. */
   readonly unlinkWhatsApp: () => void;
+  /** Opens the socket for a first-time link. A no-op unless WhatsApp is `notLinked`. */
+  readonly beginLinking: () => void;
   /** Groups the linked account is in, so a parent can pick one instead of typing a JID. */
   readonly listGroups: () => Promise<{ id: string; subject: string }[]>;
   /** Starts phone-number pairing, the alternative to scanning a QR. */
@@ -359,6 +361,12 @@ export function createApiRouter(context: RoutesContext): Router {
 
   router.post('/whatsapp/unlink', admin, (_req, res) => {
     context.unlinkWhatsApp();
+    res.json({ ok: true });
+  });
+
+  /** Opens the socket for a first-time link — the trigger for choosing a method in the panel. */
+  router.post('/whatsapp/link', admin, (_req, res) => {
+    context.beginLinking();
     res.json({ ok: true });
   });
 

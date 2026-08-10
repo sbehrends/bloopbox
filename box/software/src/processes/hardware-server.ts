@@ -196,7 +196,8 @@ async function main(): Promise<void> {
     } else if (whatsappState === 'connecting') {
       controller.setStatus(DeviceStatus.Connecting);
     } else {
-      // Wi-Fi up but WhatsApp unlinked or awaiting a QR scan.
+      // Wi-Fi up but WhatsApp not linked yet — never paired, awaiting a QR scan, or just
+      // logged out and waiting for a method to be chosen again.
       controller.setStatus(DeviceStatus.WhatsAppError);
     }
     transport.broadcastStatus(buildStatusPayload(routesContext));
@@ -264,6 +265,9 @@ async function main(): Promise<void> {
     wifiConnected: () => !isWifiDown(),
     unlinkWhatsApp: () => {
       link.current?.unlink();
+    },
+    beginLinking: () => {
+      link.current?.beginLinking();
     },
     listGroups: async () => (await link.current?.listGroups()) ?? [],
     requestPairingCode: async (phone: string) =>

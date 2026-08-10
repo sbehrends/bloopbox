@@ -16,7 +16,7 @@ import {
 } from 'baileys';
 import type { Logger } from 'pino';
 import { RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
-import type { ButtonIndex } from '../config/schema.ts';
+import { normalisePhone, type ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
 
 /**
@@ -130,6 +130,16 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   #reconnectTimer: NodeJS.Timeout | null = null;
   #stopping = false;
   #state: WhatsAppConnectionState = 'connecting';
+  /**
+   * The in-flight `requestPairingCode` call, if any.
+   *
+   * Baileys keeps rotating the QR on its own timer regardless of this call, and nothing stops
+   * a second pairing-code request from firing while the first is still waiting on WhatsApp's
+   * servers — each one overwrites `creds.me`/`creds.pairingCode` on the same socket, so two in
+   * flight together can corrupt both. One in flight at a time is enough to avoid that; it is
+   * cleared on every reconnect so a hung request cannot lock the method out permanently.
+   */
+  #pairingCodeRequest: Promise<string> | null = null;
 
   constructor(options: WhatsAppClientOptions) {
     super();
@@ -145,9 +155,29 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     return this.#state === 'connected';
   }
 
-  /** Opens the socket, restoring credentials if a previous pairing exists. */
+  /**
+   * Restores a previous pairing if one exists; otherwise waits.
+   *
+   * Baileys starts generating a QR the instant a socket opens for an unregistered device —
+   * that is WhatsApp's server driving the handshake, not a request we make — so an unpaired
+   * device must not open one at boot. It settles into `notLinked` and stays there until
+   * `beginLinking()` is called, which happens once a parent picks a method in the admin panel.
+   * An already-paired device has nothing to wait for and connects immediately, same as before.
+   */
   async start(): Promise<void> {
     this.#stopping = false;
+    await mkdir(this.#authDirectory, { recursive: true });
+    const { state } = await useMultiFileAuthState(this.#authDirectory);
+    if (state.creds.registered) {
+      await this.#connect();
+    } else {
+      this.#setState('notLinked', 'waiting for a method to be chosen before linking');
+    }
+  }
+
+  /** Opens the socket for a first-time link. A no-op once linking has already started. */
+  async beginLinking(): Promise<void> {
+    if (this.#state !== 'notLinked') return;
     await this.#connect();
   }
 
@@ -174,7 +204,9 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
    * Drops the pairing so the device can be linked to a different account.
    *
    * Deletes the auth directory as well as logging out — a stale creds.json would otherwise be
-   * restored on the next boot and immediately rejected.
+   * restored on the next boot and immediately rejected. Settles into `notLinked` rather than
+   * reconnecting on its own: the point of that state is that nothing opens a socket, and hence
+   * nothing asks Baileys for a QR, without a parent choosing a method first.
    */
   async unlink(): Promise<void> {
     const socket = this.#socket;
@@ -185,8 +217,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       this.#log.warn({ err: error }, 'logout failed; clearing credentials anyway');
     }
     await rm(this.#authDirectory, { recursive: true, force: true });
-    this.#setState('loggedOut', 'unlinked by admin');
-    if (!this.#stopping) this.#scheduleReconnect(true);
+    this.#setState('notLinked', 'unlinked — choose a method in the admin panel to link again');
   }
 
   /** Sends a voice note. Rejects if the socket is down, so the caller can report failure. */
@@ -221,12 +252,24 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     const socket = this.#socket;
     if (!socket) throw new Error('not connected to WhatsApp yet — try again in a moment');
     if (this.connected) throw new Error('already linked; unlink first to pair a new account');
-
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length < 7 || digits.length > 15) {
-      throw new Error('enter the full number with country code, digits only');
+    if (this.#pairingCodeRequest) {
+      throw new Error('already requesting a pairing code — wait for that one to answer');
     }
-    return socket.requestPairingCode(digits);
+
+    // Same reduction the contact-target parser uses: strips a leading `+`/`00`, and rejects a
+    // *surviving* leading 0 rather than guessing a country code — see `normalisePhone`.
+    const digits = normalisePhone(phone);
+    if (digits === null) {
+      throw new Error('enter the full number with country code — no leading 0, +, or 00');
+    }
+
+    const request = socket.requestPairingCode(digits);
+    this.#pairingCodeRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (this.#pairingCodeRequest === request) this.#pairingCodeRequest = null;
+    }
   }
 
   /** Groups the linked account participates in, for the admin panel's picker. */
@@ -251,6 +294,8 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       .catch(() => undefined);
 
     this.#setState('connecting');
+    // A stale lock from the superseded socket must not block pairing on the new one.
+    this.#pairingCodeRequest = null;
 
     const socket = makeWASocket({
       auth: state,
@@ -309,13 +354,14 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     this.#socket = null;
 
     if (loggedOut) {
-      // Credentials are dead. Clear them so the next connect produces a fresh QR rather than
-      // looping on a rejected session.
-      this.#setState('loggedOut', 'this device was unlinked from WhatsApp');
-      void (async (): Promise<void> => {
-        await rm(this.#authDirectory, { recursive: true, force: true }).catch(() => undefined);
-        if (!this.#stopping) this.#scheduleReconnect(true);
-      })();
+      // Credentials are dead. Clear them so a restored creds.json cannot be replayed against a
+      // rejected session, and wait for a parent to choose a method rather than reconnecting on
+      // our own — that would ask Baileys for a fresh QR nobody requested.
+      this.#setState(
+        'notLinked',
+        'this device was unlinked from WhatsApp — choose a method to link again',
+      );
+      void rm(this.#authDirectory, { recursive: true, force: true }).catch(() => undefined);
       return;
     }
 

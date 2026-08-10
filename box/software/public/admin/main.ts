@@ -452,6 +452,21 @@ function renderWifi(config: ConfigView, onSave: SaveFn): HTMLElement {
 const QR_TICK_MS = 500;
 const QR_POLL_TICKS = 4;
 
+/**
+ * Tells the device to open its WhatsApp socket, now that a method has actually been chosen.
+ *
+ * Nothing before this point has asked Baileys for anything — the device sits in `notLinked`
+ * until this fires, specifically so a parent looking at the chooser or filling in a phone
+ * number is not, in the background, already mid-QR-rotation on a method they didn't pick.
+ */
+async function beginLinking(): Promise<void> {
+  try {
+    await fetch('/api/whatsapp/link', { method: 'POST' });
+  } catch {
+    // The next poll's "unavailable" message covers this; nothing more to do here.
+  }
+}
+
 function renderWhatsApp(status: StatusView): HTMLElement {
   const section = card('WhatsApp');
   const state = element('p', 'status', status.whatsappConnected ? 'Linked' : 'Not linked');
@@ -460,10 +475,16 @@ function renderWhatsApp(status: StatusView): HTMLElement {
   section.append(state, pairing);
 
   /*
-   * The pairing block is built once on entering `awaitingPairing` and then only updated in
-   * place. Rebuilding it every poll would clear the phone-number field under the parent's
-   * fingers twice a second.
+   * Entering `awaitingPairing` used to render the QR code and the phone-number form together,
+   * so a parent could request a pairing code while a QR scan was still in flight — two link
+   * attempts racing on the same WhatsApp session, which tended to break both. The panel now
+   * asks which method to use first and shows only that one; `method` records the choice and is
+   * reset whenever pairing starts over. The block is otherwise built once per state/method and
+   * then only updated in place, so a poll never clears the phone-number field under the
+   * parent's fingers.
    */
+  let method: 'qr' | 'phone' | null = null;
+  let built = false;
   let image: HTMLImageElement | null = null;
   let countdown: HTMLElement | null = null;
   /** The code the visible image was drawn for, so a rotation is a string comparison. */
@@ -483,8 +504,58 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     image?.classList.toggle('is-expired', expired);
   };
 
-  const buildPairing = (): void => {
+  const backToChooser = (): HTMLButtonElement => {
+    // Unstyled on purpose: the bare button is the design system's secondary.
+    const back = element('button', undefined, 'Choose a different way to link');
+    back.type = 'button';
+    back.addEventListener('click', () => {
+      method = null;
+      image = null;
+      countdown = null;
+      shownQr = null;
+      deadline = 0;
+      buildChooser();
+    });
+    return back;
+  };
+
+  const buildChooser = (): void => {
     pairing.replaceChildren();
+    built = true;
+
+    const scan = element('button', 'primary', 'Scan a QR code');
+    scan.type = 'button';
+    scan.addEventListener('click', () => {
+      method = 'qr';
+      buildQr();
+      void beginLinking();
+      void poll();
+    });
+
+    const phoneButton = element('button', 'primary', 'Link with my phone number');
+    phoneButton.type = 'button';
+    phoneButton.addEventListener('click', () => {
+      method = 'phone';
+      buildPhone();
+      void beginLinking();
+    });
+
+    pairing.append(
+      element('h3', undefined, 'Link this device to WhatsApp'),
+      element(
+        'p',
+        'field-hint',
+        'Pick one way to link. Only one code is kept active at a time — starting the other ' +
+          'way is what used to make both stop working.',
+      ),
+      scan,
+      phoneButton,
+    );
+  };
+
+  const buildQr = (): void => {
+    pairing.replaceChildren();
+    built = true;
 
     const frame = element('div', 'qr-frame');
     // Rendered server-side; the raw payload is a long string and unscannable as text.
@@ -498,8 +569,6 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     countdown = element('p', 'qr-countdown');
     frame.append(image, countdown);
 
-    // Unstyled on purpose: the bare button is the design system's secondary, and the primary
-    // action in this block is the phone-number route below.
     const again = element('button', undefined, 'Show a new code');
     again.type = 'button';
     again.addEventListener('click', () => {
@@ -507,7 +576,7 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     });
 
     pairing.append(
-      element('h3', undefined, 'Option 1 — scan this code'),
+      element('h3', undefined, 'Scan this code'),
       element(
         'p',
         'field-hint',
@@ -516,19 +585,15 @@ function renderWhatsApp(status: StatusView): HTMLElement {
       ),
       frame,
       again,
+      backToChooser(),
     );
+  };
 
-    pairing.append(
-      element('h3', undefined, 'Option 2 — link with your phone number'),
-      element(
-        'p',
-        'field-hint',
-        'Often easier: WhatsApp → Linked devices → Link a device → "Link with phone number ' +
-          'instead", then type the code below.',
-      ),
-    );
+  const buildPhone = (): void => {
+    pairing.replaceChildren();
+    built = true;
 
-    const phone = textInput('', { placeholder: '15551234567' });
+    const phone = textInput('', { placeholder: 'e.g. 4915512345678, not 004915512345678' });
     const codeOut = element('p', 'pair-code');
     const request = element('button', 'primary', 'Get a pairing code');
     request.type = 'button';
@@ -559,9 +624,22 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     });
 
     pairing.append(
-      field('Your phone number', phone, 'Digits with country code, no + or spaces.'),
+      element('h3', undefined, 'Link with your phone number'),
+      element(
+        'p',
+        'field-hint',
+        'WhatsApp → Linked devices → Link a device → "Link with phone number instead", ' +
+          'then type the code below.',
+      ),
+      field(
+        'Your phone number',
+        phone,
+        'Country code first, no leading 0 — a +, 00, spaces or dashes in front of it are fine ' +
+          'and get dropped automatically.',
+      ),
       request,
       codeOut,
+      backToChooser(),
     );
   };
 
@@ -582,10 +660,16 @@ function renderWhatsApp(status: StatusView): HTMLElement {
       const current = 'state' in read ? asText(read.state) || 'unknown' : 'unknown';
       state.textContent = `State: ${current}`;
 
-      if (current !== 'awaitingPairing') {
-        // Linked, logged out or reconnecting: nothing to scan, so drop the block entirely.
-        if (image !== null) {
+      // `notLinked` is the chooser's own resting state; `connecting` covers the moment between
+      // choosing a method and Baileys actually producing anything. Anything else — linked,
+      // freshly logged out, or a transient drop — has nothing to link right now.
+      const linkable =
+        current === 'notLinked' || current === 'connecting' || current === 'awaitingPairing';
+      if (!linkable) {
+        if (built) {
           pairing.replaceChildren();
+          method = null;
+          built = false;
           image = null;
           countdown = null;
           shownQr = null;
@@ -594,7 +678,13 @@ function renderWhatsApp(status: StatusView): HTMLElement {
         return;
       }
 
-      if (image === null) buildPairing();
+      if (!built) {
+        if (method === 'qr') buildQr();
+        else if (method === 'phone') buildPhone();
+        else buildChooser();
+      }
+
+      if (method !== 'qr') return; // chooser and phone-number flows have nothing to poll-sync
 
       const qr = 'qr' in read ? asText(read.qr) : '';
       if (qr.length === 0) {
@@ -636,7 +726,12 @@ function renderWhatsApp(status: StatusView): HTMLElement {
   section.append(
     saveButton('Unlink WhatsApp', async () => {
       await fetch('/api/whatsapp/unlink', { method: 'POST' });
-      // Give the bridge a moment to produce a fresh code.
+      /*
+       * The route returns as soon as it has told the bridge to unlink, not once the bridge has
+       * actually logged out, deleted credentials and settled into `notLinked` — that involves a
+       * round trip to WhatsApp's servers. Polling immediately would likely still read the old
+       * state.
+       */
       await new Promise((resolve) => window.setTimeout(resolve, 2500));
       await poll();
     }),

@@ -166,7 +166,7 @@ storage.
 A device that cannot reach a network raises an **open** access point named `bloopbox-XXXX` (the
 last four of the Pi's serial) and serves a captive portal on it.
 
-- **Unconfigured:** after **20 s** of no association. It then stays up until somebody uses it —
+- **Unconfigured:** after **10 s** of no association. It then stays up until somebody uses it —
   there is no known network to step aside for.
 - **Configured:** after **3 min**. A flat 30 s would pop a hotspot into the house every time the
   router reboots, which is both alarming and useless. While it is up, every **60 s** the hotspot
@@ -358,7 +358,7 @@ Injected notes are synthesised 1.4 s tones with a distinct pitch per button (G4 
 | `quietHours.test.ts`                   | The schedule, including a window that wraps past midnight                 |
 | `config.test.ts`, `configDefault.test.ts` | Validation, atomic writes, the fallback, and the `phone` → `target` migration |
 | `whitelist.test.ts`                    | The safety boundary, written from "anything not assigned must not get through" |
-| `whatsappClient.test.ts`               | JID handling and the send path's shape                                    |
+| `whatsappClient.test.ts`               | Disconnect-reason handling, the pairing-code lock, and the deferred-connect gate — all via a mocked socket |
 | `offlineDelivery.test.ts`              | Notes sent while the box was off arriving on reconnect                    |
 | `routes.test.ts`, `adminAuth.test.ts`  | The REST surface and the auth boundary, against a real Express app        |
 | `bridgeLink.test.ts`                   | The token gate, against a real Socket.io server and client                |

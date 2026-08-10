@@ -57,6 +57,7 @@ export type Harness = {
   readonly joins: { ssid: string; psk: string }[];
   readonly restarts: string[];
   readonly unlinks: { count: number };
+  readonly beginLinkings: { count: number };
 
   /** Basic auth header value for a password. */
   basic: (password: string) => string;
@@ -118,6 +119,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
   const joins: { ssid: string; psk: string }[] = [];
   const restarts: string[] = [];
   const unlinks = { count: 0 };
+  const beginLinkings = { count: 0 };
 
   const context: RoutesContext = {
     config,
@@ -132,6 +134,9 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     },
     unlinkWhatsApp: () => {
       unlinks.count += 1;
+    },
+    beginLinking: () => {
+      beginLinkings.count += 1;
     },
     listGroups: () => Promise.resolve(state.groups),
     requestPairingCode: () => Promise.resolve(state.pairing),
@@ -195,6 +200,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     joins,
     restarts,
     unlinks,
+    beginLinkings,
     basic: (password) => `Basic ${Buffer.from(`admin:${password}`).toString('base64')}`,
     close: async () => {
       await controller.stop();

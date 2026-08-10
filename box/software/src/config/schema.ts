@@ -84,8 +84,13 @@ export type ParsedTarget = { readonly kind: TargetKind; readonly jid: string };
  *   - a remaining leading `0`, which is a *national* trunk prefix. `01155555555` is missing
  *     its country code, and inventing one would produce a number that reaches a stranger.
  *     Country codes never begin with 0, so a surviving leading zero is always a mistake.
+ *
+ * Exported because `WhatsAppClient#requestPairingCode` needs the exact same reduction — typing
+ * `0049…` instead of `49…` for the pairing phone number produces a bare-digits string that is
+ * valid-looking (right length, all digits) but identifies no one, and WhatsApp's only response
+ * to that is a generic "couldn't link device" with no hint of why.
  */
-function normalisePhone(value: string): string | null {
+export function normalisePhone(value: string): string | null {
   const withoutSuffix = value.endsWith(USER_SUFFIX) ? value.slice(0, -USER_SUFFIX.length) : value;
   const stripped = withoutSuffix.replace(PHONE_PUNCTUATION, '');
   let bare = stripped;

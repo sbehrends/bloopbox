@@ -87,13 +87,21 @@ export type DeviceStatusPayload = {
  * ------------------------------------------------------------------ */
 
 export type WhatsAppConnectionState =
+  /**
+   * Never paired, or just unlinked, and no socket is open. Deliberately inert: opening a
+   * socket for an unregistered device is what makes Baileys start generating a QR, and
+   * nothing should ask it to do that until a parent picks a method in the admin panel.
+   */
+  | 'notLinked'
   /** Socket opening or reconnecting. */
   | 'connecting'
   /** Linked and usable. */
   | 'connected'
   /** Needs a QR scan. */
   | 'awaitingPairing'
-  /** Logged out or credentials rejected — needs re-pairing. */
+  /** Logged out or credentials rejected — needs re-pairing. Only ever set by the simulator's
+   *  event injector, to demonstrate the LED pattern; the real client settles into
+   *  `notLinked` instead so it does not reconnect on its own. */
   | 'loggedOut'
   /** Transient failure; the bridge is backing off. */
   | 'disconnected';
@@ -155,6 +163,12 @@ export type ServerToBridgeEvents = {
   }) => void;
   /** Drop credentials and re-pair. */
   'wa:unlink': () => void;
+  /**
+   * Open the socket for a first-time link, having a parent's method choice as the trigger.
+   *
+   * A no-op if a socket is already open. Only meaningful while `notLinked`.
+   */
+  'wa:beginLinking': () => void;
   /** Mark messages read upstream once the queue has been played. */
   'wa:markRead': (payload: { index: ButtonIndex; messageIds: readonly string[] }) => void;
   /**

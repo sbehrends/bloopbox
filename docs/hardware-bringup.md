@@ -297,6 +297,16 @@ things `PENDING.md` flags as unproven:
   logs `dropped a voice note`)
 - a note in an assigned **group** arrives on that button whoever sent it
 - a sent note appears as a proper **PTT bubble**, not a file attachment, and plays
+- **the phone-number path**, not just the QR: unlink, choose "link with my phone number" in the
+  panel, and confirm a code arrives and completes the pairing. This is the path `PENDING.md`'s
+  pairing-race entry describes as fixed but not yet reverified — while there, also try switching
+  between the two methods a couple of times, since that is exactly the sequence that used to
+  break both.
+- **the device does not talk to WhatsApp before you tell it to.** On a factory-reset device
+  (`journalctl -u bloopbox-whatsapp -f` open), boot it and confirm `GET /api/whatsapp` reads
+  `notLinked` with no Baileys log lines at all, until you click a method in the panel. Then unlink
+  a paired account and confirm it settles back into `notLinked` — no fresh QR appears on its own —
+  and stays there until you click a method again.
 
 ---
 

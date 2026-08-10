@@ -78,6 +78,12 @@ async function main(): Promise<void> {
     });
   });
 
+  socket.on('wa:beginLinking', () => {
+    void client.beginLinking().catch((error: unknown) => {
+      log.error({ err: error }, 'beginLinking failed');
+    });
+  });
+
   socket.on('wa:requestPairingCode', (payload: unknown) => {
     const requestId = readString(payload, 'requestId', 64);
     const phone = readString(payload, 'phone', 32);

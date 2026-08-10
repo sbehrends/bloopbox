@@ -471,6 +471,12 @@ describe('WhatsApp pairing routes', () => {
     await send(api, 'POST', '/api/whatsapp/unlink', {});
     expect(api.unlinks.count).toBe(1);
   });
+
+  it('begins linking', async () => {
+    api = await startApi({ configured: false });
+    await send(api, 'POST', '/api/whatsapp/link', {});
+    expect(api.beginLinkings.count).toBe(1);
+  });
 });
 
 describe('POST /factory-reset', () => {

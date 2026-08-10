@@ -412,7 +412,7 @@ describe('requestPairingCode', () => {
 });
 
 describe('fire-and-forget messages to the bridge', () => {
-  it('sends contacts, markRead and unlink', async () => {
+  it('sends contacts, markRead, unlink and beginLinking', async () => {
     rig = await startRig();
     const client = await rig.connect();
     await waitFor(() => rig?.link.connected === true, 'connected');
@@ -421,13 +421,15 @@ describe('fire-and-forget messages to the bridge', () => {
     client.on('wa:contactsChanged', () => seen.push('contacts'));
     client.on('wa:markRead', () => seen.push('markRead'));
     client.on('wa:unlink', () => seen.push('unlink'));
+    client.on('wa:beginLinking', () => seen.push('beginLinking'));
 
     rig.link.sendContacts([{ index: 0, jid: '1@s.whatsapp.net' }]);
     rig.link.markRead(0, ['A']);
     rig.link.unlink();
+    rig.link.beginLinking();
 
-    await waitFor(() => seen.length === 3, 'all three messages');
-    expect(seen).toEqual(['contacts', 'markRead', 'unlink']);
+    await waitFor(() => seen.length === 4, 'all four messages');
+    expect(seen).toEqual(['contacts', 'markRead', 'unlink', 'beginLinking']);
   });
 
   it('does not send an empty markRead', async () => {

@@ -60,6 +60,8 @@ export type BridgeLink = {
   sendContacts(contacts: readonly { index: ButtonIndex; jid: string }[]): void;
   markRead(index: ButtonIndex, messageIds: readonly string[]): void;
   unlink(): void;
+  /** Opens the socket for a first-time link. A no-op unless the bridge is `notLinked`. */
+  beginLinking(): void;
 };
 
 type PendingSend = {
@@ -263,12 +265,17 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
     unlink(): void {
       socket?.emit('wa:unlink');
     },
+
+    beginLinking(): void {
+      socket?.emit('wa:beginLinking');
+    },
   };
 }
 
 /* ---- payload validation: the bridge is trusted, but a version skew is not ---- */
 
 const WHATSAPP_STATES: readonly WhatsAppConnectionState[] = [
+  'notLinked',
   'connecting',
   'connected',
   'awaitingPairing',

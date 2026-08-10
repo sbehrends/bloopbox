@@ -170,7 +170,7 @@ so a crashed daemon cannot strand the device.
 _Decision logic in TS._ `src/core/networkSupervisor.ts`: pure, takes observations plus timings,
 emits intents, tested on fake timers like `buttonInterpreter`. Bash stays a dumb executor.
 
-_When the AP comes up._ Unconfigured: 20 s of no association. Configured: 3 min — a flat 30 s
+_When the AP comes up._ Unconfigured: 10 s of no association. Configured: 3 min — a flat 30 s
 would pop a hotspot into the house every time the router reboots. While it is up, rescan every
 60 s and drop the AP to rejoin if the known SSID reappears. This deliberately deviates from §6's
 "opens AP hotspot after 30s"; the LED row records the behaviour, this records the why.
@@ -420,10 +420,85 @@ arrive when the bridge reconnects, from WhatsApp's own queue rather than from an
 which is the only mechanism that survives a power cut, since `/run` is tmpfs. Two notes sent to a
 dark box, two `voice note accepted` on reconnect, unread counts `[2,0,0]`.
 
-Still not run: `requestPairingCode` actually returning a code, and a note from a number nobody
-assigned being dropped — the negative case, which is the one the safety boundary exists for.
-Group membership as permission is also only half-checked: the group note came from the account
-that owns the device, not from a third party in that group.
+Still not run: a note from a number nobody assigned being dropped — the negative case, which is
+the one the safety boundary exists for. Group membership as permission is also only
+half-checked: the group note came from the account that owns the device, not from a third party
+in that group.
+
+`requestPairingCode` was finally exercised against a real device on 2026-08-10 and did not work —
+see the pairing-race entry below. Fixed there, but not yet reverified end-to-end on hardware.
+
+### Real-hardware pairing raced QR against phone-number linking — fixed, not yet reverified
+
+Reported 2026-08-10: on a real device neither QR scanning nor phone-number pairing would
+complete. The admin panel rendered "scan this QR" and "get a pairing code" side by side with no
+mutual exclusion, so a parent could request a pairing code while Baileys was still mid-QR-scan on
+the same socket. `WhatsAppClient#requestPairingCode` mutates `authState.creds.pairingCode`/
+`creds.me` directly (Baileys' own `socket.js`) and had no guard against a second call landing
+before the first was answered — two in flight together can corrupt both, and the resulting close
+cascades through `#handleConnectionUpdate` into `#scheduleReconnect`, which opens a fresh socket
+and restarts QR rotation from zero. That matches "everything keeps regenerating and nothing
+finishes."
+
+Fixed by making the two methods mutually exclusive in the UI (`public/admin/main.ts` now asks
+which method to use before rendering either) and by rejecting a second `requestPairingCode` call
+while one is already in flight (`src/whatsapp/client.ts`); the lock clears on every reconnect so
+a hung request cannot block the method permanently. Covered by
+`src/tests/whatsappClient.test.ts` against a mocked socket.
+
+**Follow-on, same day:** mutual exclusion in the UI did not stop Baileys itself from generating a
+QR the moment the socket opened — which was unconditionally, at daemon boot, for any unpaired
+device, regardless of which method (or neither) a parent had chosen. That is a second source of
+"it keeps regenerating": the bridge was asking WhatsApp for a QR before anyone had asked for
+anything. `WhatsAppClient#start()` now checks `creds.registered` and, if the device has never
+been paired, settles into a new `notLinked` state **without opening a socket at all** — no
+socket, no QR, no traffic to WhatsApp. Opening one is deferred to a new `beginLinking()`, wired
+through a new `wa:beginLinking` bridge event and `POST /api/whatsapp/link`, which the admin panel
+calls only when a parent clicks "Scan a QR code" or "Link with my phone number." `unlink()` and
+the logout branch in `#handleConnectionUpdate` settle into `notLinked` the same way instead of
+auto-reconnecting — so a device that loses its link (remote logout, or an admin unlinking it) no
+longer produces a fresh QR on its own; it waits at the chooser until someone opens the admin
+panel and picks a method again. That is a deliberate trade: a plugged-in-and-forgotten device
+that gets logged out remotely will now sit idle rather than silently regenerating QR codes into
+the void, but it does mean linking is never fully hands-off after the first time. Covered by
+four new cases in `src/tests/whatsappClient.test.ts` (no socket without registration or
+`beginLinking`, `beginLinking` opens one, immediate connect when already registered,
+`beginLinking` is idempotent) plus one each in `bridgeLink.test.ts` and `routes.test.ts`.
+
+**Not yet reverified against the device that reported this** — only the simulator, a live local
+run against real WhatsApp servers (phone-number path included), and the mocked unit tests have
+exercised these fixes. Re-run Gate 6 in `docs/hardware-bringup.md` on real hardware, including the
+phone-number path and an unlink-then-relink, before treating this as closed. If you're chasing a
+similar report, `journalctl -u bloopbox-whatsapp -f` carries Baileys' own log lines
+(`"lib":"baileys"`) alongside the bridge's, and `sudo bloopbox-diagnostics` bundles that journal.
+
+### `requestPairingCode` sent WhatsApp a bogus number for `0049…`-style input — fixed
+
+Found live-testing the fix above, same day: after the race was gone, a real attempt against a
+real WhatsApp account still failed with WhatsApp's generic "couldn't link device" on the phone —
+first suspected to be an upstream Baileys/WA-protocol version mismatch (there are several open
+Baileys issues matching that exact generic error, e.g. WhiskeySockets/Baileys#2679 and #2488),
+but that theory did not survive checking: `fetchLatestBaileysVersion()` was called directly and
+returns exactly the version already in use. The actual cause was mundane — the number was typed
+as `0049…` (the international-dialling spelling) rather than `49…`, and
+`WhatsAppClient#requestPairingCode` only stripped non-digit characters, not a leading `00`. The
+result was a valid-looking, wrong string handed straight to WhatsApp, which duly generated a real
+code for an account that doesn't exist and rejected it on entry with no error specific enough to
+point back at the number.
+
+The contact-target parser (`normalisePhone` in `src/config/schema.ts`) already solves exactly
+this — strips a leading `+` or `00`, and *rejects* a leading `0` that survives that rather than
+guessing a country code, since inventing one would produce a real, wrong recipient. It just was
+never reused for pairing. It now is: `requestPairingCode` calls the same (now-exported)
+function, so `0049…` and `+49…` both reduce to `49…`, and a genuinely malformed number (a
+surviving leading 0) is rejected before it ever reaches Baileys, with a message that says why.
+The admin panel's phone-number hint and placeholder were also reworded to show a `0049` vs. `49`
+example, so the mistake is less likely in the first place. Covered by two new cases in
+`src/tests/whatsappClient.test.ts`.
+
+Left open: the upstream Baileys issues linked above are real and worth knowing about if a future
+pairing failure looks like this again with a correctly-formatted number — they just were not the
+cause this time.
 
 ### Read receipts do not survive a bridge restart
 

@@ -23,6 +23,20 @@ afterEach(async () => {
   api = null;
 });
 
+/**
+ * Waits for something a route deferred until after its response.
+ *
+ * A condition rather than a fixed number of yields: the factory reset awaits a real promise
+ * before restarting, and a fixed flush passes in isolation and fails under parallel load.
+ */
+async function waitFor(predicate: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 /** POST/PUT JSON to a path. */
 async function send(harness: Harness, method: string, path: string, body: unknown) {
   return fetch(harness.url(path), {
@@ -522,6 +536,40 @@ describe('POST /factory-reset', () => {
     expect(response.status).toBe(200);
     expect(api.config.current.system.configured).toBe(false);
     expect(api.config.current.contacts.button1.target).toBe('');
+    // The restart is deferred behind the forget, so it lands after the response rather than
+    // with it — see the route. Everything else above is already true by the time we get here.
+    await waitFor(() => api?.restarts.length === 1, 'the deferred restart');
+    expect(api.restarts).toEqual(['factory reset']);
+  });
+
+  /*
+   * The three places a device remembers who it belongs to. A reset that clears the config but
+   * leaves either of the other two hands over a box that is still logged into the previous
+   * owner's WhatsApp, or still sitting on their network with no hotspot to re-onboard through.
+   */
+  it('also unlinks WhatsApp and forgets the network, so the hotspot can come back', async () => {
+    api = await startApi({ configured: true, adminPassword: 'hunter2' });
+
+    const response = await fetch(api.url('/api/factory-reset'), {
+      method: 'POST',
+      headers: { authorization: api.basic('hunter2') },
+    });
+
+    expect(response.status).toBe(200);
+    expect(api.unlinks.count).toBe(1);
+    await waitFor(() => api?.forgets.count === 1, 'the network to be forgotten');
+    await waitFor(() => api?.restarts.length === 1, 'the deferred restart');
+  });
+
+  it('restarts even when the network agent cannot be reached', async () => {
+    // A dev machine has no agent at all, and a device that cannot forget its network is still
+    // reset in every other respect — the reset must not be abandoned half-done.
+    api = await startApi({ configured: false });
+    api.forgetSucceeds = false;
+
+    await send(api, 'POST', '/api/factory-reset', {});
+
+    await waitFor(() => api?.restarts.length === 1, 'the restart despite the failed forget');
     expect(api.restarts).toEqual(['factory reset']);
   });
 });

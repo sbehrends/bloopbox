@@ -50,6 +50,8 @@ export type Harness = {
   whatsapp: { state: WhatsAppConnectionState; qr: string | null; qrAgeMs?: number | null };
   netState: NetState | null;
   joinAccepted: boolean;
+  /** Set false to make the agent call reject, as a missing request directory would. */
+  forgetSucceeds: boolean;
   groups: { id: string; subject: string }[];
   pairing: { code?: string; error?: string };
 
@@ -58,6 +60,7 @@ export type Harness = {
   readonly restarts: string[];
   readonly unlinks: { count: number };
   readonly beginLinkings: { count: number };
+  readonly forgets: { count: number };
 
   /** Basic auth header value for a password. */
   basic: (password: string) => string;
@@ -113,6 +116,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     },
     netState: null as NetState | null,
     joinAccepted: true,
+    forgetSucceeds: true,
     groups: [] as { id: string; subject: string }[],
     pairing: {} as { code?: string; error?: string },
   };
@@ -120,6 +124,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
   const restarts: string[] = [];
   const unlinks = { count: 0 };
   const beginLinkings = { count: 0 };
+  const forgets = { count: 0 };
 
   const context: RoutesContext = {
     config,
@@ -131,6 +136,12 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     requestJoin: (credentials) => {
       joins.push(credentials);
       return Promise.resolve(state.joinAccepted);
+    },
+    requestForgetNetwork: () => {
+      forgets.count += 1;
+      return state.forgetSucceeds
+        ? Promise.resolve(true)
+        : Promise.reject(new Error('no network agent'));
     },
     unlinkWhatsApp: () => {
       unlinks.count += 1;
@@ -185,6 +196,12 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     set joinAccepted(value) {
       state.joinAccepted = value;
     },
+    get forgetSucceeds() {
+      return state.forgetSucceeds;
+    },
+    set forgetSucceeds(value) {
+      state.forgetSucceeds = value;
+    },
     get groups() {
       return state.groups;
     },
@@ -201,6 +218,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     restarts,
     unlinks,
     beginLinkings,
+    forgets,
     basic: (password) => `Basic ${Buffer.from(`admin:${password}`).toString('base64')}`,
     close: async () => {
       await controller.stop();

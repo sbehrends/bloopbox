@@ -260,8 +260,15 @@ export class NetStateWatcher {
  */
 export const NET_REQUEST_PATH = process.env['NET_REQUEST_PATH'] ?? '/run/bloopbox/net-request.json';
 
-/** Everything the daemon is allowed to ask for. The agent enforces the same list. */
-export const NET_ACTIONS = ['ap-up', 'ap-down', 'join'] as const;
+/**
+ * Everything the daemon is allowed to ask for. The agent enforces the same list.
+ *
+ * `forget` deletes the profile the device joined, which is what makes a factory reset
+ * actually land back at onboarding: deleting `config.json` alone leaves NetworkManager
+ * holding an autoconnecting profile, so the device stays online and `NetworkSupervisor`
+ * never sees the outage that raises the hotspot.
+ */
+export const NET_ACTIONS = ['ap-up', 'ap-down', 'join', 'forget'] as const;
 
 export type NetAction = (typeof NET_ACTIONS)[number];
 

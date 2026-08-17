@@ -228,12 +228,14 @@ written but **has never run on real hardware** — treat it as unverified.
 `docs/hardware-bringup.md` is the gate-by-gate plan for the day that changes, with the debugging kit
 (`bloopbox-doctor`, `bloopbox-audio-test`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`).
 
-**The MVP board is a Pi 3B+ with a WM8960 audio HAT, one button and no LEDs** —
-`install.sh --audio-hat wm8960 --no-leds`. Three things that follow from it, all in `docs/hardware.md`:
-the HAT's own button is on **GPIO17, which is already button 1**, so it needs no wiring; `BUTTON_PINS`
-and `LED_PINS` make the pin lists shorter than three without touching anything above the HAL; and this
+**Audio is the WM8960 HAT from here on** (decided 2026-08-17) — `install.sh --audio-hat wm8960`,
+with all three buttons and all three lamps wired. Three things that follow from it, all in
+`docs/hardware.md`: the HAT's own button is on **GPIO17, which is already button 1**, so keep button 1
+there and the HAT needs no wiring of its own; nothing the HAT occupies (GPIO 2, 3 and 18–21) collides
+with the buttons or lamps, so the full pin map stands; and this
 codec needs `CAPTURE_RATE=48000` because it cannot hold two rates on one I²S clock and the record cues
-are 48 kHz. Its ALSA controls are **`Playback`/`Capture`** — measured 2026-08-10; this codec has no
+are 48 kHz. `BUTTON_PINS` and `LED_PINS` still shorten the pin lists for a reduced board — an empty
+`LED_PINS=` (what `--no-leds` writes) claims no output lines — without touching anything above the HAL. Its ALSA controls are **`Playback`/`Capture`** — measured 2026-08-10; this codec has no
 `Master`, and the wrong name fails silently because a mixer error is non-fatal by design.
 
 Two more ALSA facts, both learned the same day by having neither direction work on a live device:

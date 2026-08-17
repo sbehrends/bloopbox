@@ -291,6 +291,7 @@ async function main(): Promise<void> {
     netState: (): NetState | null => netWatcher.last,
     requestJoin: async (credentials: { ssid: string; psk: string }) =>
       requestNetAction('join', { credentials }),
+    requestForgetNetwork: async () => requestNetAction('forget'),
   };
 
   /*

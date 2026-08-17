@@ -174,6 +174,33 @@ ap_down() {
   fi
 }
 
+# Deletes the profile this device joined, so it stops autoconnecting to it.
+#
+# The privileged half of a factory reset. Deleting /data/config.json is not enough on its own:
+# wifi-apply.sh only ever *writes* the profile, so with no SSID left to apply it exits early
+# and NetworkManager keeps the old one — autoconnect yes, priority 10. The device would come
+# back up online, and `NetworkSupervisor` only raises the hotspot for a device that is offline.
+#
+# Scoped to the profile bloopbox itself manages. Anything the imager seeded is left alone: it
+# is not ours to delete, and on a device built with --wifi-ssid it is the network the owner
+# deliberately baked in. That device rejoins after a reset instead of offering a hotspot, and
+# is re-onboarded over the network it is already on.
+forget_network() {
+  if [[ "$(nmcli -t -f NAME con show 2>/dev/null | awk -v n="${CONNECTION_NAME}" '$0==n{print "yes"; exit}')" != yes ]]; then
+    log "no ${CONNECTION_NAME} profile to forget"
+    return 0
+  fi
+  nmcli con down "${CONNECTION_NAME}" >/dev/null 2>&1
+  if nmcli con delete "${CONNECTION_NAME}" >/dev/null 2>&1; then
+    log "forgot ${CONNECTION_NAME}"
+    LAST_ERROR=
+  else
+    log "could not delete ${CONNECTION_NAME}"
+    LAST_ERROR="could not forget the saved network — check journalctl -u NetworkManager"
+    return 1
+  fi
+}
+
 # True once the radio is actually on `ssid`. NetworkManager only says `connected` after the
 # device has an address, which is the same bar the poll loop below uses for `online` — so this
 # answers "did it work" the way the rest of the file already means it.
@@ -282,6 +309,7 @@ consume_request() {
     ap-up) ap_up ;;
     ap-down) ap_down ;;
     join) join_network "${ssid}" "${psk}" ;;
+    forget) forget_network ;;
     # Empty means the file was there but held nothing this script is willing to act on —
     # unparseable, the wrong shape, or an action outside the allowlist. Worth a line: silence
     # here would make a daemon asking for something impossible look like a daemon asking for

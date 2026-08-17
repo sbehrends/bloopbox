@@ -45,6 +45,13 @@ export type RoutesContext = {
    * Resolves once the request is written, not once the radio has done anything.
    */
   readonly requestJoin: (credentials: { ssid: string; psk: string }) => Promise<boolean>;
+  /**
+   * Asks the root agent to delete the saved network profile.
+   *
+   * Only a factory reset uses this. Without it the device comes back from the reset still
+   * associated and autoconnecting, so it never looks offline and never offers the hotspot.
+   */
+  readonly requestForgetNetwork: () => Promise<boolean>;
   /** Drops WhatsApp credentials so the device can be re-paired. */
   readonly unlinkWhatsApp: () => void;
   /** Opens the socket for a first-time link. A no-op unless WhatsApp is `notLinked`. */
@@ -389,14 +396,47 @@ export function createApiRouter(context: RoutesContext): Router {
     res.json({ ok: true });
   });
 
+  /**
+   * Wipes every piece of user configuration and lands the device back at first boot
+   * (PENDING.md, "A factory-reset control that wipes all user configuration").
+   *
+   * Three things, because config.json is only one of the three places a device remembers who
+   * it belongs to: the config itself, the WhatsApp session on disk, and the Wi-Fi profile in
+   * NetworkManager. Leave any one and the "reset" device is still somebody's — still logged
+   * into their account, or still sitting on their network with no way to hand it over.
+   *
+   * Ordered so the reply survives: forgetting the network drops the connection this request
+   * arrived over, and the restart ends the process, so both happen strictly after `res.json`.
+   * The agent's request file lives in the runtime directory that systemd preserves across a
+   * restart, so the forget is not lost by racing it.
+   */
   router.post('/factory-reset', admin, async (_req, res) => {
     try {
       await context.config.factoryReset();
-      res.json({ ok: true, restarting: true });
-      context.requestRestart('factory reset');
     } catch {
+      // Nothing has been torn down yet, so this is still a recoverable, reportable failure.
       res.status(500).json({ error: 'factory reset failed' });
+      return;
     }
+
+    // Clears the credentials on disk, so the next boot needs a fresh pairing rather than
+    // resuming the previous owner's session.
+    context.unlinkWhatsApp();
+
+    res.json({ ok: true, restarting: true });
+
+    // Best-effort and deliberately not awaited into the response: on a dev machine there is
+    // no agent at all, and a device that cannot forget its network is still reset in every
+    // other respect. The supervisor raises the hotspot once the outage actually shows up.
+    void (async (): Promise<void> => {
+      try {
+        await context.requestForgetNetwork();
+      } catch {
+        // Swallowed rather than left to reject: the restart below is what finishes the reset,
+        // and abandoning it would leave the device running on a config that is already gone.
+      }
+      context.requestRestart('factory reset');
+    })();
   });
 
   /* ---- diagnostics ---- */

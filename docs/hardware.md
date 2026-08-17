@@ -153,30 +153,34 @@ it back with `amixer sget <control>`.
 
 Run `amixer scontrols` on the device and set `ALSA_MIXER_CONTROL` to what it actually prints.
 
-## The MVP board: a Pi 3B+ and a WM8960 HAT
+## The reference board: a WM8960 HAT, three buttons and three lamps
 
-The first real device is deliberately **not** the bill of materials above. It is a Pi 3B+ with a
-[Waveshare WM8960 audio HAT](https://www.waveshare.com/wiki/WM8960_Audio_HAT), one button, and no
-lamps — enough to answer the only question an MVP has to answer: *does this software work on real
-hardware at all.* Arcade buttons, the ULN2003 and the enclosure come after.
+**Audio is a [Waveshare WM8960 HAT](https://www.waveshare.com/wiki/WM8960_Audio_HAT) from here on**
+(decided 2026-08-17), not the USB speakerphone in the bill of materials above. Everything else
+matches the full device: all three buttons and all three lamps are wired.
 
-| | Full device | MVP board |
+| | Bill of materials | Reference board |
 | --- | --- | --- |
 | Brain | Pi Zero 2 W | Pi 3B+ — same BCM numbering, verified on 2026-08-10 |
-| Audio | USB speakerphone | WM8960 HAT over I²S, with its own mics |
-| Buttons | 3 arcade, GPIO 17 / 27 / 22 | **1** — the HAT's own, on GPIO17 |
-| LEDs | 3 lamps via ULN2003 | none |
+| Audio | USB speakerphone | **WM8960 HAT** over I²S, with its own mics |
+| Buttons | 3 arcade, GPIO 17 / 27 / 22 | same — and GPIO17 is also the HAT's own button |
+| LEDs | 3 lamps via ULN2003, GPIO 23 / 24 / 25 | same |
 
-**The HAT's button is on GPIO17, which is already button 1.** That is luck, not design, and it means
-the whole hold-to-send / tap-to-play interaction runs with no pin change: hold the HAT's button to
-record and send to contact 1, tap it to play what came back. Channels 2 and 3 still exist everywhere
-above the HAL — they simply have no hardware, so nothing can press them.
+**The HAT's button is on GPIO17, which is already button 1.** That is luck, not design, and it is
+why the HAT needs no wiring to work: the HAT's own button and an external button 1 both switch
+GPIO17 to ground, so either one drives channel 1. Keep button 1 on GPIO17 when wiring a board.
+
+Nothing the HAT occupies collides with the buttons or the lamps — see the section below — so this
+is the full pin map, not a reduced one.
 
 Install it with:
 
 ```bash
-sudo ./install.sh --audio-hat wm8960 --no-leds
+sudo ./install.sh --audio-hat wm8960
 ```
+
+Add `--no-leds` only for a board with no lamps wired: it writes an empty `LED_PINS`, so the driver
+claims no output lines and `setLed()` becomes a no-op above the HAL.
 
 which writes `BUTTON_PINS` / `LED_PINS` and the ALSA settings into `/etc/bloopbox/environment` and
 the overlay into `config.txt`. Then **reboot** — there is no sound card until you do — and run

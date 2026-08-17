@@ -1,6 +1,19 @@
 /* Admin-panel-only styling: the per-button contact rows and the WhatsApp pairing block.
    Everything else the panel renders comes from shared/base.css. */
 
+/* Marks off the settings a parent rarely needs below the everyday cards — a divider between
+   groups, not a card title, so it keeps the display voice instead of base.css's small-caps
+   section label (the same override `.step h2` does in the portal). */
+.section-divider {
+  margin: var(--space-8) 0 var(--space-4);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--text-lg);
+  text-transform: none;
+  letter-spacing: var(--tracking-display);
+}
+
 .contact {
   padding: var(--space-4) 0 var(--space-4) var(--space-4);
   margin-bottom: var(--space-4);
@@ -22,6 +35,62 @@
 .pairing h3 {
   margin: var(--space-5) 0 var(--space-1);
   font-size: var(--text-base);
+}
+
+/* The WhatsApp card holds three separate concerns — linking, read receipts, unlinking — and
+   they used to run together, so "Read receipts" read as a caption under the QR button. A rule
+   and real air make them three things rather than one long column. */
+.wa-section {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.wa-section > h3:first-child {
+  margin-top: 0;
+  font-size: var(--text-base);
+}
+
+/* ---- collapsible card ---- */
+
+/* Closed by default, which is the point of the Advanced group: these are settings a parent
+   should be able to scroll past without reading. */
+.card-collapsible > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  /* Both spellings: the standard one, and the WebKit pseudo-element older Safari still uses.
+     Without them the native triangle sits beside the chevron drawn below. */
+  list-style: none;
+}
+
+.card-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card-collapsible > summary > h2 {
+  margin: 0;
+}
+
+/* A chevron rather than the native marker, so it follows the type colour and the motion
+   tokens like everything else here. */
+.card-collapsible > summary::after {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translate(-0.1em, -0.1em);
+  transition: transform var(--dur) var(--ease);
+  content: '';
+}
+
+.card-collapsible[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.card-collapsible[open] > summary {
+  margin-bottom: var(--space-4);
 }
 
 .qr-frame {
@@ -76,6 +145,45 @@
 }
 
 .target-resolved.is-bad {
+  color: var(--danger);
+}
+
+/* The factory-reset control. Page-local rather than in base.css: the admin panel is the only
+   page with anything destructive on it, and a shared `.danger` button would invite one.
+
+   Same physical travel as every other button here — it is a real button, not a warning sign —
+   but wearing --danger so it cannot be mistaken for the save above it. */
+button.danger {
+  border-color: var(--danger-deep);
+  background: var(--danger);
+  color: var(--on-danger);
+  box-shadow: 0 3px 0 var(--danger-deep);
+}
+
+button.danger:hover {
+  border-color: var(--danger-deep);
+}
+
+button.danger:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: none;
+}
+
+.danger-zone {
+  margin-top: var(--space-4);
+}
+
+/* The confirming tap. Boxed and tinted so the second step reads as a different place from the
+   first, not as the same button having changed its mind. */
+.danger-confirm {
+  padding: var(--space-4);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+}
+
+.danger-confirm .field-hint {
+  margin: 0 0 var(--space-3);
   color: var(--danger);
 }
 

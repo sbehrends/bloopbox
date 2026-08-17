@@ -161,6 +161,24 @@ storage.
   On the home LAN: link WhatsApp and assign the three buttons in the admin panel
 ```
 
+### What the admin panel shows, and when
+
+The panel is ordered by what a parent has to do next rather than by how the config is shaped, and
+it **hides what cannot be used yet** — an unlinked box has nothing to assign a button to, and a
+contact picker with no account behind it is a form that silently cannot work.
+
+- **WhatsApp not linked** — only the WhatsApp card and *Advanced* are shown. Advanced stays
+  reachable on purpose: audio and button timings need no account, and are what bring-up wants
+  while pairing is still open.
+- **While `connecting`** — the link buttons are withheld. Pressing one mid-connect starts a second
+  attempt on a session that is still opening, which is what used to break both.
+- **Linked** — Contacts, Quiet hours, WhatsApp, Wi-Fi, then Advanced. *Read receipts* is a setting
+  for a live account, so it appears only once the state is `connected`.
+- **On the first link of a page's life the panel reloads itself**, because Contacts and its group
+  picker were rendered from an account that did not exist yet.
+- **Unlink and factory reset are two taps**, the second on a different button — see the
+  factory-reset item in `PENDING.md` for why the bar is set there.
+
 ### First Boot
 
 A device that cannot reach a network raises an **open** access point named `bloopbox-XXXX` (the
@@ -273,7 +291,7 @@ isolated behind a Hardware Abstraction Layer.
 │                │ files in /run                                            │
 │                ▼                                                          │
 │  ┌────────────────────────────┐                                           │
-│  │ 3. bloopbox-net (root)     │  nmcli: Wi-Fi state, AP up / down, join    │
+│  │ 3. bloopbox-net (root)     │  nmcli: state, AP up/down, join, forget    │
 │  │    deploy/net-agent.sh     │                                           │
 │  └────────────────────────────┘                                           │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -306,7 +324,7 @@ a crash there must not take the buttons and lights with it.
 **Process 3 — `net-agent.sh`**, as root. The daemons run unprivileged under `ProtectSystem=strict`
 and cannot talk to NetworkManager. The agent polls `nmcli` every 5 s and publishes one JSON document
 the daemon reads; the daemon writes back a strictly enum-validated action (`ap-up` / `ap-down` /
-`join`). One writer per directory. **A missing or stale reading means *unknown*, and unknown is
+`join` / `forget`). One writer per directory. **A missing or stale reading means *unknown*, and unknown is
 reported as "not down"** — an outage is never invented from silence.
 
 > Earlier drafts of this document said the processes were managed by `pm2` and that GPIO went

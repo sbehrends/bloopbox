@@ -119,9 +119,12 @@ needs the network to be reachable at all) is the wrong place to ask.
 
 **Where it plausibly lives:**
 - The admin panel already has the network in front of it — a "forget this network" action there is
-  the reachable-device case, and cheap: delete the `bloopbox` NM profile (or hand the agent an
-  action for it — `NET_ACTIONS` in `src/net/netState.ts` would need a fourth entry) and let
-  `NetworkSupervisor`'s existing `unconfiguredGraceMs` path do the rest.
+  the reachable-device case, and cheap. **The mechanism now exists**: the factory-reset work below
+  added `forget` as the fourth entry in `NET_ACTIONS` (`src/net/netState.ts`), which deletes the
+  `bloopbox` NM profile and lets `NetworkSupervisor`'s existing `unconfiguredGraceMs` path do the
+  rest. What is missing is a control that calls it *without* the rest of the factory reset — the
+  whole point of keeping these two items separate is that a parent changing routers must not lose
+  their contacts.
 - The unreachable-device case is the one this is actually for, and it needs a **physical**
   trigger, since that is the only interface a screenless device has. `buttonInterpreter.ts`
   already has one precedent for a chord meaning something outside normal record/play — buttons 1
@@ -139,27 +142,32 @@ who only wanted to change routers loses the whole device's setup.
 Requested 2026-08-10, alongside the Wi-Fi-forget item above — related, but a different blast
 radius and worth keeping separate rather than building one control that tries to be both.
 
-**What it should do.** Delete `/data/config.json` (falls back to `config.default.json` in RAM per
-the existing safety constraint), clear the WhatsApp auth state so the next boot needs a fresh QR
-pairing, and land the device back at onboarding exactly as it behaves on a first boot with no
-config. What it should *not* touch: the SD image itself, the installed application, or the
-`bloopbox` system user — this is a config wipe, not a re-flash.
+**The admin-panel half is built** (2026-08-17): "Recover from factory settings", last in the
+Advanced group, behind a two-step confirm. `POST /api/factory-reset` deletes `/data/config.json`,
+clears the WhatsApp auth directory, and asks the net agent to `forget` the Wi-Fi profile, then
+restarts — all three, because config.json is only one of the three places a device remembers who
+it belongs to, and leaving either of the others hands over a box still logged into the previous
+owner's account or still sitting on their network. Covered by `routes.test.ts`.
 
-**Trigger, and why it needs care.** This is the most destructive control the device can expose to a
-child's room, so the bar for "impossible to trigger by accident" is higher than the silent chord or
-the Wi-Fi-forget idea above. Worth deciding deliberately rather than defaulting to "all three
-buttons, held a while": consider a hold duration well past `maxRecordingSeconds` (so it cannot be
-reached by an unusually long recording attempt), and whether it needs a two-step confirmation the
-existing LED vocabulary can express (`PRODUCT.md` §6's patterns are all currently spoken for, so a
-new one needs a priority-ladder slot in `ledPriority.test.ts`, not just a cue). The admin panel is
-the safer primary path — a button behind confirmation, no timing tricks needed — with the physical
-chord reserved for the case the panel is exactly what a factory reset needs to route around: a
-device nobody can reach.
+**Two things it does not do yet:**
 
-**Acceptance.** From a fully configured device: trigger the reset, confirm `/data/config.json` is
-gone and `system.configured` reads `false`, confirm WhatsApp requires a fresh pairing QR rather than
-resuming the old session, and confirm the three buttons and their contacts are all unassigned —
-covered by a test in the same family as `adminAuth.test.ts`'s onboarding-boundary checks.
+- **The physical trigger is still missing**, and it is the case this was originally for: a device
+  nobody can reach. The panel needs the network, so it cannot rescue a box whose router changed.
+  `buttonInterpreter.ts` has the precedent (buttons 1 + 3 for `silentComboMs`), but the bar here is
+  higher — consider a hold well past `maxRecordingSeconds` so an unusually long recording attempt
+  cannot reach it, and a two-step confirmation the LED vocabulary can express (`PRODUCT.md` §6's
+  patterns are all spoken for, so a new one needs a priority-ladder slot in `ledPriority.test.ts`,
+  not just a cue).
+- **An imager-seeded network survives the reset.** `forget` deletes only the profile bloopbox
+  manages, deliberately — a network baked in with `--wifi-ssid` is not ours to delete. The
+  consequence is that such a device rejoins after a reset rather than offering a hotspot, and is
+  re-onboarded over the network it is already on. Fine for now; revisit if a real device makes it
+  confusing.
+
+**Not verified on hardware.** The `forget` action has only been exercised against a stubbed agent
+and by watching the request file get written — no `nmcli` has ever run it. It belongs in the
+bring-up gates in `docs/hardware-bringup.md`: reset a configured device and confirm the hotspot
+actually comes back, rather than the device silently rejoining.
 
 ### AP hotspot / captive portal for onboarding
 

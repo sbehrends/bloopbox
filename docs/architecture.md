@@ -58,7 +58,8 @@ for both sides: adding an event means editing that file first.
 they cannot talk to NetworkManager and should not be able to. A third unit, `bloopbox-net.service`,
 runs [`deploy/net-agent.sh`](../box/software/deploy/net-agent.sh) as root, polls `nmcli` every 5 s and publishes
 one small JSON document. Requests go back the other way through a second file carrying a strictly
-enum-validated action (`ap-up` | `ap-down` | `join {ssid, psk}`), never evaluated as shell.
+enum-validated action (`ap-up` | `ap-down` | `join {ssid, psk}` | `forget`), never evaluated as
+shell.
 
 | File                              | Written by | Read by |
 | --------------------------------- | ---------- | ------- |

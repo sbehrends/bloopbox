@@ -240,6 +240,15 @@ runtime package: NM runs its own dnsmasq on that interface for DHCP and DNS. `ap
 and immediately tries the real network, because there is one radio and stepping aside is the only
 way to attempt a join.
 
+`forget` deletes the `bloopbox` profile, and only a factory reset asks for it. Deleting
+`/data/config.json` is not enough on its own to send a device back to onboarding:
+`wifi-apply.sh` only ever *writes* that profile, so with no SSID left to apply it exits early and
+NetworkManager keeps the old one at `autoconnect yes, priority 10`. The device would come back up
+online, and `NetworkSupervisor` only raises the hotspot for a device that is **offline**. It is
+scoped to the profile bloopbox manages: a network the imager seeded is left alone, so a device
+built with `--wifi-ssid` rejoins after a reset instead of offering a hotspot, and is re-onboarded
+over the network it is already on.
+
 When the hotspot goes up is decided in `src/core/networkSupervisor.ts`: 20s of no network on an
 unconfigured device, 3 minutes on a configured one (a flat 30s would pop a hotspot into the house
 every time the router reboots), then every 60s the hotspot steps aside for a 30s join attempt —

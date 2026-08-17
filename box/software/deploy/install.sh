@@ -483,9 +483,19 @@ Installed.
 First run: open the admin panel, set a password, link WhatsApp, assign the three buttons.
 EOF
 
-if [[ "${AUDIO_HAT}" == wm8960 || "${NO_LEDS}" == true ]]; then
+# Split deliberately: the HAT is the standard audio hardware now, and it says nothing about how
+# many buttons or lamps are wired. Gating the "only button 1" advice on the HAT told every
+# full board to leave two thirds of itself disabled.
+if [[ "${AUDIO_HAT}" == wm8960 ]]; then
   cat <<'EOF'
-On this board only button 1 has hardware, so assign contact 1 and leave 2 and 3 disabled.
 Reboot before testing audio — the overlay is firmware — then: sudo bloopbox-audio-test
+The HAT's own button is on GPIO17, which is button 1, so channel 1 works with no wiring.
+EOF
+fi
+
+if [[ "${NO_LEDS}" == true ]]; then
+  cat <<'EOF'
+No lamps are wired here (--no-leds), so the lights stay dark and setLed() is a no-op. If only
+the HAT's button is wired, assign contact 1 and leave 2 and 3 disabled.
 EOF
 fi

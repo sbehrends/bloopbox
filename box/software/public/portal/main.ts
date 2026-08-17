@@ -68,6 +68,7 @@ const adminHeading = required('admin-heading');
 const adminHint = required('admin-hint');
 const adminLabel = required('admin-label');
 const adminPassword = requiredInput('admin-password');
+const showAdminPassword = requiredInput('show-admin-password');
 const submit = required('submit');
 const errorBox = required('error');
 const doneStep = required('done');
@@ -207,13 +208,13 @@ async function loadScan(): Promise<void> {
 
 function applyPasswordMode(): void {
   if (choosingPassword) {
-    adminHeading.textContent = '3 · A password for the settings page';
+    adminHeading.textContent = 'Bloopbox password';
     adminHint.textContent =
       'Only you should be able to change who the buttons call. At least 6 characters — write it down somewhere.';
     adminLabel.textContent = 'Settings password';
     adminPassword.autocomplete = 'new-password';
   } else {
-    adminHeading.textContent = '3 · Your settings password';
+    adminHeading.textContent = 'Your settings password';
     adminHint.textContent =
       'This box has been set up before, so it will only change networks for someone who knows its password.';
     adminLabel.textContent = 'Settings password';
@@ -304,6 +305,9 @@ passphrase.addEventListener('input', refresh);
 adminPassword.addEventListener('input', refresh);
 showPassphrase.addEventListener('change', () => {
   passphrase.type = showPassphrase.checked ? 'text' : 'password';
+});
+showAdminPassword.addEventListener('change', () => {
+  adminPassword.type = showAdminPassword.checked ? 'text' : 'password';
 });
 submit.addEventListener('click', () => {
   void connect();

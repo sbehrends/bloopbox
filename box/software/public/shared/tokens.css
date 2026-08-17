@@ -38,6 +38,11 @@
   --pop: var(--brand-coral);
   --danger: #b03a31;
   --danger-soft: #fbe9e6;
+  /* The pressed-in shadow under a destructive button, as --accent-deep is for an accent one. */
+  --danger-deep: #8f2a22;
+  /* Not --on-accent: navy on this red is 2.1:1 and unreadable. White is 6.5:1. The pair flips
+     in dark mode, where --danger is a light salmon and it is white that fails. */
+  --on-danger: #ffffff;
   --focus: var(--brand-teal);
   --shadow: 0 1px 2px rgb(26 43 72 / 6%), 0 10px 24px -14px rgb(26 43 72 / 22%);
 
@@ -128,6 +133,8 @@
     --accent-soft: #1a3145;
     --danger: #ff9b92;
     --danger-soft: #38222a;
+    --danger-deep: #c96a60;
+    --on-danger: var(--brand-navy);
     --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 10px 24px -14px rgb(0 0 0 / 60%);
   }
 }

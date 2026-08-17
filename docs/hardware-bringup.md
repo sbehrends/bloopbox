@@ -10,8 +10,9 @@ between what a person has to do standing next to the device and what can be done
 **Bring one thing up at a time.** Every gap here can produce "the lights do nothing", and
 debugging two unverified subsystems at once turns a morning into a week.
 
-**On the MVP board — a Pi 3B+ with a WM8960 HAT, its single button, and no lamps — take gate 4a
-instead of gates 4 and 5**, then continue at gate 6. That path needs no wiring: the HAT's own button
+**Audio is the WM8960 HAT** (decided 2026-08-17), so gate 4a replaces gate 4 on every board. Take
+gate 5 as written once the lamps are wired — the reference board has all three buttons and all three
+lamps. On a bare HAT with nothing else wired, gate 4a alone gets you to gate 6: the HAT's own button
 sits on GPIO17, which is already button 1. [`hardware.md`](./hardware.md) describes the board.
 
 ---
@@ -240,20 +241,21 @@ back is physical: pull the card and write `bloopbox-wifi.txt` on the boot partit
 
 ---
 
-## Gate 4a — the MVP board: Pi 3B+ + WM8960 HAT, one button, no lamps
+## Gate 4a — audio on the WM8960 HAT
 
-**Take this gate instead of 4 and 5 if that is the hardware on the bench**, then jump to gate 6.
-It exists because the full board — three arcade buttons, a ULN2003, a USB speakerphone — is a lot of
-unproven wiring to bring up at once, and none of it is needed to answer *does the software run on
-real hardware*. [`hardware.md`](./hardware.md) has what the HAT occupies and why each setting is what
-it is.
+**This replaces gate 4**: the HAT is the audio hardware from 2026-08-17 on, not the USB
+speakerphone. Continue to gate 5 for the lamps once they are wired; on a bare HAT with nothing else
+attached, jump straight to gate 6 and drive channel 1 with the HAT's own button.
+[`hardware.md`](./hardware.md) has what the HAT occupies and why each setting is what it is.
 
 Install and reboot. **There is no sound card until the reboot** — the overlay is firmware:
 
 ```bash
-sudo ./install.sh --audio-hat wm8960 --no-leds
+sudo ./install.sh --audio-hat wm8960
 sudo reboot
 ```
+
+Add `--no-leds` only if no lamps are wired yet, which also means skipping gate 5.
 
 Then, in the order that makes a failure readable:
 

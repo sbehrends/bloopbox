@@ -37,7 +37,7 @@
       </header>
 
       <section id="step-network" class="card step">
-        <h2>1 · Your Wi-Fi</h2>
+        <h2>Your Wi-Fi</h2>
         <div id="networks" class="networks" role="radiogroup" aria-label="Networks in range">
           <p class="muted">Looking for networks…</p>
         </div>
@@ -57,7 +57,7 @@
       </section>
 
       <section id="step-passphrase" class="card step" hidden>
-        <h2>2 · Wi-Fi password</h2>
+        <h2>Wi-Fi password</h2>
         <label class="field">
           <span id="passphrase-label">Password for your network</span>
           <input id="passphrase" type="password" maxlength="63" autocomplete="off" />
@@ -69,7 +69,7 @@
       </section>
 
       <section id="step-admin" class="card step" hidden>
-        <h2 id="admin-heading">3 · A password for the settings page</h2>
+        <h2 id="admin-heading">Bloopbox password</h2>
         <p class="muted" id="admin-hint">
           Only you should be able to change who the buttons call. At least 6 characters — write it
           down somewhere.
@@ -77,6 +77,10 @@
         <label class="field">
           <span id="admin-label">Settings password</span>
           <input id="admin-password" type="password" maxlength="128" autocomplete="new-password" />
+        </label>
+        <label class="checkbox">
+          <input id="show-admin-password" type="checkbox" />
+          <span>Show password</span>
         </label>
       </section>
 

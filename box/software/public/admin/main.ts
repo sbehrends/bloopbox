@@ -300,7 +300,7 @@ function testSpeakerButton(): HTMLElement {
 }
 
 function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
-  const section = card('Audio');
+  const section = collapsibleCard('Audio');
 
   const volume = numberInput(config.audio.speakerVolumePercent, 0, 100);
   const ampVolume = numberInput(config.audio.ampVolumePercent, 0, 100);
@@ -431,30 +431,8 @@ function renderQuietHours(config: ConfigView, onSave: SaveFn): HTMLElement {
   return section;
 }
 
-function renderReadReceipts(config: ConfigView, onSave: SaveFn): HTMLElement {
-  const section = card('Read receipts');
-
-  const markRead = checkbox(config.whatsapp.markPlayedAsRead);
-
-  section.append(
-    element(
-      'p',
-      'field-hint',
-      'When the child plays a message, WhatsApp shows the sender two blue ticks. ' +
-        'It is the only way they learn it was heard — but it also tells them when ' +
-        'the child was at the box.',
-    ),
-    checkboxField('Mark messages as read once played', markRead),
-    saveButton('Save read receipts', () =>
-      onSave({ whatsapp: { markPlayedAsRead: markRead.checked } }),
-    ),
-  );
-
-  return section;
-}
-
 function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
-  const section = card('Button timings');
+  const section = collapsibleCard('Button timings');
 
   const debounce = numberInput(config.buttons.debounceMs, 0, 2000);
   const threshold = numberInput(config.buttons.recordThresholdMs, 100, 10_000);
@@ -567,12 +545,23 @@ async function beginLinking(): Promise<void> {
   }
 }
 
-function renderWhatsApp(status: StatusView): HTMLElement {
+function renderWhatsApp(
+  status: StatusView,
+  config: ConfigView | null,
+  onSave: SaveFn,
+): HTMLElement {
   const section = card('WhatsApp');
   const state = element('p', 'status', status.whatsappConnected ? 'Linked' : 'Not linked');
   const pairing = element('div', 'pairing');
 
-  section.append(state, pairing);
+  // Built now, shown later: both depend on a live state the first poll has not read yet, so
+  // they start hidden rather than flashing into view and back out again.
+  const receipts = element('div', 'wa-section');
+  receipts.hidden = true;
+  const unlinkBlock = element('div', 'wa-section');
+  unlinkBlock.hidden = true;
+
+  section.append(state, pairing, receipts, unlinkBlock);
 
   /*
    * Entering `awaitingPairing` used to render the QR code and the phone-number form together,
@@ -584,7 +573,13 @@ function renderWhatsApp(status: StatusView): HTMLElement {
    * parent's fingers.
    */
   let method: 'qr' | 'phone' | null = null;
-  let built = false;
+  /**
+   * Which pairing view is on screen, rather than a bare "is anything built".
+   *
+   * The connecting placeholder made the distinction load-bearing: a poll has to be able to
+   * tell "the chooser is up" from "the waiting message is up" to know whether to swap them.
+   */
+  let builtAs: 'chooser' | 'qr' | 'phone' | 'connecting' | null = null;
   let image: HTMLImageElement | null = null;
   let countdown: HTMLElement | null = null;
   /** The code the visible image was drawn for, so a rotation is a string comparison. */
@@ -592,6 +587,9 @@ function renderWhatsApp(status: StatusView): HTMLElement {
   /** Browser-clock deadline for that code; 0 while there is nothing to count down. */
   let deadline = 0;
   let polling = false;
+  /** Whether this page has ever seen a state other than `connected` — see the reload below. */
+  let sawUnlinked = false;
+  let reloading = false;
 
   const drawCountdown = (): void => {
     if (countdown === null) return;
@@ -619,9 +617,29 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     return back;
   };
 
+  /**
+   * The gap between asking the bridge for a socket and Baileys producing anything.
+   *
+   * The chooser used to stay on screen through it, so a parent could press "Scan a QR code"
+   * while the device was already mid-connect — a second link attempt on a session that was
+   * still opening. Nothing to press is the honest answer while the answer is unknown.
+   */
+  const buildConnecting = (): void => {
+    pairing.replaceChildren(
+      element('h3', undefined, 'Connecting…'),
+      element(
+        'p',
+        'field-hint',
+        'Talking to WhatsApp. If this does not settle in a few seconds, check that the box is ' +
+          'online and that the WhatsApp bridge is running.',
+      ),
+    );
+    builtAs = 'connecting';
+  };
+
   const buildChooser = (): void => {
     pairing.replaceChildren();
-    built = true;
+    builtAs = 'chooser';
 
     const scan = element('button', 'primary', 'Scan a QR code');
     scan.type = 'button';
@@ -648,14 +666,13 @@ function renderWhatsApp(status: StatusView): HTMLElement {
         'Pick one way to link. Only one code is kept active at a time — starting the other ' +
           'way is what used to make both stop working.',
       ),
-      scan,
-      phoneButton,
+      rowOf(scan, phoneButton),
     );
   };
 
   const buildQr = (): void => {
     pairing.replaceChildren();
-    built = true;
+    builtAs = 'qr';
 
     const frame = element('div', 'qr-frame');
     // Rendered server-side; the raw payload is a long string and unscannable as text.
@@ -684,14 +701,13 @@ function renderWhatsApp(status: StatusView): HTMLElement {
           'The code changes every 20 seconds; this panel keeps up on its own.',
       ),
       frame,
-      again,
-      backToChooser(),
+      rowOf(again, backToChooser()),
     );
   };
 
   const buildPhone = (): void => {
     pairing.replaceChildren();
-    built = true;
+    builtAs = 'phone';
 
     const phone = textInput('', { placeholder: 'e.g. 4915512345678, not 004915512345678' });
     const codeOut = element('p', 'pair-code');
@@ -760,16 +776,47 @@ function renderWhatsApp(status: StatusView): HTMLElement {
       const current = 'state' in read ? asText(read.state) || 'unknown' : 'unknown';
       state.textContent = `State: ${current}`;
 
+      /*
+       * Read receipts is a setting for a live account, so it waits for one.
+       *
+       * Unlink hides while someone is *trying* to link — there is no session to drop yet, and a
+       * destructive button beside the QR code they are mid-scan on is a trap. It stays for
+       * `connecting`, `disconnected` and `loggedOut`, which is exactly when clearing a stuck
+       * session is the way out.
+       */
+      receipts.hidden = current !== 'connected';
+      unlinkBlock.hidden =
+        current === 'notLinked' || current === 'awaitingPairing' || current === 'unknown';
+
+      if (current === 'connected') {
+        /*
+         * First link of this page's life. Contacts, and the group picker inside it, are
+         * rendered once at load from an account that did not exist yet — so the panel that
+         * onboarding leaves behind is missing the very section it was setting up. Reloading is
+         * the honest fix: everything re-reads from a linked account.
+         *
+         * Guarded on having *seen* an unlinked state, not on the state alone, or a panel opened
+         * against an already-linked box would reload itself forever.
+         */
+        if (sawUnlinked && !reloading) {
+          reloading = true;
+          state.textContent = 'Linked — reloading the panel…';
+          window.location.reload();
+        }
+      } else if (current !== 'unknown') {
+        sawUnlinked = true;
+      }
+
       // `notLinked` is the chooser's own resting state; `connecting` covers the moment between
       // choosing a method and Baileys actually producing anything. Anything else — linked,
       // freshly logged out, or a transient drop — has nothing to link right now.
       const linkable =
         current === 'notLinked' || current === 'connecting' || current === 'awaitingPairing';
       if (!linkable) {
-        if (built) {
+        if (builtAs !== null) {
           pairing.replaceChildren();
           method = null;
-          built = false;
+          builtAs = null;
           image = null;
           countdown = null;
           shownQr = null;
@@ -778,9 +825,16 @@ function renderWhatsApp(status: StatusView): HTMLElement {
         return;
       }
 
-      if (!built) {
-        if (method === 'qr') buildQr();
-        else if (method === 'phone') buildPhone();
+      /*
+       * With no method chosen, `connecting` gets the waiting message rather than the chooser.
+       * Once a method *is* chosen the socket is expected to be connecting, so the QR frame or
+       * the phone form stays put and this never fires.
+       */
+      const want = method ?? (current === 'connecting' ? 'connecting' : 'chooser');
+      if (builtAs !== want) {
+        if (want === 'qr') buildQr();
+        else if (want === 'phone') buildPhone();
+        else if (want === 'connecting') buildConnecting();
         else buildChooser();
       }
 
@@ -823,17 +877,50 @@ function renderWhatsApp(status: StatusView): HTMLElement {
     if (lapsed || ticks % QR_POLL_TICKS === 0) void poll();
   }, QR_TICK_MS);
 
-  section.append(
-    saveButton('Unlink WhatsApp', async () => {
-      await fetch('/api/whatsapp/unlink', { method: 'POST' });
-      /*
-       * The route returns as soon as it has told the bridge to unlink, not once the bridge has
-       * actually logged out, deleted credentials and settled into `notLinked` — that involves a
-       * round trip to WhatsApp's servers. Polling immediately would likely still read the old
-       * state.
-       */
-      await new Promise((resolve) => window.setTimeout(resolve, 2500));
-      await poll();
+  if (config) {
+    const markRead = checkbox(config.whatsapp.markPlayedAsRead);
+    receipts.append(
+      element('h3', undefined, 'Read receipts'),
+      element(
+        'p',
+        'field-hint',
+        'When the child plays a message, WhatsApp shows the sender two blue ticks. ' +
+          'It is the only way they learn it was heard — but it also tells them when ' +
+          'the child was at the box.',
+      ),
+      checkboxField('Mark messages as read once played', markRead),
+      saveButton('Save read receipts', () =>
+        onSave({ whatsapp: { markPlayedAsRead: markRead.checked } }),
+      ),
+    );
+  }
+
+  // Confirmed, like the factory reset: it deletes the credentials on disk, and the way back is
+  // a fresh QR scan on someone's phone — not something to hand out to a single stray tap.
+  unlinkBlock.append(
+    element('h3', undefined, 'Unlink WhatsApp'),
+    element(
+      'p',
+      'field-hint',
+      'Disconnects this box from the WhatsApp account and forgets the session. The buttons ' +
+        'stop sending and receiving until it is linked again.',
+    ),
+    dangerConfirm({
+      label: 'Unlink WhatsApp',
+      question: 'Unlink this box? Linking again needs a fresh QR scan or pairing code.',
+      confirmLabel: 'Unlink',
+      busyLabel: 'Unlinking…',
+      run: async () => {
+        await fetch('/api/whatsapp/unlink', { method: 'POST' });
+        /*
+         * The route returns as soon as it has told the bridge to unlink, not once the bridge has
+         * actually logged out, deleted credentials and settled into `notLinked` — that involves a
+         * round trip to WhatsApp's servers. Polling immediately would likely still read the old
+         * state.
+         */
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        await poll();
+      },
     }),
   );
 
@@ -889,6 +976,136 @@ function reportError(error: unknown): void {
   setTimeout(() => statusLine.classList.remove('error'), 6000);
 }
 
+/**
+ * A destructive action behind two deliberate taps.
+ *
+ * The confirming tap is a *different* button in a different place, so a second stray tap on
+ * the first one cannot land on it. No `window.confirm`: it is unstyled, it reads as a browser
+ * warning rather than as this device's own, and it is suppressible.
+ *
+ * Shared by the factory reset and the WhatsApp unlink — the two controls here that a parent
+ * cannot undo by pressing the thing again.
+ */
+function dangerConfirm(options: {
+  readonly label: string;
+  readonly question: string;
+  readonly confirmLabel: string;
+  readonly busyLabel: string;
+  readonly run: () => Promise<void>;
+  /** Replaces the control entirely when the action leaves nothing further to press. */
+  readonly terminal?: () => readonly HTMLElement[];
+}): HTMLElement {
+  const zone = element('div', 'danger-zone');
+
+  const start = element('button', 'danger', options.label);
+  start.type = 'button';
+
+  const confirmRow = element('div', 'danger-confirm');
+  confirmRow.hidden = true;
+  const confirm = element('button', 'danger', options.confirmLabel);
+  confirm.type = 'button';
+  const cancel = element('button', undefined, 'Cancel');
+  cancel.type = 'button';
+  confirmRow.append(element('p', 'field-hint', options.question), rowOf(confirm, cancel));
+
+  zone.append(start, confirmRow);
+
+  const rest = (): void => {
+    confirmRow.hidden = true;
+    start.hidden = false;
+    confirm.disabled = false;
+    cancel.disabled = false;
+    confirm.textContent = options.confirmLabel;
+  };
+
+  start.addEventListener('click', () => {
+    start.hidden = true;
+    confirmRow.hidden = false;
+    // Focus the confirming button so a keyboard user is not left hunting for what appeared,
+    // but never auto-fire it: this is the tap that has to be meant.
+    confirm.focus();
+  });
+
+  cancel.addEventListener('click', () => {
+    rest();
+    start.focus();
+  });
+
+  confirm.addEventListener('click', () => {
+    void (async (): Promise<void> => {
+      confirm.disabled = true;
+      cancel.disabled = true;
+      confirm.textContent = options.busyLabel;
+      try {
+        await options.run();
+      } catch (error: unknown) {
+        reportError(error);
+      }
+      if (options.terminal) zone.replaceChildren(...options.terminal());
+      else rest();
+    })();
+  });
+
+  return zone;
+}
+
+/**
+ * Wipes every piece of user configuration (PENDING.md, "A factory-reset control").
+ *
+ * Deliberately does not use `saveButton`/`noteRestarting` like every other control here. Those
+ * poll for the device coming back, which after this it will not — not on this network. It
+ * leaves the hotspot's name on screen instead, because that is the only way back in.
+ */
+function renderFactoryReset(): HTMLElement {
+  const section = card('Factory reset');
+
+  section.append(
+    element(
+      'p',
+      'field-hint',
+      'Erases everything this box knows: the contacts on the three buttons, its settings ' +
+        'password, the WhatsApp link, and the Wi-Fi network it joins. It then restarts and ' +
+        'offers its setup hotspot again, exactly as it did out of the box.',
+    ),
+    element(
+      'p',
+      'field-hint',
+      'Recordings are not kept on the box, so there is nothing else to lose. This cannot be ' +
+        'undone.',
+    ),
+    dangerConfirm({
+      label: 'Recover from factory settings',
+      question: 'Are you sure? The box will be empty and back at setup.',
+      confirmLabel: 'Erase everything',
+      busyLabel: 'Erasing…',
+      run: async () => {
+        try {
+          const response = await fetch('/api/factory-reset', { method: 'POST' });
+          if (!response.ok) throw new Error('the box would not accept that');
+        } catch {
+          /*
+           * Ambiguous, and usually *good*: the reset drops the network this request arrived
+           * over, so a dropped connection is what success looks like from here. Saying it
+           * failed would send a parent hunting for a box that has in fact already reset.
+           */
+        }
+      },
+      terminal: () => [
+        element('p', undefined, 'Erased. The box is restarting.'),
+        element(
+          'p',
+          'field-hint',
+          'It will leave this network, so this page will stop working — that is what success ' +
+            'looks like. Look for its setup hotspot on your phone in a minute or so, the same ' +
+            'one you used the first time.',
+        ),
+      ],
+    }),
+  );
+
+  return section;
+}
+
 /* ------------------------------------------------------------------ *
  * Bootstrap
  * ------------------------------------------------------------------ */
@@ -907,6 +1124,65 @@ function isConfigView(value: unknown): value is ConfigView {
 function isStatusView(value: unknown): value is StatusView {
   if (typeof value !== 'object' || value === null) return false;
   return 'state' in value && 'silentMode' in value;
+}
+
+/**
+ * Buttons side by side, with air between them.
+ *
+ * `append()` leaves no whitespace text node between siblings, so two inline-block buttons
+ * render flush against each other. Every place this panel puts one button next to another
+ * goes through here.
+ */
+function rowOf(...children: readonly HTMLElement[]): HTMLElement {
+  const row = element('div', 'button-row');
+  row.append(...children);
+  return row;
+}
+
+/**
+ * A group header for the settings a parent rarely needs, sitting below the everyday cards
+ * rather than in its own card — it is a divider, not a thing to configure.
+ */
+function sectionDivider(title: string): HTMLElement {
+  return element('h2', 'section-divider', title);
+}
+
+/**
+ * A card that folds away, closed until asked for.
+ *
+ * `<details>` rather than a button and a class: the open/closed state, the keyboard handling
+ * and the screen-reader announcement all come free and correct, and it keeps the component
+ * layer CSS-only the way the rest of the design system is. Page-local because the admin panel
+ * is the only page with settings worth hiding.
+ */
+function collapsibleCard(title: string): HTMLElement {
+  const details = element('details', 'card card-collapsible');
+  const summary = element('summary');
+  summary.append(element('h2', undefined, title));
+  details.append(summary);
+  return details;
+}
+
+/**
+ * States where WhatsApp still needs a parent's attention — nothing has ever been linked, a QR
+ * or phone code is waiting to be used, or the last pairing was rejected and needs redoing.
+ * `connecting` and `disconnected` are deliberately not here: those are an already-linked
+ * session reconnecting or backing off, not something to act on.
+ */
+const WHATSAPP_NEEDS_ATTENTION = new Set(['notLinked', 'awaitingPairing', 'loggedOut']);
+
+/** The live pairing state, for ordering the page — `null` when it cannot be read at all. */
+async function fetchWhatsAppState(): Promise<string | null> {
+  try {
+    const payload = await getJson('/api/whatsapp');
+    if (typeof payload === 'object' && payload !== null && 'state' in payload) {
+      const state = asText(payload.state);
+      return state.length > 0 ? state : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function describeStatus(status: StatusView): string {
@@ -949,18 +1225,40 @@ async function main(): Promise<void> {
 
   const onSave: SaveFn = (patch) => putConfig(patch);
 
-  if (config) {
-    const groups = await fetchGroups();
+  // Needs-attention until proven otherwise: an unreachable bridge or a malformed reply is
+  // treated the same as "not linked", the safer default when the real state is unknown.
+  const whatsappState = status ? await fetchWhatsAppState() : null;
+  const whatsappNeedsAttention =
+    whatsappState === null || WHATSAPP_NEEDS_ATTENTION.has(whatsappState);
+
+  const whatsappSection = status ? renderWhatsApp(status, config, onSave) : null;
+
+  if (config && whatsappNeedsAttention) {
+    // Nothing else is useful yet — contacts can't be assigned without a linked account, Wi-Fi
+    // is already working or this page couldn't have loaded, and quiet hours has nothing to
+    // guard. Advanced stays reachable on purpose: audio and button-timing checks don't need
+    // WhatsApp at all, and are exactly what bring-up wants while pairing is still open.
+    if (whatsappSection) sections.append(whatsappSection);
     sections.append(
-      renderContacts(config, groups, onSave),
+      sectionDivider('Advanced'),
       renderAudio(config, onSave),
       renderButtonTimings(config, onSave),
-      renderQuietHours(config, onSave),
-      renderReadReceipts(config, onSave),
-      renderWifi(config, onSave),
+      renderFactoryReset(),
     );
+  } else if (config) {
+    const groups = await fetchGroups();
+    sections.append(renderContacts(config, groups, onSave), renderQuietHours(config, onSave));
+    if (whatsappSection) sections.append(whatsappSection);
+    sections.append(
+      renderWifi(config, onSave),
+      sectionDivider('Advanced'),
+      renderAudio(config, onSave),
+      renderButtonTimings(config, onSave),
+      renderFactoryReset(),
+    );
+  } else if (whatsappSection) {
+    sections.append(whatsappSection);
   }
-  if (status) sections.append(renderWhatsApp(status));
 
   // Live status without polling.
   const socket: Socket = io({ transports: ['websocket', 'polling'] });

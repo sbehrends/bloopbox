@@ -79,10 +79,27 @@ settings and the WhatsApp pairing survive.
 Useful flags: `--skip-deps`, `--no-boot-config`, `--no-watchdog`, `--no-start`, `--simulator`
 (runs the browser simulator HAL on a box with no buttons), `--prefix`, `--data-dir`, `--user`.
 
+Two describe the hardware rather than the install, and both write into
+`/etc/bloopbox/environment` — which means they **only take effect on a first install**, since an
+upgrade deliberately keeps that file. Passing them to an upgrade warns and tells you to edit it:
+
+| Flag | Effect |
+| ---- | ------ |
+| `--audio-hat wm8960` | Adds `dtoverlay=wm8960-soundcard`, `dtparam=i2c_arm=on` and `dtparam=audio=off` to `config.txt`, installs `i2c-tools`, and writes the codec's ALSA device, mixer and capture-rate settings. **No sound card exists until the reboot.** |
+| `--no-leds` | `LED_PINS=` — claim no output lines. The three logical channels remain; `setLed` is a no-op |
+
+Together they are the MVP board (`docs/hardware.md`): a Pi 3B+, the HAT, the HAT's own button as
+button 1, no lamps.
+
+```bash
+sudo ./install.sh --audio-hat wm8960 --no-leds
+```
+
 Then check it:
 
 ```bash
 sudo bloopbox-doctor
+sudo bloopbox-audio-test    # speaker out, microphone in, played back
 ```
 
 For a first device — where the GPIO, ALSA and hotspot paths have never run — follow
@@ -98,7 +115,19 @@ devices, the firmware pull-ups, `/data`, the tmpfs, the cue files and both servi
 ```bash
 sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
 # -> release/bloopbox-<version>-<pi-os-date>-sd.img.xz  (~660 MB)
+
+# For the MVP board — Pi 3B+ with a WM8960 audio HAT, its own button, no lamps:
+sudo ./scripts/build-sd-image.sh --audio-hat wm8960 --no-leds
+# -> release/bloopbox-<version>-<pi-os-date>-wm8960-noleds.img.xz
 ```
+
+**Match the flags to the board.** `--audio-hat` and `--no-leds` are passed straight through to
+`install.sh` inside the image, and they are the difference between a card that works on the MVP
+board and one that boots with the wrong ALSA device and three LED lines claimed on pins nothing is
+wired to. Getting it wrong means ssh-ing in to re-run the installer, which is the whole thing the
+image exists to avoid. A non-default profile goes into the filename, so two boards' images cannot
+overwrite each other in `release/`, and the `.credentials.txt` beside the image records the exact
+`install.sh` line it was built with.
 
 Flash it with Raspberry Pi Imager (**Use custom**) or `dd`, put the card in, power up. No ssh
 step, no install step. The card carries the daemons enabled, ffmpeg and libgpiod, the firmware
@@ -108,15 +137,22 @@ It needs Linux and root — it attaches the image to loop devices and chroots in
 use CI or a privileged container:
 
 ```bash
-docker run --rm --privileged --platform linux/arm64 -v "$PWD":/repo -w /repo \
+docker run --rm --privileged --platform linux/arm64 \
+  -v "$PWD":/repo -v "$PWD/release/image-work/cache":/work/cache:ro -w /repo \
   debian:trixie-slim bash -c 'apt-get update -qq && apt-get install -y --no-install-recommends \
-    curl xz-utils parted e2fsprogs dosfstools openssl ca-certificates zerofree && \
+    curl xz-utils parted e2fsprogs dosfstools openssl ca-certificates util-linux mawk zerofree && \
     ./scripts/build-sd-image.sh --work-dir /work'
 ```
 
+**`--work-dir /work` is load-bearing there, not a preference.** The scratch image is copied with
+`cp --sparse=always`, which punches holes, and a bind mount of a macOS directory cannot — Docker
+Desktop and OrbStack both fail with `error deallocating: Invalid argument` on the very first copy.
+`/work` is the container's own filesystem, which can. Binding `…/image-work/cache` in separately is
+what keeps the ~500 MB Pi OS download between runs, since the cache lives under the work dir.
+
 Options: `--hostname`, `--user`, `--password` (generated and written to a `.credentials.txt`
-beside the image if omitted), `--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--no-ssh`,
-`--keep-img`, `--artifact`, `--output`, `--work-dir`.
+beside the image if omitted), `--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--audio-hat`,
+`--no-leds`, `--no-ssh`, `--keep-img`, `--artifact`, `--output`, `--work-dir`.
 
 ### What the builder does to the stock image
 
@@ -127,7 +163,9 @@ beside the image if omitted), `--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `
 3. Attaches each partition as its own loop device, using offsets from the partition table
    rather than `losetup --partscan`, which needs a udev that no container has.
 4. `apt-get install`s the runtime packages inside the image, then runs the same `install.sh`
-   the ssh route uses, with `--no-start`: units are enabled offline and come up on first boot.
+   the ssh route uses, with `--no-start` plus any hardware-profile flags: units are enabled
+   offline and come up on first boot. An image for the WM8960 board differs from the default one
+   *only* in what that one command writes to `/etc/bloopbox/environment` and `config.txt`.
 5. Seeds the device: hostname, `userconf.txt`, the `ssh` marker, a NetworkManager keyfile for
    Wi-Fi, and two plain-text files on the boot partition (below).
 6. Zeroes the free blocks and compresses.

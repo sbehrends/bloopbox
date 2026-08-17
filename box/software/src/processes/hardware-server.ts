@@ -123,6 +123,11 @@ async function main(): Promise<void> {
     recordingDirectory: RECORDING_DIRECTORY,
     micGainPercent: config.current.audio.micGainPercent,
     volumePercent: config.current.audio.speakerVolumePercent,
+    amp: {
+      volumePercent: config.current.audio.ampVolumePercent,
+      boostDc: config.current.audio.ampBoostDc,
+      boostAc: config.current.audio.ampBoostAc,
+    },
   };
 
   /*
@@ -244,10 +249,16 @@ async function main(): Promise<void> {
     refreshStatus();
   };
 
-  /** Replays the boot sequence, so it can be observed on demand rather than only at start. */
-  const rebootDevice = (): void => {
+  /**
+   * Opens the boot window: the LED chase, the boot sound, and the timer that ends both.
+   *
+   * One function for the real boot and the simulator's replay, so the two cannot drift into
+   * disagreeing about what booting looks and sounds like.
+   */
+  const beginBoot = (): void => {
     booting = true;
     refreshStatus();
+    controller.announceBoot();
     setTimeout(finishBoot, BOOT_ANIMATION_MS).unref();
   };
 
@@ -335,7 +346,7 @@ async function main(): Promise<void> {
       },
       reboot: () => {
         log.info('replaying boot sequence');
-        rebootDevice();
+        beginBoot();
       },
       injectWifiFailure: (down) => {
         // Latched until something clears it: the agent's own reading must not silently
@@ -493,9 +504,8 @@ async function main(): Promise<void> {
     log.debug({ index, edge: 'up' }, 'button');
   });
 
-  // Show the boot chase, then let real status through.
-  refreshStatus();
-  setTimeout(finishBoot, BOOT_ANIMATION_MS).unref();
+  // Show the boot chase and play the boot sound, then let real status through.
+  beginBoot();
 
   await new Promise<void>((ready) => {
     httpServer.listen(PORT, () => {

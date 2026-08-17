@@ -138,7 +138,7 @@ Sign in with the settings password (any username). Seven sections:
 | Section        | What it does                                                            |
 | -------------- | ----------------------------------------------------------------------- |
 | Contacts       | Who each of the three buttons talks to, and whether it is enabled       |
-| Audio          | Speaker volume, a hard volume cap, mic gain, maximum recording length   |
+| Audio          | Speaker volume, mic gain, maximum recording length                      |
 | Quiet hours    | A nightly window where the device stops making cue noises               |
 | Read receipts  | Whether playing a message marks it read for the sender                  |
 | Button timings | Tap-vs-hold thresholds, debounce, the carry-on window, the silent chord |
@@ -219,8 +219,13 @@ cannot extend a message past that ceiling.
 ### Silent mode
 
 Holding **buttons 1 and 3 together for three seconds** toggles silent mode, confirmed by a slow
-left-to-right chase. It can also be scheduled — **Quiet hours**, 20:00 to 07:00 by default, which
-wraps past midnight as you would expect.
+left-to-right chase. It can also be scheduled — **Quiet hours**, 20:00 to 07:00 once you switch it
+on, which wraps past midnight as you would expect.
+
+It ships **off**, and the admin panel asks for a timezone alongside the times. A fresh image runs
+on whatever Raspberry Pi OS picked — Europe/London — so a schedule enabled before you say where you
+live would go quiet at the wrong hours, which on a device with no screen looks exactly like a
+broken one.
 
 Silent mode suppresses the *cue noises*: the inbound chime, the record start and stop cues, the
 "oops". It does **not** suppress playback — tapping a blinking button always plays at the

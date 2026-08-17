@@ -15,7 +15,16 @@
 #
 #   docker run --rm --privileged --platform linux/arm64 -v "$PWD":/repo -w /repo \
 #     debian:trixie-slim bash -c 'apt-get update && apt-get install -y --no-install-recommends \
-#       curl xz-utils parted e2fsprogs dosfstools openssl ca-certificates && ./scripts/build-sd-image.sh'
+#       curl xz-utils parted e2fsprogs dosfstools openssl ca-certificates util-linux mawk \
+#       && ./scripts/build-sd-image.sh --work-dir /work'
+#
+# `--work-dir /work` is load-bearing on Docker Desktop and OrbStack, not a preference. The
+# scratch image is built with `cp --sparse=always`, which punches holes, and a bind mount of a
+# macOS directory cannot: it fails with "error deallocating: Invalid argument" the moment the
+# base image is copied. /work is the container's own filesystem, which can. Bind the cache
+# directory in separately to keep the ~500MB download between runs:
+#
+#   -v "$PWD/release/image-work/cache":/work/cache:ro
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,6 +42,10 @@ LOGIN_PASSWORD=
 WIFI_SSID=
 WIFI_PSK=
 WIFI_COUNTRY=
+# Hardware profile, passed straight through to install.sh inside the image. Empty means its
+# defaults: USB audio, three buttons, three lamps.
+AUDIO_HAT=
+NO_LEDS=false
 ENABLE_SSH=true
 KEEP_IMG=false
 
@@ -52,6 +65,8 @@ Options:
   --wifi-psk PSK      Wi-Fi passphrase
   --wifi-country CC   Two-letter regulatory domain, e.g. DE. Set this or the radio may
                       refuse some channels.
+  --audio-hat NAME    Audio hardware: usb (default) or wm8960. Passed to install.sh
+  --no-leds           No lamps are wired. Passed to install.sh
   --no-ssh            Do not enable ssh
   --keep-img          Leave the uncompressed .img as well
   --work-dir DIR      Scratch space (default: ./release/image-work)
@@ -59,6 +74,13 @@ Options:
 
 Without --wifi-ssid the image still boots: it writes bloopbox-wifi.txt onto the boot
 partition, which any laptop can fill in before first boot.
+
+The MVP board — a Pi 3B+ with a WM8960 audio HAT, its own button, and no lamps:
+
+  sudo ./scripts/build-sd-image.sh --audio-hat wm8960 --no-leds
+
+A non-default hardware profile is written into the image's filename, so images for two
+different boards cannot silently overwrite each other in ./release.
 EOF
 }
 
@@ -72,6 +94,8 @@ while [[ $# -gt 0 ]]; do
     --wifi-ssid) WIFI_SSID="$2"; shift 2 ;;
     --wifi-psk) WIFI_PSK="$2"; shift 2 ;;
     --wifi-country) WIFI_COUNTRY="$2"; shift 2 ;;
+    --audio-hat) AUDIO_HAT="$2"; shift 2 ;;
+    --no-leds) NO_LEDS=true; shift ;;
     --no-ssh) ENABLE_SSH=false; shift ;;
     --keep-img) KEEP_IMG=true; shift ;;
     --work-dir) WORK_DIR="$2"; shift 2 ;;
@@ -87,6 +111,31 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [[ "$(uname -s)" == "Linux" ]] || die "this needs Linux (loop devices and chroot) — see the header for the container one-liner"
 [[ "${EUID}" -eq 0 ]] || die "run this with sudo"
 
+# Validated here, not in the chroot: install.sh would reject a typo too, but only after the
+# base image has been fetched, grown, mounted and provisioned — minutes in, for a bad word.
+case "${AUDIO_HAT}" in
+  '' | usb | wm8960) ;;
+  *) die "unknown --audio-hat: ${AUDIO_HAT} (expected usb or wm8960)" ;;
+esac
+
+# Flags for install.sh inside the image. A plain string, expanded unquoted at the call site:
+# the deps are already in and there is no systemd in a chroot to start anything.
+INSTALL_FLAGS="--skip-deps --no-start"
+# A filename suffix for anything that is not the default board, so two profiles coexist.
+BOARD_SUFFIX=
+if [[ -n "${AUDIO_HAT}" ]]; then
+  INSTALL_FLAGS="${INSTALL_FLAGS} --audio-hat ${AUDIO_HAT}"
+  if [[ "${AUDIO_HAT}" != usb ]]; then
+    BOARD_SUFFIX="${BOARD_SUFFIX}-${AUDIO_HAT}"
+  fi
+fi
+LED_DESCRIPTION="3 on GPIO23,24,25"
+if [[ "${NO_LEDS}" == true ]]; then
+  INSTALL_FLAGS="${INSTALL_FLAGS} --no-leds"
+  BOARD_SUFFIX="${BOARD_SUFFIX}-noleds"
+  LED_DESCRIPTION="none wired"
+fi
+
 for tool in curl xz losetup parted e2fsck resize2fs mount umount chroot openssl sha256sum; do
   command -v "${tool}" >/dev/null 2>&1 || die "missing ${tool}"
 done
@@ -100,7 +149,7 @@ ARTIFACT="$(readlink -f "${ARTIFACT}")"
 ARTIFACT_NAME="$(basename "${ARTIFACT}")"
 APP_VERSION="$(echo "${ARTIFACT_NAME}" | sed -E 's/^bloopbox-(.+)-linux-.*/\1/')"
 
-IMAGE_NAME="bloopbox-${APP_VERSION}-${PI_OS_IMAGE}"
+IMAGE_NAME="bloopbox-${APP_VERSION}-${PI_OS_IMAGE}${BOARD_SUFFIX}"
 [[ -n "${OUTPUT}" ]] || OUTPUT="${REPO_ROOT}/release/${IMAGE_NAME}.img.xz"
 
 # Cross-architecture chroot needs the static interpreter. Debian's qemu-user-static
@@ -240,13 +289,16 @@ fi
 info "reachable as ${NEW_HOSTNAME}.local"
 
 step "installing the application into the image"
+info "install.sh ${INSTALL_FLAGS}"
 chroot "${MOUNT_POINT}" /bin/bash -euo pipefail -c "
   cd /tmp
   tar xzf '${ARTIFACT_NAME}'
   cd 'bloopbox-${APP_VERSION}-linux-${TARGET_ARCH}'
   # Packages are in already, and there is no systemd to start anything: the units are
-  # enabled offline and come up on first boot.
-  ./install.sh --skip-deps --no-start
+  # enabled offline and come up on first boot. The hardware-profile flags are why this is
+  # interpolated rather than fixed: an image for the WM8960 board differs from the default
+  # one only in what install.sh writes to /etc/bloopbox/environment and config.txt.
+  ./install.sh ${INSTALL_FLAGS}
   cd /
   rm -rf '/tmp/${ARTIFACT_NAME}' '/tmp/bloopbox-${APP_VERSION}-linux-${TARGET_ARCH}'
 "
@@ -398,6 +450,8 @@ hostname   ${NEW_HOSTNAME}
 ssh user   ${LOGIN_USER}
 password   ${LOGIN_PASSWORD}
 wi-fi      ${WIFI_SSID:-(not set — edit bloopbox-wifi.txt on the boot partition)}
+hardware   audio ${AUDIO_HAT:-usb}, lamps ${LED_DESCRIPTION}
+           installed with: install.sh ${INSTALL_FLAGS}
 
 The admin panel password is separate and is set during onboarding, in the browser.
 EOF

@@ -10,6 +10,10 @@ between what a person has to do standing next to the device and what can be done
 **Bring one thing up at a time.** Every gap here can produce "the lights do nothing", and
 debugging two unverified subsystems at once turns a morning into a week.
 
+**On the MVP board — a Pi 3B+ with a WM8960 HAT, its single button, and no lamps — take gate 4a
+instead of gates 4 and 5**, then continue at gate 6. That path needs no wiring: the HAT's own button
+sits on GPIO17, which is already button 1. [`hardware.md`](./hardware.md) describes the board.
+
 ---
 
 ## Who does what
@@ -236,6 +240,72 @@ back is physical: pull the card and write `bloopbox-wifi.txt` on the boot partit
 
 ---
 
+## Gate 4a — the MVP board: Pi 3B+ + WM8960 HAT, one button, no lamps
+
+**Take this gate instead of 4 and 5 if that is the hardware on the bench**, then jump to gate 6.
+It exists because the full board — three arcade buttons, a ULN2003, a USB speakerphone — is a lot of
+unproven wiring to bring up at once, and none of it is needed to answer *does the software run on
+real hardware*. [`hardware.md`](./hardware.md) has what the HAT occupies and why each setting is what
+it is.
+
+Install and reboot. **There is no sound card until the reboot** — the overlay is firmware:
+
+```bash
+sudo ./install.sh --audio-hat wm8960 --no-leds
+sudo reboot
+```
+
+Then, in the order that makes a failure readable:
+
+```bash
+ssh bloop@bloopbox.local 'sudo bloopbox-audio-test'
+```
+
+It walks the chain: card present → codec answering at `0x1a` on i2c-1 → the mixer has `Master` and
+`Capture` → a real product cue out of the speaker → five seconds of you, with a live level meter →
+that recording played back. Each step names its own failure, and the last section lists what to try.
+
+If the card never appears, the split is: **nothing at `0x1a`** means the HAT is not seated or I²C is
+off; **`0x1a` answers but no card** means the overlay did not load — check `dmesg | tail -40` and
+that `dtoverlay=wm8960-soundcard` really is in `config.txt`.
+
+Then the button, which needs no wiring at all — the HAT's own is on GPIO17, already button 1:
+
+```bash
+ssh bloop@bloopbox.local 'gpiomon gpiochip0 17'      # press it: falling then rising
+ssh bloop@bloopbox.local 'journalctl -u bloopbox-hardware -f'
+```
+
+**Pass:** holding the HAT's button records and sends a voice note to contact 1; tapping it plays back
+what arrived. Nothing lights up, and that is expected — with `LED_PINS=` empty the driver claims no
+output lines and the audio cues carry all the feedback.
+
+**The four claims this gate is really testing**, none of which we could verify from documentation
+(see `PENDING.md`):
+
+1. P17 is a populated switch, not just a broken-out pin.
+2. The card is called `wm8960soundcard`, so the `plughw:CARD=…` names in the environment resolve. If
+   not, `aplay -L` prints the truth and it is a one-line fix.
+3. `Master` / `Capture` are the mixer control names. If the mic records silence at a plausible level,
+   the WM8960's input **boost** switches are the next suspect: `amixer contents` shows them, and their
+   names vary by kernel.
+4. `CAPTURE_RATE=48000` is needed. If capture and the 48 kHz cues genuinely cannot share the I²S
+   clock, the symptom without it is the *record* pop failing, or capture dying, the moment the pop
+   plays — about 500 ms into every hold.
+
+Also worth checking, because the speaker and the microphone are on the same small board this time:
+whether the device records itself. `#commitCapture` finalises before the whoosh for exactly that
+reason, but the inbound chime and the pop still play while the mic is live.
+
+**And this is the first chance to actually hear the three designed cues.** `boot`, `notify` and
+`swoosh` are mastered from recordings rather than synthesised, matched to the beeps by peak amplitude —
+the honest measure, but not the one ears use. Power-cycle the board and listen to `boot`, then send
+and receive one note each, and compare all three against `pop` and `oops` for loudness. Their levels
+are one `peak` value each in `scripts/generate-sounds.ts`; the tone gains are the ones to leave alone.
+`PENDING.md` has the three specific things to listen for.
+
+---
+
 ## Gate 4 — buttons and LEDs
 
 Now the wiring. `src/hal/gpioDriver.ts` was written from datasheets and has never run.
@@ -275,7 +345,7 @@ ssh bloop@bloopbox.local 'arecord -l; aplay -l; amixer scontrols'
 ```
 
 The mixer control name is the trap: it differs across USB adapters (`PCM`, `Speaker`, `Master`),
-and a wrong one means the volume cap is silently ignored — playback at whatever the adapter
+and a wrong one means the configured volume is silently ignored — playback at whatever the adapter
 booted at, in a child's room. Set `ALSA_MIXER_CONTROL` to what `amixer scontrols` actually
 prints, then prove it moves:
 
@@ -312,7 +382,7 @@ things `PENDING.md` flags as unproven:
 
 ## The debugging kit
 
-Four commands, all installed on PATH by `install.sh`:
+Five commands, all installed on PATH by `install.sh`:
 
 | Command                      | What it is for                                                   |
 | ---------------------------- | ----------------------------------------------------------------- |
@@ -320,6 +390,11 @@ Four commands, all installed on PATH by `install.sh`:
 | `sudo bloopbox-debug on`     | Record enough to reconstruct what happened. Turn it on *first*.   |
 | `sudo bloopbox-diagnostics`  | Bundle the whole picture into one file to send somewhere.         |
 | `sudo bloopbox-hotspot-test` | Raise the hotspot on purpose, hold it, restore. Gate 3.           |
+| `sudo bloopbox-audio-test`   | Speaker out, microphone in, played back. Gates 4a and 5.          |
+
+`bloopbox-audio-test` opens the same card the daemon does, so **stop the services first** if a
+recording could be in progress. It reads the devices out of `/etc/bloopbox/environment` rather than
+using ALSA's default, which is the point: it tests what the daemon will open.
 
 ### Debug mode — turn this on before gate 1
 
@@ -333,7 +408,11 @@ Three things, none of them on by default:
 
 1. **A persistent journal.** This is the important one. Raspberry Pi OS keeps the journal in
    RAM, so **every log line is lost on reboot** — including the ones that explain the reboot.
-   During bring-up that is exactly backwards. Capped at 128 MB so it cannot fill the card.
+   During bring-up that is exactly backwards. Capped at 128 MB so it cannot fill the card. If a
+   device is doing something inexplicable on boot and you cannot reach it yet to turn this on
+   first, that run's evidence is gone — see `PENDING.md`'s "went dark" entries, which is exactly
+   that scenario and how it was worked around one specific time (a temporary drop-in in
+   `install.sh`, removed again once it had answered the immediate question).
 2. **`LOG_LEVEL=debug` on both daemons.** That turns on a full state timeline — every
    observable change, so the LED behaviour can be replayed line by line afterwards — and the
    **raw button edges, before debouncing**. A press the debouncer discards leaves no other
@@ -346,6 +425,15 @@ The sampler is what answers the questions the journal cannot. `MemoryHigh`/`Memo
 units are guesses (`PENDING.md` says so) — this measures them. Throttling in a sealed toy
 enclosure is a real risk on a Zero 2 W, and nothing else would tell you. And across a hotspot
 cycle it gives a minute-by-minute record of what the radio was doing.
+
+**Check this before trusting any of those numbers, on a board this small:**
+`grep -o cgroup_enable=memory /proc/cmdline`. Raspberry Pi's firmware disables the memory cgroup
+controller by default on low-RAM boards to save the accounting overhead, and it does this outside
+`cmdline.txt` itself, so the file looks fine while the running kernel silently has it off — found
+on real hardware 2026-08-10, where it meant `MemoryHigh`/`MemoryMax` on all four units had never
+been enforced at all. `install.sh` now appends `cgroup_enable=memory cgroup_memory=1` to fix this,
+but it takes a reboot to apply, so check `/proc/cmdline` after one rather than assuming the install
+step ran.
 
 ```bash
 # What the device thought it was doing, over time

@@ -20,7 +20,7 @@ For what the device *does* — install it, set it up, what the lights mean — s
 
 ```bash
 npm install
-npm run sounds      # generate the audio cue WAVs — they are not committed
+npm run sounds      # build the audio cue WAVs — they are not committed (the MP3 sources are)
 npm run doctor      # verify ffmpeg and the audio devices
 npm run check       # format + lint + typecheck + test. This is the gate; it must pass
 ```
@@ -102,7 +102,7 @@ real sleep. Server-layer tests drive a real Express app on an ephemeral port wit
 | `npm run test:coverage` | Coverage report                                       |
 | `npm run build`         | Compile the server to `dist/` and the UIs to `dist/public/` |
 | `npm run doctor`        | Verify ffmpeg and audio device prerequisites          |
-| `npm run sounds`        | Regenerate the audio cue WAVs                         |
+| `npm run sounds`        | Rebuild the audio cue WAVs — tone recipes plus the designed recordings in `src/audio/samples/` |
 | `npm run clean`         | Delete build output: `dist/`, `release/`, `coverage/`  |
 | `npm run clean:all`     | The above plus `node_modules/` and the generated cues  |
 | `npm run release`       | Build the arm64 device tarball (Docker)               |

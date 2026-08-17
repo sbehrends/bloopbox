@@ -41,6 +41,44 @@ const timeOfDaySchema = z
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be a 24-hour time like "20:00"');
 
 /**
+ * The zone a quiet-hours window is expressed in.
+ *
+ * `UTC` because it is the only answer that is never a wrong *guess* — every alternative
+ * claims to know where the family lives.
+ *
+ * What it is emphatically **not** is the device clock. Measured on a freshly flashed box
+ * 2026-08-17: Raspberry Pi OS defaults to **Europe/London**, and `date` there read BST, an
+ * hour off UTC. So the untrustworthy reading is not a neutral one that happens to be wrong —
+ * it is a real, plausible-looking zone that is simply somebody else's. A 20:00–07:00 window
+ * read against it is silently shifted, which on a screenless device looks like "the box
+ * stopped chiming" and nothing else.
+ */
+export const DEFAULT_TIMEZONE = 'UTC';
+
+/**
+ * Whether ICU knows this zone name.
+ *
+ * Asked of the runtime rather than checked against a shipped list: the list would be a second
+ * copy of the tzdata, and it would rot. `Intl.DateTimeFormat` throws `RangeError` for a name
+ * it does not recognise, which is exactly the question. Called without `new` on purpose — it
+ * is a constructor that also works as a plain function, and the result is thrown away.
+ */
+export function isKnownTimeZone(name: string): boolean {
+  try {
+    Intl.DateTimeFormat('en-GB', { timeZone: name });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** An IANA zone name — "Europe/Berlin", "America/Argentina/Buenos_Aires", "UTC". */
+const timeZoneSchema = z
+  .string()
+  .refine(isKnownTimeZone, 'must be an IANA timezone name like "Europe/Berlin"')
+  .default(DEFAULT_TIMEZONE);
+
+/**
  * What a button is wired to. Either one person or one group.
  *
  * A group is as valid a destination as a person — "the family chat" on Button 2 is a natural
@@ -175,28 +213,72 @@ const wifiSchema = z.object({
   password: z.string().max(63),
 });
 
-const audioShape = z.object({
+/**
+ * One volume, not two.
+ *
+ * There used to be a second field, `maxVolumeCapPercent`, meant as a ceiling a parent set once
+ * with `speakerVolumePercent` as the day-to-day knob. It was removed on 2026-08-17 because it
+ * never did the job: both fields sat in the same admin card behind the same save button, so
+ * anyone who could raise the volume could raise the cap in the same click — a speed bump, not
+ * a lock. What it did deliver was a save that failed with an error naming a field the parent
+ * had not touched. `clampVolume()` went with it: its input was `speakerVolumePercent` and its
+ * ceiling came from the same config, and the schema already refused to load or save a config
+ * where one exceeded the other, so it could never once have changed a value.
+ *
+ * The ceiling that is actually load-bearing is `max(100)` here, which pins the top of the
+ * range to whatever `amixer -M sset Playback 100%` means on the wired card.
+ *
+ * No `.refine()` and so no Shape/Schema split — there is no cross-field rule left to check.
+ */
+/**
+ * The output chain has three stages, and only the first was ever being set.
+ *
+ * On the WM8960 the DAC feeds an analogue output PGA, which feeds a class-D amplifier with
+ * its own gain. Measured on the real device 2026-08-17: `Playback` was at 0 dB while
+ * `Speaker` sat at **−20 dB** and both class-D boosts at 0 — so the loudest the box could go
+ * was 26 dB below what the hardware can do, and no amount of turning `speakerVolumePercent`
+ * up could reach it. All three are exposed rather than pinned at maximum because the top of
+ * the range is not automatically the right place: the boosts trade headroom for distortion on
+ * a small speaker, so the useful setting is a judgement about a particular enclosure.
+ *
+ * Each maps to an ALSA control named by an environment variable, and every one of them is
+ * **optional** — a plain USB adapter has no such controls, so an unset name means the stage
+ * does not exist and is skipped. See `src/hal/gpioDriver.ts`.
+ */
+const audioSchema = z.object({
+  /** Digital DAC volume — `ALSA_MIXER_CONTROL`, `Playback` on the WM8960. */
   speakerVolumePercent: z.number().int().min(0).max(100),
-  /** Hard ceiling on playback — this sits near a small child's ears. */
-  maxVolumeCapPercent: z.number().int().min(0).max(100),
+  /**
+   * Analogue output PGA — `ALSA_AMP_MIXER_CONTROL`, `Speaker` on the WM8960 (−73…+6 dB).
+   *
+   * Defaulted, like the two below, so a config.json written before these existed still parses.
+   * A required field here would drop every installed device back into onboarding and cost a
+   * parent their contacts — see the "quiet-hours timezone" block in `config.test.ts`.
+   */
+  ampVolumePercent: z.number().int().min(0).max(100).default(100),
+  /** Class-D DC boost — `ALSA_AMP_DC_MIXER_CONTROL`, `Speaker DC`. 0-5, not a percentage. */
+  ampBoostDc: z.number().int().min(0).max(5).default(5),
+  /** Class-D AC boost — `ALSA_AMP_AC_MIXER_CONTROL`, `Speaker AC`. Normally equal to DC. */
+  ampBoostAc: z.number().int().min(0).max(5).default(5),
   micGainPercent: z.number().int().min(0).max(100),
   /** Bounds a stuck button so it cannot fill the RAM disk. */
   maxRecordingSeconds: z.number().int().min(1).max(120),
 });
-
-const audioSchema = audioShape.refine(
-  (audio) => audio.speakerVolumePercent <= audio.maxVolumeCapPercent,
-  {
-    error: 'speakerVolumePercent must not exceed maxVolumeCapPercent',
-    path: ['speakerVolumePercent'],
-  },
-);
 
 const quietHoursSchema = z.object({
   enabled: z.boolean(),
   /** May wrap past midnight (20:00 -> 07:00); see src/core/quietHours.ts. */
   startTime: timeOfDaySchema,
   endTime: timeOfDaySchema,
+  /**
+   * The zone `startTime` and `endTime` are read in — **not** the device clock's.
+   *
+   * Defaulted rather than required so a config.json written before this field existed still
+   * parses. An unparseable config falls back to the defaults in RAM and boots into
+   * onboarding, which for an installed device means losing a parent's contacts to a schema
+   * addition. Locked by the "quiet-hours timezone" block in `config.test.ts`.
+   */
+  timezone: timeZoneSchema,
 });
 
 /**
@@ -321,7 +403,7 @@ export const configUpdateSchema = z
         button3: contactPatchSchema,
       })
       .partial(),
-    audio: audioShape.partial(),
+    audio: audioSchema.partial(),
     quietHours: quietHoursSchema.partial(),
     buttons: buttonTimingsShape.partial(),
     whatsapp: whatsappShape.partial(),
@@ -329,12 +411,6 @@ export const configUpdateSchema = z
   .partial();
 
 export type ConfigUpdate = z.infer<typeof configUpdateSchema>;
-
-/** Clamps a requested volume to the configured safety cap. */
-export function clampVolume(requestedPercent: number, audio: AudioConfig): number {
-  const bounded = Math.round(Math.min(Math.max(requestedPercent, 0), 100));
-  return Math.min(bounded, audio.maxVolumeCapPercent);
-}
 
 /** Normalises a configured target into the JID Baileys expects. "" if unusable. */
 export function toJid(target: string): string {

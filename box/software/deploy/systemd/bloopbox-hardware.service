@@ -42,16 +42,29 @@ TimeoutStopSec=10
 # this needs no mount unit: systemd creates /run/bloopbox owned by the service user.
 # Preserve=yes keeps it across the restart-on-config-save, and across the bridge stopping,
 # since both units declare the same directory.
+#
+# There used to be a RuntimeDirectorySize=64M here. It is not a real per-service directive —
+# that name belongs to logind.conf's per-user XDG_RUNTIME_DIR sizing, not RuntimeDirectory=
+# in a [Service] section — so systemd silently ignored it on every boot
+# ("Unknown key 'RuntimeDirectorySize'..."). There is no systemd knob that caps one
+# RuntimeDirectory independent of the rest of /run without a dedicated tmpfs mount unit,
+# which both units sharing this same directory makes awkward. What actually bounds it is
+# MemoryMax below: on cgroup v2, tmpfs pages are charged to the cgroup of whichever process
+# wrote them, so this directory can only grow as far as MemoryMax allows before that
+# process hits it — which requires the memory controller to be enabled at all; see
+# deploy/install.sh's cmdline.txt step.
 RuntimeDirectory=bloopbox
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
-RuntimeDirectorySize=64M
 
 # Button-to-LED latency is the one thing a two-year-old will notice.
 Nice=-5
 
 # 512 MB total on a Pi Zero 2 W, shared with the bridge. MemoryHigh throttles first;
-# MemoryMax is the backstop, and Restart=always recovers from an OOM kill.
+# MemoryMax is the backstop, and Restart=always recovers from an OOM kill. Also what bounds
+# /run/bloopbox above, via cgroup-accounted tmpfs pages — and also currently unenforced on
+# real hardware unless deploy/install.sh's cmdline.txt step has run: Pi firmware disables
+# the memory cgroup controller by default on boards with this little RAM.
 MemoryHigh=128M
 MemoryMax=192M
 Environment=NODE_OPTIONS=--max-old-space-size=128

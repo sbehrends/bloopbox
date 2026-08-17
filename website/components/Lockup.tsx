@@ -10,7 +10,7 @@ export function Lockup({ size = 'chrome' }: { readonly size?: 'chrome' | 'hero' 
   return (
     <span className={size === 'hero' ? styles.hero : styles.chrome}>
       {/* Decorative here: the wordmark beside it already carries the name. */}
-      <img src="/bloopbox-mark.svg" alt="" className={styles.mark} />
+      <img src="/bloopbox-iso-dark.svg" alt="" className={styles.mark} />
       <span className={styles.word}>bloopbox</span>
     </span>
   )

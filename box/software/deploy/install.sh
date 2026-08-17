@@ -24,6 +24,8 @@ NO_BOOT_CONFIG=false
 NO_WATCHDOG=false
 SIMULATOR=false
 FORCE=false
+AUDIO_HAT=usb
+NO_LEDS=false
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -43,8 +45,14 @@ Options:
   --no-watchdog      Do not enable the hardware watchdog
   --no-start         Install and enable, but do not start the services
   --simulator        Run the browser simulator HAL instead of real GPIO (for a test box)
+  --audio-hat NAME   Audio hardware: usb (default) or wm8960 for the WM8960 codec HAT
+  --no-leds          No lamps are wired — claim no LED lines at all
   --force            Continue even if the architecture or OS looks wrong
   -h, --help         This message
+
+The MVP board (Pi 3B+ + WM8960 HAT, the HAT's own button as button 1, no lamps) is:
+
+  sudo ./install.sh --audio-hat wm8960 --no-leds
 EOF
 }
 
@@ -59,11 +67,18 @@ while [[ $# -gt 0 ]]; do
     --no-watchdog) NO_WATCHDOG=true; shift ;;
     --no-start) NO_START=true; shift ;;
     --simulator) SIMULATOR=true; shift ;;
+    --audio-hat) AUDIO_HAT="$2"; shift 2 ;;
+    --no-leds) NO_LEDS=true; shift ;;
     --force) FORCE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+case "${AUDIO_HAT}" in
+  usb|wm8960) ;;
+  *) echo "unknown --audio-hat: ${AUDIO_HAT} (expected usb or wm8960)" >&2; exit 2 ;;
+esac
 
 step() { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -130,6 +145,11 @@ else
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y --no-install-recommends ffmpeg alsa-utils libgpiod3 dnsmasq-base
+  if [[ "${AUDIO_HAT}" == wm8960 ]]; then
+    # i2c-tools only: `i2cdetect -y 1` answering at 0x1a is the one check that separates
+    # "the HAT is not seated" from "the overlay did not load".
+    apt-get install -y --no-install-recommends i2c-tools
+  fi
   info "ffmpeg $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f3)"
 fi
 
@@ -208,7 +228,8 @@ ln -sf "${PREFIX}/deploy/doctor.sh" /usr/local/bin/bloopbox-doctor
 ln -sf "${PREFIX}/deploy/collect-diagnostics.sh" /usr/local/bin/bloopbox-diagnostics
 ln -sf "${PREFIX}/deploy/hotspot-test.sh" /usr/local/bin/bloopbox-hotspot-test
 ln -sf "${PREFIX}/deploy/debug-mode.sh" /usr/local/bin/bloopbox-debug
-info "bloopbox-doctor, -diagnostics, -hotspot-test and -debug are on PATH"
+ln -sf "${PREFIX}/deploy/audio-test.sh" /usr/local/bin/bloopbox-audio-test
+info "bloopbox-doctor, -diagnostics, -hotspot-test, -debug and -audio-test are on PATH"
 
 step "configuring the setup hotspot's DNS"
 # NetworkManager runs its own dnsmasq for `ipv4.method shared`, and reads extra config from
@@ -234,6 +255,22 @@ step "writing ${ETC_DIR}/environment"
 install -d -m 0755 "${ETC_DIR}"
 if [[ -f "${ETC_DIR}/environment" ]]; then
   info "kept the existing file (it holds the bridge token both daemons agree on)"
+  # The file is authored once on purpose, so flags that write into it do nothing on an
+  # upgrade. Say so rather than let someone believe --audio-hat took effect.
+  if [[ "${AUDIO_HAT}" == wm8960 || "${NO_LEDS}" == true ]]; then
+    warn "--audio-hat/--no-leds write to this file and it already exists — the firmware"
+    warn "half was still applied, but edit ${ETC_DIR}/environment by hand for the rest"
+  fi
+  # A device installed before the capture routing was understood keeps its environment file
+  # here, so the new entries never arrive and its microphone stays inaudible with nothing to
+  # show for it. Say so with the line to paste, since we cannot write it ourselves.
+  EXISTING_SWITCHES="$(grep '^ALSA_ENABLE_SWITCHES' "${ETC_DIR}/environment" 2>/dev/null || true)"
+  if [[ -n "${EXISTING_SWITCHES}" && "${EXISTING_SWITCHES}" != *"Input Mixer Boost"* ]]; then
+    warn "this file's ALSA_ENABLE_SWITCHES has no capture routing, so the microphone will be"
+    warn "faint noise. Replace that line in ${ETC_DIR}/environment with:"
+    warn '  ALSA_ENABLE_SWITCHES="Left Output Mixer PCM,Right Output Mixer PCM,Left Input Mixer Boost,Right Input Mixer Boost,Left Input Boost Mixer LINPUT1=3,Right Input Boost Mixer RINPUT1=3"'
+    warn "then: sudo systemctl restart bloopbox-audio-init"
+  fi
 else
   # Shared secret for the localhost Socket.io link between the two processes. Generated
   # per device: a hardcoded default would be the same on every unit ever flashed.
@@ -244,6 +281,54 @@ else
   if [[ "${SIMULATOR}" == true ]]; then
     echo 'SIMULATOR_MODE=true' >> "${ETC_DIR}/environment"
     info "simulator HAL selected"
+  fi
+  if [[ "${NO_LEDS}" == true ]]; then
+    {
+      echo ''
+      echo '# --no-leds: no lamps are wired, so the driver claims no output lines. The three'
+      echo '# logical channels still exist above the HAL; setLed() is simply a no-op.'
+      echo 'LED_PINS='
+    } >> "${ETC_DIR}/environment"
+    info "no LED lines will be claimed"
+  fi
+  if [[ "${AUDIO_HAT}" == wm8960 ]]; then
+    {
+      echo ''
+      echo '# --audio-hat wm8960. Addressed by card *name*, so a changing card number cannot'
+      echo '# point the daemon at the wrong device. Confirm with: sudo bloopbox-audio-test'
+      echo 'ALSA_PLAYBACK_DEVICE=plughw:CARD=wm8960soundcard,DEV=0'
+      echo 'ALSA_CAPTURE_DEVICE=plughw:CARD=wm8960soundcard,DEV=0'
+      echo '# Measured on a real WM8960 HAT, 2026-08-10: this codec has NO "Master" control.'
+      echo '# It exposes Playback (the DAC volume), Speaker and Headphone (the two output amps),'
+      echo '# and Capture. Playback is the one config.audio.speakerVolumePercent drives, because it'
+      echo '# sits upstream of both amps. A wrong name here is SILENT — the HAL treats a mixer'
+      echo '# failure as non-fatal, so the setting would simply never apply.'
+      echo 'ALSA_MIXER_CONTROL=Playback'
+      echo 'ALSA_CAPTURE_MIXER_CONTROL=Capture'
+      echo '# The two stages BELOW the DAC, measured on a real HAT 2026-08-17. Playback was already'
+      echo '# at 0 dB while Speaker sat at 101/127 = -20 dB and both class-D boosts at 0 — so the'
+      echo '# box was ~26 dB quieter than the hardware allows, and turning Playback up could not'
+      echo '# reach any of it. Driven by config.audio.ampVolumePercent / ampBoostDc / ampBoostAc so'
+      echo '# a builder can trade loudness against distortion for their own enclosure.'
+      echo 'ALSA_AMP_MIXER_CONTROL=Speaker'
+      echo "ALSA_AMP_DC_MIXER_CONTROL='Speaker DC'"
+      echo "ALSA_AMP_AC_MIXER_CONTROL='Speaker AC'"
+      echo '# Analogue routing this codec does not do by default. Every entry here was measured'
+      echo '# on a real HAT on 2026-08-10 with a full-scale tone through its own speaker.'
+      echo '#   Output Mixer PCM   off by default = the DAC is wired to nothing. Total silence,'
+      echo '#                      while the card enumerates, aplay exits 0 and volumes read fine.'
+      echo '#   Input Mixer Boost  off by default = the mic PGA is not connected to the boost'
+      echo '#                      mixer that feeds the ADC. Worth 42 dB (tone -62 dB -> -20 dB).'
+      echo '#   Input Boost Mixer  the mic boost stage, 0 dB by default. 3 is +29 dB and takes'
+      echo '#                      the same tone to -8.4 dB. Without it a voice note is faint noise.'
+      echo '# bloopbox-audio-init.service applies these at boot — it cannot happen here, because'
+      echo '# install.sh also runs inside a chroot with no sound card. Entries are Name or Name=Value.'
+      echo 'ALSA_ENABLE_SWITCHES="Left Output Mixer PCM,Right Output Mixer PCM,Left Input Mixer Boost,Right Input Mixer Boost,Left Input Boost Mixer LINPUT1=3,Right Input Boost Mixer RINPUT1=3"'
+      echo '# Match the 48 kHz cues: this codec cannot hold two rates on one I2S clock, and'
+      echo '# the record pop plays while capture is open. See src/hal/gpioDriver.ts.'
+      echo 'CAPTURE_RATE=48000'
+    } >> "${ETC_DIR}/environment"
+    info "WM8960 ALSA settings written"
   fi
   info "generated a bridge token"
 fi
@@ -281,7 +366,8 @@ fi
 if [[ "${HAS_SYSTEMCTL}" == true ]]; then
   # Works offline too: inside a mounted image systemctl just writes the symlinks.
   systemctl enable bloopbox-hardware.service bloopbox-whatsapp.service \
-                   bloopbox-firstboot.service bloopbox-net.service >/dev/null
+                   bloopbox-firstboot.service bloopbox-net.service \
+                   bloopbox-audio-init.service >/dev/null
   info "enabled at boot"
 else
   warn "no systemctl here — the unit files are installed but nothing is enabled"
@@ -314,6 +400,16 @@ else
       echo '# so asking the library for them leaves the lines floating. Applied before'
       echo '# userspace starts and survives any library change. See CLAUDE.md.'
       echo 'gpio=17,27,22=ip,pu'
+      if [[ "${AUDIO_HAT}" == wm8960 ]]; then
+        echo '# WM8960 codec HAT (I2S audio, I2C control). This overlay is in-tree in the'
+        echo '# Raspberry Pi kernel — do not install the vendor DKMS driver, it is'
+        echo '# unmaintained and breaks on new kernels. The HAT uses GPIO 2,3 and 18-21;'
+        echo '# its own button is on GPIO17, which is already button 1.'
+        echo 'dtparam=i2c_arm=on'
+        echo 'dtoverlay=wm8960-soundcard'
+        echo '# One card, so ALSA `default` cannot land on the wrong one.'
+        echo 'dtparam=audio=off'
+      fi
       if [[ "${NO_WATCHDOG}" != true ]]; then
         echo '# Hardware watchdog, petted by systemd (see system.conf.d).'
         echo 'dtparam=watchdog=on'
@@ -322,6 +418,32 @@ else
     } >> "${CONFIG_TXT}"
     info "updated ${CONFIG_TXT} (backup at ${CONFIG_TXT}.bloopbox.bak)"
     info "the pull-ups and the watchdog take effect after a reboot"
+    if [[ "${AUDIO_HAT}" == wm8960 ]]; then
+      info "so does the WM8960 overlay — there is no sound card until you reboot"
+    fi
+  fi
+
+  # The Pi's own firmware appends `cgroup_disable=memory` to the kernel command line on
+  # boards with this little RAM, to save the accounting overhead — found on real hardware
+  # 2026-08-10, via /proc/cmdline, on a device where MemoryHigh/MemoryMax had silently never
+  # done anything. `cgroup_enable=memory` overrides it back on; without the memory
+  # controller, MemoryHigh/MemoryMax on all four units (and the tmpfs cap they double as —
+  # see the comment in bloopbox-hardware.service) are inert, not just generous.
+  if [[ -z "${BOOT_DIR}" || ! -f "${BOOT_DIR}/cmdline.txt" ]]; then
+    warn "no cmdline.txt found — skipping. MemoryHigh/MemoryMax will stay unenforced; add"
+    warn "this to the kernel command line by hand: cgroup_enable=memory cgroup_memory=1"
+  else
+    CMDLINE_TXT="${BOOT_DIR}/cmdline.txt"
+    if grep -qw 'cgroup_enable=memory' "${CMDLINE_TXT}"; then
+      info "memory cgroup already enabled in ${CMDLINE_TXT}"
+    else
+      cp -n "${CMDLINE_TXT}" "${CMDLINE_TXT}.bloopbox.bak" 2>/dev/null || true
+      # One line, no comments — the firmware parses this literally, so nothing but the
+      # parameters themselves can go in it.
+      sed -i 's/[[:space:]]*$/ cgroup_enable=memory cgroup_memory=1/' "${CMDLINE_TXT}"
+      info "enabled the memory cgroup controller in ${CMDLINE_TXT}"
+      info "MemoryHigh/MemoryMax take effect after a reboot"
+    fi
   fi
 fi
 
@@ -351,6 +473,7 @@ Installed.
 
   admin panel   http://${HOSTNAME_NOW}.local:3000/admin/
   health check  sudo bloopbox-doctor
+  audio test    sudo bloopbox-audio-test         (plays a cue, records you, plays it back)
   diagnostics   sudo bloopbox-diagnostics        (a redacted bundle to send somewhere)
   hotspot test  sudo bloopbox-hotspot-test       (drops your ssh session on purpose)
   debug mode    sudo bloopbox-debug on           (verbose logs that survive a reboot, 24h)
@@ -359,3 +482,10 @@ Installed.
 
 First run: open the admin panel, set a password, link WhatsApp, assign the three buttons.
 EOF
+
+if [[ "${AUDIO_HAT}" == wm8960 || "${NO_LEDS}" == true ]]; then
+  cat <<'EOF'
+On this board only button 1 has hardware, so assign contact 1 and leave 2 and 3 disabled.
+Reboot before testing audio — the overlay is firmware — then: sudo bloopbox-audio-test
+EOF
+fi

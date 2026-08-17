@@ -112,7 +112,7 @@ Everything in `src/core/` is I/O-free. It consumes events and timings, and its o
 | `ledAnimator`         | Device state → LED frames, on a 50 ms tick                                  |
 | `deviceState`         | The observable state, in one place, with change notification                |
 | `networkSupervisor`   | When the setup hotspot goes up and when it steps aside                      |
-| `quietHours`          | Whether now falls inside the configured window                              |
+| `quietHours`          | Whether now falls inside the window, read in the configured IANA zone       |
 | `deviceController`    | The wiring: intents in, capture / playback / cues / LEDs out                |
 
 That purity is the whole reason the timing behaviour is testable on fake timers with no hardware
@@ -155,15 +155,29 @@ The hotspot double-pulse is a **rhythm**, not another rate. Every other pattern 
 square wave or a chase, and people tell a heartbeat from a blink across a room far more reliably
 than they tell 0.5 s blinking from 1.5 s blinking. Solid-on stays the language of error.
 
-There is deliberately no sound attached to any of this. The hotspot can come up at 3am because the
-router died, and a chime in a child's bedroom is the worse failure.
+There is deliberately no sound attached to any *status* here. The hotspot can come up at 3am because
+the router died, and a chime in a child's bedroom is the worse failure. Status is a condition that
+persists, so the light carries it and nothing has to be heard to learn it.
 
-### The boot animation is held on purpose
+### The boot animation is held on purpose, and it has a sound
 
 The daemon derives its status from Wi-Fi and WhatsApp health, which resolves instantly, so
 `BOOTING` would never be visible even though §6 defines a chase for it. `BOOT_ANIMATION_MS`
 (2.6 s) holds it, and the simulator has a **Reboot** injector to replay it, since a browser opened
 after startup would otherwise never see it.
+
+Coming up is the one lifecycle event that does make a noise (`boot.wav`, PRODUCT.md §7), and it is
+the exception the paragraph above is worth reading against. A boot is a **transition, not a
+condition**: it happens once, it is over in under a second, and the LED chase that expresses it is
+only visible to someone already looking at the box. The thing a parent actually wants to know after a
+power cut — *did it come back by itself?* — has no other channel on a device with no screen. The 3am
+objection still applies, and is answered by suppression rather than by silence: the boot cue is
+gated by `shouldPlayCue` like every other courtesy sound, so scheduled quiet hours and the silent
+chord both mute it while the chase runs regardless.
+
+`DeviceController.announceBoot()` owns the decision and the hardware server's `beginBoot()` is the
+only caller, used for both the real boot and the simulator's replay — one function, so the sound and
+the chase cannot drift into disagreeing about what booting is.
 
 ---
 
@@ -267,7 +281,7 @@ new values — `requestRestart()` in `hardware-server.ts`.
 
 There is deliberately **no live-reload path.** Applying some values live and others only on restart
 produces states no test covers and no user can reason about: new button timings against a stale
-volume cap, say. A restart is a couple of seconds on this device and leaves exactly one code path.
+speaker volume, say. A restart is a couple of seconds on this device and leaves exactly one code path.
 
 | Context                | Supervisor                                                                        |
 | ---------------------- | --------------------------------------------------------------------------------- |
@@ -455,8 +469,13 @@ Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys
 clients show the voice bubble but refuse to play it.
 
 Silent mode suppresses the inbound notification chime and the record start/stop cues. It does
-**not** suppress playback, which always plays at the configured volume (spec §7). Volume is always
-clamped to `audio.maxVolumeCapPercent`.
+**not** suppress playback, which always plays at the configured volume (spec §7). That volume is
+four multiplying stages — `speakerVolumePercent` into `ampVolumePercent` into `ampBoostDc` /
+`ampBoostAc` — applied by `GpioHal` at init from control names the environment supplies. The former
+`maxVolumeCapPercent` ceiling was removed on 2026-08-17; see `docs/PRODUCT.md` §7 for why.
+
+`POST /api/audio/test` plays the boot cue on demand and is the **only** cue that ignores silent
+mode, so the amplifier stages can be judged by ear at any hour.
 
 ---
 
@@ -526,7 +545,10 @@ are testing configuration at all.
 | `LED_ACTIVE_HIGH`                            | `true`                     | Pi only, unverified — the ULN2003 inverts, so try both     |
 | `BUTTON_ACTIVE_LOW`                          | `true`                     | Pi only, unverified — pull-ups mean a press reads low      |
 | `ALSA_CAPTURE_DEVICE` / `ALSA_PLAYBACK_DEVICE` | `default`                | Pi only, unverified                                       |
-| `ALSA_MIXER_CONTROL`                         | `PCM`                      | Pi only. Differs across USB adapters; a wrong name silently ignores the volume cap |
+| `ALSA_MIXER_CONTROL`                         | `PCM`                      | Pi only. Differs across USB adapters; a wrong name silently ignores the volume setting |
+| `ALSA_AMP_MIXER_CONTROL`                     | *(unset)*                  | Pi only. The analogue output stage below the DAC — `Speaker` on the WM8960. Unset means the card has none |
+| `ALSA_AMP_DC_MIXER_CONTROL`                  | *(unset)*                  | Pi only. Class-D DC boost — `Speaker DC` on the WM8960 |
+| `ALSA_AMP_AC_MIXER_CONTROL`                  | *(unset)*                  | Pi only. Class-D AC boost — `Speaker AC` on the WM8960 |
 
 ---
 

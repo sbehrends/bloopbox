@@ -1,5 +1,7 @@
-# The build context is the repo root. Everything the release needs is either committed or
-# generated inside the container.
+# The build context is `box/software/` — this directory, not the repo root: `build-release.sh`
+# derives its root from its own location and cd's here before invoking buildx, which is also why
+# every path below is written relative to this file. Everything the release needs is either
+# committed or generated inside the container.
 #
 # node_modules is the important one: the host tree holds darwin binaries (sharp, rolldown,
 # oxlint), and `COPY . .` would drop them on top of the arm64 tree npm just built.
@@ -11,6 +13,10 @@ build/
 *.tsbuildinfo
 
 # Device state and generated audio — rebuilt in the image by `npm run sounds`.
+#
+# Note what is NOT excluded: `src/audio/samples/*.mp3`. Those are the designed recordings
+# three of the cues are mastered from, and `npm run sounds` runs inside the image — excluding
+# them here fails the build at build:assets with a missing cue, not with a missing MP3.
 data/
 src/audio/sounds/
 *.ogg

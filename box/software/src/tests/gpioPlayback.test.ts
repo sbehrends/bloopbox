@@ -1,0 +1,144 @@
+import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * The GPIO driver's playback path (docs/hardware.md § Audio).
+ *
+ * `aplay` is not a decoder: handed a file whose header it does not recognise it plays the
+ * bytes as raw PCM rather than failing, and an inbound WhatsApp voice note is Ogg/Opus. On
+ * the first real device that meant every received message arrived as full-volume noise with
+ * `aplay` exiting 0 and nothing logged. These tests hold the decode in place — the whole
+ * bug is one missing call, and it is silent in both directions.
+ *
+ * `opengpio` is never loaded here: only `init()` imports it, and playback does not need it.
+ */
+
+const spawned: { command: string; args: readonly string[] }[] = [];
+
+/** Just enough of a ChildProcess for the driver: it listens, and it kills. */
+function fakeChild(): EventEmitter {
+  const child = new EventEmitter();
+  return Object.assign(child, { stderr: null, kill: () => true });
+}
+
+vi.mock('node:child_process', () => ({
+  spawn: (command: string, args: readonly string[]) => {
+    spawned.push({ command, args });
+    const child = fakeChild();
+    // A real aplay exits when the file ends; nothing here awaits a timer.
+    setImmediate(() => child.emit('close', 0, null));
+    return child;
+  },
+}));
+
+const decoded = vi.fn<(input: string, output: string) => Promise<void>>(
+  async (_input: string, output: string) => {
+    await writeFile(output, '');
+  },
+);
+
+vi.mock('../audio/ffmpeg.ts', () => ({
+  toPlayableWav: (input: string, output: string) => decoded(input, output),
+  toVoiceNote: () => Promise.resolve(),
+}));
+
+let directory: string;
+
+async function makeHal() {
+  const { GpioHal } = await import('../hal/gpioDriver.ts');
+  return new GpioHal({ recordingDirectory: directory, volumePercent: 50, micGainPercent: 70 });
+}
+
+beforeEach(async () => {
+  spawned.length = 0;
+  decoded.mockClear();
+  directory = await mkdtemp(join(tmpdir(), 'bloopbox-playback-'));
+});
+
+afterEach(async () => {
+  await rm(directory, { recursive: true, force: true });
+});
+
+describe('play', () => {
+  it('decodes an Ogg voice note to WAV instead of handing aplay bytes it cannot read', async () => {
+    const note = join(directory, 'wa-0-ABC123.ogg');
+    await writeFile(note, '');
+    const hal = await makeHal();
+
+    await hal.play(note);
+
+    expect(decoded).toHaveBeenCalledWith(note, expect.stringContaining('.wav'));
+    const played = spawned.find(({ command }) => command === 'aplay');
+    expect(played?.args).toContain(join(directory, 'play-wa-0-ABC123.wav'));
+    expect(played?.args).not.toContain(note);
+  });
+
+  it('deletes the decoded copy, so a queue of notes cannot fill the RAM disk', async () => {
+    const note = join(directory, 'wa-1-DEF456.ogg');
+    await writeFile(note, '');
+    const hal = await makeHal();
+
+    await hal.play(note);
+
+    const { readdir } = await import('node:fs/promises');
+    expect(await readdir(directory)).toEqual(['wa-1-DEF456.ogg']);
+  });
+
+  it('plays a WAV as-is: nothing already in a container aplay reads pays for a decode', async () => {
+    const wav = join(directory, 'rec-1.wav');
+    await writeFile(wav, '');
+    const hal = await makeHal();
+
+    await hal.play(wav);
+
+    expect(decoded).not.toHaveBeenCalled();
+    expect(spawned.find(({ command }) => command === 'aplay')?.args).toContain(wav);
+  });
+
+  it('does not start aplay when stopPlayback() lands during the decode', async () => {
+    const note = join(directory, 'wa-0-JKL012.ogg');
+    await writeFile(note, '');
+    let release: (() => void) | undefined;
+    decoded.mockImplementationOnce(async (_input, output) => {
+      await writeFile(output, '');
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const hal = await makeHal();
+
+    const playing = hal.play(note);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    // The interrupt a button press causes: there is no process to kill yet.
+    await hal.stopPlayback();
+    release?.();
+    await playing;
+
+    expect(spawned.some(({ command }) => command === 'aplay')).toBe(false);
+  });
+
+  it('cleans up the decoded copy when playback itself fails', async () => {
+    const note = join(directory, 'wa-2-GHI789.ogg');
+    await writeFile(note, '');
+    decoded.mockRejectedValueOnce(new Error('ffmpeg exited with code 1'));
+    const hal = await makeHal();
+
+    await expect(hal.play(note)).rejects.toThrow(/ffmpeg/);
+    const { readdir } = await import('node:fs/promises');
+    expect(await readdir(directory)).toEqual(['wa-2-GHI789.ogg']);
+  });
+});
+
+describe('playCue', () => {
+  it('plays the cue WAV directly — cues are generated as WAV and never need ffmpeg', async () => {
+    const hal = await makeHal();
+
+    await hal.playCue('pop');
+
+    expect(decoded).not.toHaveBeenCalled();
+    expect(spawned.find(({ command }) => command === 'aplay')?.args.at(-1)).toMatch(/pop\.wav$/);
+  });
+});

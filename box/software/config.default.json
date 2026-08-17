@@ -28,14 +28,17 @@
   },
   "audio": {
     "speakerVolumePercent": 70,
-    "maxVolumeCapPercent": 85,
-    "micGainPercent": 60,
+    "ampVolumePercent": 100,
+    "ampBoostDc": 5,
+    "ampBoostAc": 5,
+    "micGainPercent": 80,
     "maxRecordingSeconds": 30
   },
   "quietHours": {
-    "enabled": true,
+    "enabled": false,
     "startTime": "20:00",
-    "endTime": "07:00"
+    "endTime": "07:00",
+    "timezone": "UTC"
   },
   "buttons": {
     "debounceMs": 150,

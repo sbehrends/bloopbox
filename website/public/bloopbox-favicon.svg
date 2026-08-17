@@ -1,22 +1,47 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="bloopbox">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="bloopbox">
   <title>bloopbox</title>
   <!-- A COPY of box/software/public/shared/. The site and the box share a brand, not a
        build, so this file is duplicated on purpose. Change one, change the other. -->
   <!--
-    The favicon, and the only place a second drawing of the mark is allowed.
+    The Speech Bubble mark (docs/BRAND.md), favicon tier.
 
-    Not a variant of bloopbox-mark.svg — a different job. The full mark is three concentric ring
-    pairs, and below about 24px the rings, the bands and the holes all collapse into one blur.
-    This keeps what survives at 16px: the three buttons in their own order, and the bubble tail
-    that makes the silhouette a message rather than three dots. Solid discs, no holes, one
-    hairline.
+    A pill with a tail, holding three overlapping colour fields — yellow, coral, teal, left to
+    right, the same order as the buttons on the enclosure and the ch-1/2/3 tokens. The fields
+    cover the pill's interior edge to edge, so unlike the ring mark this replaced there is no
+    opaque neutral interior: the outer edge sits directly against whatever the page is behind
+    it. That is the one thing that cannot be a single fixed colour any more — deep navy
+    disappears into a navy page exactly as it needs to stand out on cream. The .ink class below
+    is the fix, the same trick tokens.css already uses for the rest of the page: navy at the
+    default light rendering, cream under prefers-color-scheme dark. The colour fields keep
+    their exact brand hex regardless of theme.
 
-    If the mark's colours or button order change, change them here too.
+    This is the simpler of the two drawings — flat fields, no internal hairlines, no buttons —
+    because a browser tab is 16px and detail below that just blurs. bloopbox-mark.svg is the
+    other tier, for 24px and up. They share no code, so a colour or button-order change has to
+    be made in both.
   -->
-  <g stroke="#1a2b48" stroke-width="2.6" stroke-linejoin="round">
-    <path fill="#f7b733" d="M11 30 L11.5 55 Q11.8 58 15 56 L31 42 Q34 38.5 27 33 Z" />
-    <circle cx="15.5" cy="26" r="10.5" fill="#f7b733" />
-    <circle cx="32" cy="26" r="10.5" fill="#ff6f61" />
-    <circle cx="48.5" cy="26" r="10.5" fill="#00a7e1" />
-  </g>
+  <style>
+    .ink {
+      fill: #1a2b48;
+    }
+    @media (prefers-color-scheme: dark) {
+      .ink {
+        fill: #f7f4ef;
+      }
+    }
+  </style>
+  <path
+    class="ink"
+    d="M30 56.5C30 47.964 36.8381 41 45.3271 41V43L44.9824 43.0049C37.7814 43.1899 32 49.1608 32 56.5C32 62.7226 36.1559 67.9624 41.8096 69.5254L41.2549 76L49.0283 70H74.4414C81.9295 70 88 63.9558 88 56.5C88 49.0442 81.741 43 74.2529 43V41C82.8014 41 90 47.8959 90 56.5C90 65.0685 83.026 72 74.4414 72H49.7109L38.873 80.3643L39.6836 70.9121C34.0019 68.6353 30 63.0339 30 56.5ZM59 41V43H45.3271V41H59ZM64 41V43H59V41H64ZM74.2529 41V43H64V41H74.2529Z"
+  />
+  <path
+    fill="#f7b733"
+    d="M45.3268 43C37.9666 43 32 49.0442 32 56.5C32 62.7227 36.1562 67.9621 41.81 69.525L41.2547 76L49.0287 70L64 70V43H45.3268Z"
+  />
+  <path
+    fill="#00a7e1"
+    d="M88 56.5C88 49.0442 81.7414 43 74.2532 43L59 43L59.1883 70L74.4416 70C81.9297 70 88 63.9558 88 56.5Z"
+  />
+  <circle fill="#ff6f61" cx="59" cy="56.5" r="13" />
+  <circle fill="#00a7e1" cx="73" cy="56.5" r="13" />
 </svg>

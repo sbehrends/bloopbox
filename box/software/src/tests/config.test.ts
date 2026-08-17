@@ -11,7 +11,6 @@ import {
 import {
   buttonIndexToKey,
   buttonKeyToIndex,
-  clampVolume,
   configSchema,
   DEFAULT_BUTTON_TIMINGS,
   enabledContacts,
@@ -81,9 +80,9 @@ describe('loading', () => {
   });
 
   it('falls back rather than throwing when the file is valid JSON but invalid config', async () => {
-    // Plausible-looking but the volume exceeds its own cap.
+    // Plausible-looking but the volume is out of range.
     const broken = { ...(await validConfig()) };
-    broken.audio = { ...broken.audio, speakerVolumePercent: 100, maxVolumeCapPercent: 60 };
+    broken.audio = { ...broken.audio, speakerVolumePercent: 140 };
     await writeFile(configPath, JSON.stringify(broken), 'utf8');
 
     const result = await manager().load();
@@ -211,8 +210,12 @@ describe('partial updates from the admin API', () => {
     await config.load();
     await config.save(await validConfig());
 
-    // Above the configured cap of 85.
-    await expect(config.update({ audio: { speakerVolumePercent: 99 } })).rejects.toThrow(
+    /*
+     * A cross-field rule the patch cannot see on its own: button3 has no target, so enabling
+     * it is only invalid once merged. Checked in ConfigManager.save() against the merged
+     * config, which is the only place it can be checked correctly.
+     */
+    await expect(config.update({ contacts: { button3: { enabled: true } } })).rejects.toThrow(
       ConfigValidationError,
     );
   });
@@ -269,14 +272,6 @@ describe('schema helpers', () => {
     expect(buttonIndexToKey(2)).toBe('button3');
   });
 
-  it('clamps volume to the configured cap', async () => {
-    const { audio } = await validConfig(); // cap 85
-    expect(clampVolume(50, audio)).toBe(50);
-    expect(clampVolume(95, audio)).toBe(85);
-    expect(clampVolume(-10, audio)).toBe(0);
-    expect(clampVolume(1000, audio)).toBe(85);
-  });
-
   it('normalises bare numbers into WhatsApp JIDs, idempotently', () => {
     expect(toJid('15551234567')).toBe('15551234567@s.whatsapp.net');
     expect(toJid('15551234567@s.whatsapp.net')).toBe('15551234567@s.whatsapp.net');
@@ -305,10 +300,75 @@ describe('schema validation rules', () => {
     expect(configSchema.safeParse(config).success).toBe(true);
   });
 
-  it('refuses a volume above its own cap', async () => {
+  it('refuses a volume outside 0-100', async () => {
     const config = await validConfig();
-    config.audio = { ...config.audio, speakerVolumePercent: 90, maxVolumeCapPercent: 80 };
-    expect(configSchema.safeParse(config).success).toBe(false);
+    for (const speakerVolumePercent of [-1, 101, 7.5]) {
+      expect(
+        configSchema.safeParse({ ...config, audio: { ...config.audio, speakerVolumePercent } })
+          .success,
+      ).toBe(false);
+    }
+  });
+
+  it('fills in the amplifier stages for a config written before they existed', async () => {
+    /*
+     * Same migration hazard as the timezone field: these arrived on 2026-08-17, and an
+     * installed device whose config no longer parses falls back to the defaults in RAM and
+     * re-enters onboarding. They default to the measured maximum, because the WM8960 powers
+     * its output PGA up 20 dB down and nothing else in the chain can compensate.
+     */
+    const config = await validConfig();
+    const audio: Record<string, unknown> = { ...config.audio };
+    for (const key of ['ampVolumePercent', 'ampBoostDc', 'ampBoostAc']) delete audio[key];
+
+    const result = configSchema.safeParse({ ...config, audio });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.audio.ampVolumePercent).toBe(100);
+    expect(result.data?.audio.ampBoostDc).toBe(5);
+    expect(result.data?.audio.ampBoostAc).toBe(5);
+    expect(result.data?.contacts.button1.name).toBe('Mom');
+  });
+
+  it('keeps the stored amplifier stages when a patch touches only the digital volume', async () => {
+    // The `.partial()` + `.default()` trap: a patch that omits these must not reset them.
+    const config = manager();
+    await config.load();
+    await config.update({ audio: { ampVolumePercent: 60, ampBoostDc: 2, ampBoostAc: 2 } });
+
+    await config.update({ audio: { speakerVolumePercent: 55 } });
+
+    expect(config.current.audio.ampVolumePercent).toBe(60);
+    expect(config.current.audio.ampBoostDc).toBe(2);
+    expect(config.current.audio.ampBoostAc).toBe(2);
+  });
+
+  it('refuses an amplifier boost outside 0-5', async () => {
+    const config = await validConfig();
+    for (const ampBoostDc of [-1, 6]) {
+      expect(
+        configSchema.safeParse({ ...config, audio: { ...config.audio, ampBoostDc } }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('drops maxVolumeCapPercent from a config written before it was removed', async () => {
+    /*
+     * The cap was deleted on 2026-08-17. Zod strips unknown keys rather than rejecting them,
+     * which is what makes this a non-event for an installed device: the stale key is ignored on
+     * load and gone after the next save. A `.strict()` object here would have bricked every box
+     * in the field into onboarding.
+     */
+    const config = await validConfig();
+
+    const result = configSchema.safeParse({
+      ...config,
+      audio: { ...config.audio, maxVolumeCapPercent: 85 },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.audio).not.toHaveProperty('maxVolumeCapPercent');
+    expect(result.data?.audio.speakerVolumePercent).toBe(config.audio.speakerVolumePercent);
   });
 
   it('refuses malformed quiet-hours times', async () => {
@@ -350,6 +410,54 @@ describe('read receipts', () => {
 
     expect(result.success).toBe(true);
     expect(result.data?.whatsapp.markPlayedAsRead).toBe(false);
+  });
+});
+
+describe('quiet-hours timezone', () => {
+  it('fills the field in for a config written before it existed', async () => {
+    const legacy = await validConfig();
+    const quietHours: Record<string, unknown> = { ...legacy.quietHours };
+    delete quietHours['timezone'];
+
+    const result = configSchema.safeParse({ ...legacy, quietHours });
+
+    /*
+     * The failure this guards against is not a rejected save — it is a *boot*. An installed
+     * device whose config no longer parses falls back to the defaults in RAM and re-enters
+     * onboarding, so a required field added here would cost a parent their contacts on the
+     * next update. It has to default.
+     */
+    expect(result.success).toBe(true);
+    expect(result.data?.quietHours.timezone).toBe('UTC');
+    expect(result.data?.contacts.button1.name).toBe('Mom');
+  });
+
+  it('rejects a zone name ICU does not know', async () => {
+    const config = await validConfig();
+
+    const result = configSchema.safeParse({
+      ...config,
+      quietHours: { ...config.quietHours, timezone: 'Europe/Atlantis' },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('keeps the stored zone when a patch touches only the times', async () => {
+    /*
+     * Asserted on the merged config rather than on the response, because that is where the
+     * equivalent bug hid last time: `.partial()` on a field carrying a `.default()` would
+     * quietly reinstate "UTC" on every save that did not name a zone, and the save would
+     * still answer 200.
+     */
+    const config = manager();
+    await config.load();
+    await config.update({ quietHours: { enabled: true, timezone: 'Europe/Berlin' } });
+
+    await config.update({ quietHours: { startTime: '21:30' } });
+
+    expect(config.current.quietHours.timezone).toBe('Europe/Berlin');
+    expect(config.current.quietHours.startTime).toBe('21:30');
   });
 });
 

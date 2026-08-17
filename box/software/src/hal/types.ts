@@ -92,12 +92,30 @@ export type HalCore = {
 export type Hal = HalCore &
   Pick<EventEmitter<HalEvents>, 'on' | 'off' | 'once' | 'removeAllListeners'>;
 
+/**
+ * The stages below the DAC, applied at init.
+ *
+ * Separate from `volumePercent` because they are not a volume a caller ever changes at
+ * runtime — they describe how the wired amplifier is set up, and config is snapshot at boot.
+ * A driver with no such stages (any USB adapter) ignores them.
+ */
+export type AmpSettings = {
+  /** Analogue output PGA, 0-100. */
+  readonly volumePercent: number;
+  /** Class-D DC boost, 0-5. */
+  readonly boostDc: number;
+  /** Class-D AC boost, 0-5. */
+  readonly boostAc: number;
+};
+
 /** Options common to every driver. */
 export type HalOptions = {
   /** Where recordings are written. Should be tmpfs on the device. */
   readonly recordingDirectory: string;
   /** Microphone gain, 0-100. */
   readonly micGainPercent: number;
-  /** Initial output volume, 0-100, already clamped to the cap. */
+  /** Initial output volume, 0-100. */
   readonly volumePercent: number;
+  /** Amplifier stages below the DAC. Absent means "leave them alone". */
+  readonly amp?: AmpSettings | undefined;
 };

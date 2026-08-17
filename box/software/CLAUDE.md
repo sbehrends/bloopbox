@@ -15,7 +15,9 @@ Everything below runs from this directory (`box/software/`).
 - **`ffmpeg` on PATH** — required for the Opus/ogg pipeline. `brew install ffmpeg` on macOS,
   `apt install ffmpeg` on the Pi. Override with `FFMPEG_PATH`.
 - `npm run sounds` after a fresh clone — the cue WAVs in `src/audio/sounds/` are **generated, not
-  committed**. `data/` is gitignored too, so a clean checkout has no config and boots into
+  committed**. The designed source recordings they are partly built from (`src/audio/samples/*.mp3`)
+  **are** committed: they are authored audio, so losing one is a broken checkout, not a missing
+  build step. `data/` is gitignored too, so a clean checkout has no config and boots into
   onboarding.
 
 `npm run doctor` verifies external prerequisites (ffmpeg, ALSA devices). Markdown is deliberately
@@ -206,6 +208,15 @@ examples most guides show:
   on a 512 MB machine.
 - Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys' own docs, or
   some clients show the voice bubble but refuse to play it.
+- **`creds.registered` is only set by the phone-number pairing path.** It is assigned in exactly
+  one place in the library (`Socket/messages-recv.js`, the `link_code_companion_reg` handler). A
+  **QR scan** finishes through `configureSuccessfulPairing`, which fills in `me`, `account` and
+  `platform` and never touches the flag — so a scanned device has a complete working session on
+  disk with `registered: false` beside it. Ask `isPaired()` in `whatsapp/client.ts`, never the flag.
+- **Baileys writes media scratch through `os.tmpdir()`** (`encryptedStream` → `<type><id>-enc`) on
+  every outbound send, and a failure there arrives as an unhandled `'error'` event that kills the
+  process. The unit sets `TMPDIR=/run/bloopbox-tmp`; under `ProtectSystem=strict`, `/tmp` is
+  read-only. Keep it off `RECORDING_DIR` — `audio/recovery.ts` treats files there as unread notes.
 - `messages.upsert` must handle **both** `notify` and `append`. Baileys picks the type with
   `node.attrs.offline ? 'append' : 'notify'`, so everything queued while disconnected arrives as
   `append`. `messageTimestamp` is a protobuf Long — arithmetic straight on it yields `NaN`.
@@ -215,7 +226,40 @@ examples most guides show:
 All development happens on macOS through the **simulator** HAL driver. `src/hal/gpioDriver.ts` is
 written but **has never run on real hardware** — treat it as unverified.
 `docs/hardware-bringup.md` is the gate-by-gate plan for the day that changes, with the debugging kit
-(`bloopbox-doctor`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`).
+(`bloopbox-doctor`, `bloopbox-audio-test`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`).
+
+**The MVP board is a Pi 3B+ with a WM8960 audio HAT, one button and no LEDs** —
+`install.sh --audio-hat wm8960 --no-leds`. Three things that follow from it, all in `docs/hardware.md`:
+the HAT's own button is on **GPIO17, which is already button 1**, so it needs no wiring; `BUTTON_PINS`
+and `LED_PINS` make the pin lists shorter than three without touching anything above the HAL; and this
+codec needs `CAPTURE_RATE=48000` because it cannot hold two rates on one I²S clock and the record cues
+are 48 kHz. Its ALSA controls are **`Playback`/`Capture`** — measured 2026-08-10; this codec has no
+`Master`, and the wrong name fails silently because a mixer error is non-fatal by design.
+
+Two more ALSA facts, both learned the same day by having neither direction work on a live device:
+
+- **Playback volume is four multiplying stages, and only the first was being set.** Measured
+  2026-08-17: `Playback` was at 0 dB while `Speaker` powered up at **−20 dB** and both class-D
+  boosts at 0, so the box was ~26 dB below what the HAT can do and no `speakerVolumePercent` could
+  reach it — every one of those stages is *downstream* of it. They are now `config.audio`
+  (`ampVolumePercent`, `ampBoostDc`, `ampBoostAc`), applied by `GpioHal` at init through
+  `ALSA_AMP_*_MIXER_CONTROL`, **unset by default** because a USB adapter has none. Table in
+  `docs/hardware.md`.
+- **`aplay` is not a decoder.** It reads WAV/AU/VOC and plays anything else as raw PCM *without
+  failing*, so an inbound Ogg/Opus note came out as full-volume noise. `GpioHal.play()` decodes to a
+  `play-*.wav` in the RAM disk first; `playCue` does not, because cues are generated as WAV. Locked by
+  `gpioPlayback.test.ts`, which also covers the stop-during-decode race.
+- **A capture element's mute is separate from its gain.** `amixer sset Capture 60% cap` leaves the
+  mute bit alone, and this codec's input PGAs power up muted — a recording of exactly the right length
+  containing silence. The driver unmutes in its **own** `amixer` call (an unsupported parameter would
+  fail the line and take the gain with it) and `deploy/audio-init.sh` does it at boot for
+  `bloopbox-audio-test` and any bare `arecord`.
+- **This codec's microphone needs three settings, and only one of them is gain.** Unmute, then
+  `… Input Mixer Boost` on (42 dB — it connects the PGA to the boost mixer feeding the ADC), then
+  `… Input Boost Mixer LINPUT1=3` (+29 dB). All measured; the table is in `docs/hardware.md`. They
+  come from `ALSA_ENABLE_SWITCHES`, whose entries are now `Name` **or** `Name=Value`. When measuring
+  capture, use the HAT's own speaker as the stimulus and compare two windows of **one** recording —
+  ambient room noise moved 18 dB between identical passes and invalidates everything.
 
 ### opengpio 2.0.2 has a bias/debounce bug — do not "fix" the driver by passing options
 
@@ -293,9 +337,10 @@ work around it locally. Full reasoning for each is in
 | **Cue timing** | The "pop" is deferred to `recordThresholdMs`, not press time — at press we cannot tell a tap from a hold, and popping early meant every tap-to-play chimed. Capture still starts at t=0; the LED goes solid immediately | `button.test.ts` |
 | **Whoosh after finalise** | `#commitCapture` finalises the capture **before** playing the whoosh — the speaker sits next to the microphone and it was recording itself into every message | `deviceController.test.ts` |
 | **Silent chord** | Buttons 1 + 3 for `silentComboMs` toggles the **effective** state. Both presses are swallowed the instant the chord forms; released early, nothing happens | `button.test.ts` |
-| **Silent mode gating** | Suppressed: inbound chime, record cues, sent, oops. **Not** suppressed: playback, always at the configured volume, always clamped to `maxVolumeCapPercent` | `hal.test.ts`, `audioQueue.test.ts` |
+| **Silent mode gating** | Suppressed: inbound chime, record cues, sent, oops. **Not** suppressed: playback, nor the admin panel's **Test speaker** cue (`POST /api/audio/test`), the one deliberate bypass. `maxVolumeCapPercent` was removed 2026-08-17 | `hal.test.ts`, `audioQueue.test.ts`, `routes.test.ts` |
 | **Boot animation held** | Status resolves instantly, so `BOOTING` would never be seen. `BOOT_ANIMATION_MS` (2.6 s) holds it; the simulator has a Reboot injector to replay it | — |
-| **Beyond the spec** | `notify.wav` (§7 implies an inbound chime without listing one) and `src/core/` itself (the spec's blueprint has no home for the state machine) | — |
+| **Beyond the spec** | `notify.wav` (§7 implies an inbound chime without listing one), `boot.wav` (§6 defines a boot LED pattern but no sound; the only channel for "it came back on its own") and `src/core/` itself (the spec's blueprint has no home for the state machine) | `deviceController.test.ts` |
+| **Designed vs synthesised cues** | `boot`, `notify` and `swoosh` are mastered from committed MP3s in `src/audio/samples/`; the rest are tone recipes. Both write one WAV per cue into `src/audio/sounds/`, so nothing below `playCue` knows the difference. Trim and peak level are decided in `scripts/generate-sounds.ts`, never left to a filter | `soundFiles.test.ts` |
 
 ## Safety constraints (these protect a real device in a child's room)
 

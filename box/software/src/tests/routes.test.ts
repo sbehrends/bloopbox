@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { AudioCue } from '../audio/cues.ts';
 import { QR_LIFETIME_MS } from '../ipc/events.ts';
 import { readField, readString } from '../ipc/payload.ts';
 import { startApi, type Harness } from './support/apiHarness.ts';
@@ -152,14 +153,13 @@ describe('PUT /config', () => {
      * sent one timing got a 400 listing everything it forgot.
      *
      * The assertion that matters is the second half. `mergeConfig` merges field by field, so a
-     * one-field patch must not blank its siblings — a patch of the volume that reset the volume
-     * *cap* would raise the ceiling on a speaker sitting beside a child's ears.
+     * one-field patch must not blank its siblings — a patch of the volume that reset the mic
+     * gain would leave every recording silent, with nothing in the response to say so.
      */
     api = await startApi({ configured: false });
     await send(api, 'PUT', '/api/config', {
       audio: {
         speakerVolumePercent: 40,
-        maxVolumeCapPercent: 80,
         micGainPercent: 50,
         maxRecordingSeconds: 30,
       },
@@ -171,7 +171,10 @@ describe('PUT /config', () => {
     expect(response.status).toBe(200);
     expect(api.config.current.audio).toEqual({
       speakerVolumePercent: 55,
-      maxVolumeCapPercent: 80,
+      // Untouched by the patch, and filled in from the schema defaults by the first PUT.
+      ampVolumePercent: 100,
+      ampBoostDc: 5,
+      ampBoostAc: 5,
       micGainPercent: 50,
       maxRecordingSeconds: 30,
     });
@@ -209,27 +212,22 @@ describe('PUT /config', () => {
 
   it('still enforces a cross-field rule the patch cannot see on its own', async () => {
     /*
-     * The point of validating the *merged* config rather than the patch. A patch raising the
-     * volume carries no cap to compare against, so the rule can only be checked after the
-     * merge — and it is, in ConfigManager.save(). Losing this would let a partial patch walk
-     * the volume past its ceiling one field at a time.
+     * The point of validating the *merged* config rather than the patch. A patch that only
+     * flips `enabled` carries no target to compare against, so the rule can only be checked
+     * after the merge — and it is, in ConfigManager.save(). Losing this would leave a button
+     * lit and assigned to nobody, which on a screenless device is undiagnosable.
      */
     api = await startApi({ configured: false });
     await send(api, 'PUT', '/api/config', {
-      audio: {
-        speakerVolumePercent: 40,
-        maxVolumeCapPercent: 80,
-        micGainPercent: 50,
-        maxRecordingSeconds: 30,
-      },
+      contacts: { button3: { name: 'Grandma', target: '', enabled: false } },
     });
 
     const response = await send(api, 'PUT', '/api/config', {
-      audio: { speakerVolumePercent: 95 },
+      contacts: { button3: { enabled: true } },
     });
     expect(response.status).toBe(400);
-    expect(JSON.stringify(await response.json())).toContain('maxVolumeCapPercent');
-    expect(api.config.current.audio.speakerVolumePercent).toBe(40);
+    expect(JSON.stringify(await response.json())).toContain('target');
+    expect(api.config.current.contacts.button3.enabled).toBe(false);
   });
 
   it('rejects a lone debounce that would swallow the threshold', async () => {
@@ -392,6 +390,40 @@ describe('POST /wifi/join', () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ handedToAgent: false });
+  });
+});
+
+describe('POST /audio/test', () => {
+  it('plays the boot cue so the speaker can be judged by ear', async () => {
+    api = await startApi({ configured: false });
+
+    const response = await send(api, 'POST', '/api/audio/test', {});
+
+    expect(response.status).toBe(200);
+    expect(api.hal.cueSequence()).toEqual([AudioCue.Boot]);
+  });
+
+  it('plays it even in silent mode', async () => {
+    /*
+     * The one cue that ignores the silent gate, and the reason the route exists. Someone
+     * tuning the amplifier is standing at the box asking a direct question; answering it with
+     * silence because quiet hours started an hour ago is worse than not having the button.
+     */
+    api = await startApi({ configured: false });
+    await send(api, 'POST', '/api/silent', { silent: true });
+
+    await send(api, 'POST', '/api/audio/test', {});
+
+    expect(api.hal.cueSequence()).toEqual([AudioCue.Boot]);
+  });
+
+  it('reports a speaker that cannot play, rather than claiming success', async () => {
+    api = await startApi({ configured: false });
+    api.hal.failPlayback = true;
+
+    const response = await send(api, 'POST', '/api/audio/test', {});
+
+    expect(response.status).toBe(500);
   });
 });
 

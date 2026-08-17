@@ -17,16 +17,18 @@ This file is the direction it implements, and the decisions taken while implemen
 The primary brand identity mark and logotype for bloopbox, a screenless, tactile WhatsApp
 messenger for toddlers, defining the **Retro-Futurist Intercom** visual language.
 
-**Visual description.** The mark is three concentric ring pairs that overlap into a single
-speech bubble with a tail. The big rings cluster tightly so the silhouette closes into one shape;
-the three small "buttons" fan out evenly across it. Left to right they are **sunny yellow, coral
-pink and electric teal** — the order of the caps on the enclosure. Every ring is a colour band
-edged in a navy hairline with a cream interior. Below the mark, the wordmark "bloopbox" is set in
-a chunky, rounded, geometric face, in amber, with thick letterforms and tight spacing.
+**Visual description.** The mark is a rounded speech-bubble pill with a tail, holding three
+overlapping colour fields that fill it edge to edge, with three small ring "buttons" laid across
+them. Left to right the fields and buttons are **sunny yellow, coral pink and electric teal** —
+the order of the caps on the enclosure. Every field and button carries a navy hairline,
+cartoon-outline style, so the overlaps read as distinct shapes. Below the mark, the wordmark
+"bloopbox" is set in a chunky, rounded, geometric face, in amber, with thick letterforms and
+tight spacing.
 
-The vector is `public/shared/bloopbox-mark.svg`, traced from the artwork by measuring it: ring
-outer radius 17.6 units in a 64 box, band 4.8, buttons at radius 6.7 with holes at 2.5, ring
-centres 11.3 apart and button centres 15 apart.
+The vector is `public/shared/bloopbox-mark.svg`, traced from the artwork by measuring it: the
+pill spans 60×31 units in a 120 box (radius 15.5, so a true stadium), the yellow and teal fields
+are its left and right halves, the coral and right-hand teal circles are radius 13 centred 14
+units apart, and the three buttons sit at those same three centres, radius 5.6 with holes at 2.8.
 
 **Aesthetic mood.** Bold, playful, tactile, screenless, friendly, retro-modern, geometric.
 
@@ -116,20 +118,31 @@ fine for the element that is also the page's `h1`. In dark mode amber would pass
 but a wordmark that changes colour with the OS theme is a worse answer than one that changes with
 its own size.
 
-### There is no reversed asset, and no theme switching in the mark
+### There is no reversed asset — but the mark's ink does switch, in-file
 
-The ring interiors are **opaque cream**, which is what makes the overlaps read — a ring drawn
-later occludes the one behind it. That also settles dark mode for free: on cream the interiors
-disappear into the page and the mark is three rings; on navy the bubble lights up. One file, both
-themes, no `prefers-color-scheme` block and no variant to keep in step.
+The colour fields fill the pill edge to edge, so unlike the ring mark this replaced there is no
+opaque neutral interior to make the outline read for free. The outer edge sits directly against
+whatever the page is behind it, and that boundary cannot be a single fixed colour: deep navy
+disappears into a navy page exactly as it needs to stand out on cream. So the outline is the one
+part of the SVG with a `<style>` block, `@media (prefers-color-scheme: dark)` swapping its fill
+from navy to cream — the same mechanism `tokens.css` already uses for the rest of the page,
+inlined into the asset instead of a second file. Every colour field and button keeps its exact
+brand hex regardless of theme, because they sit on a colour field or the artwork's own fill, never
+directly on the page.
 
-(An earlier mark did invert itself. It had a solid navy body, so it had to.)
+This still isn't a reversed asset: one file, no variant to keep in step, and it resolves itself
+from the same OS signal the page's own `--bg` already resolves from, so the two are never out of
+sync in the four pages that actually use it. It **is** a reversal of the earlier decision: an
+opaque interior no longer being available to do this for free is a property of the new artwork,
+not a preference, so the change is deliberate rather than a workaround.
+
+(An earlier mark inverted itself for a different reason — solid navy body, so it had to.)
 
 ### One exception to "one drawing": the favicon
 
-**The mark stops working below about 24px.** Three nested rings, four hairlines and three holes
-collapse into a single blur, and a browser tab is 16px. So `bloopbox-favicon.svg` is a second,
-simpler drawing — three solid discs and the tail, one hairline, no holes — and every page points
+**The mark stops working below about 24px.** The fields, hairlines and button holes collapse into
+a single blur, and a browser tab is 16px. So `bloopbox-favicon.svg` is a second, simpler drawing —
+the pill, the tail and the three colour fields, no hairlines, no buttons — and every page points
 `rel="icon"` at it while the `<img>` lockups use the mark.
 
 This is a different job, not a variant, which is the only reason two files are allowed. They

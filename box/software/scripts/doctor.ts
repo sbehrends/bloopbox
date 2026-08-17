@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { platform, release } from 'node:os';
 import { ALL_AUDIO_CUES } from '../src/audio/cues.ts';
-import { missingCues } from '../src/audio/soundFiles.ts';
+import { CUE_SAMPLES, missingCues, missingSamples, sampledCues } from '../src/audio/soundFiles.ts';
 
 const run = promisify(execFile);
 
@@ -109,12 +109,32 @@ function checkCueFiles(): CheckResult {
   };
 }
 
+/**
+ * The designed recordings the sampled cues are built from. These *are* committed, so a gap
+ * here is a broken checkout or a rename — and `npm run sounds` would fail on it, which is
+ * worth naming as a missing asset rather than an ffmpeg error.
+ */
+function checkCueSamples(): CheckResult {
+  const missing = missingSamples();
+  const total = sampledCues().length;
+  return {
+    name: 'audio cue samples',
+    ok: missing.length === 0,
+    detail:
+      missing.length === 0
+        ? `all ${total} source recordings present`
+        : `missing ${missing.map((cue) => CUE_SAMPLES[cue]).join(', ')} in src/audio/samples/`,
+    required: true,
+  };
+}
+
 async function main(): Promise<void> {
   console.log(`bloopbox doctor — ${platform()} ${release()}\n`);
 
   const results: CheckResult[] = [
     checkNode(),
     ...(await Promise.all([checkFfmpeg(), checkOpusEncoder(), checkAlsa()])),
+    checkCueSamples(),
     checkCueFiles(),
   ];
 

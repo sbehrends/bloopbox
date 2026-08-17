@@ -25,13 +25,24 @@ RestartSec=5
 TimeoutStopSec=10
 
 # Same tmpfs as the hardware server — inbound voice notes are downloaded here and the path
-# is handed over IPC, so the two must agree.
-RuntimeDirectory=bloopbox
+# is handed over IPC, so the two must agree. No RuntimeDirectorySize= here — see the long
+# comment on this same block in bloopbox-hardware.service; it was never a real directive.
+#
+# bloopbox-tmp is the second entry and belongs to this unit alone: Baileys writes media
+# scratch files through os.tmpdir() while uploading (`encryptedStream` -> `<type><id>-enc`),
+# and ProtectSystem=strict leaves /tmp read-only, so every outbound voice note died with
+# EROFS — as an unhandled 'error' event on a WriteStream, which took the daemon down with
+# it. TMPDIR below points os.tmpdir() here. Deliberately *not* /run/bloopbox: scratch in
+# the recordings directory would be counted by audio/recovery.ts, whose ledger is "a file
+# still present is a note still unread".
+RuntimeDirectory=bloopbox bloopbox-tmp
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
-RuntimeDirectorySize=64M
+Environment=TMPDIR=/run/bloopbox-tmp
 
-# Baileys plus sharp is the heavier of the two processes.
+# Baileys plus sharp is the heavier of the two processes. Also what actually bounds
+# /run/bloopbox above — see bloopbox-hardware.service — and, like there, unenforced unless
+# the memory cgroup controller has been turned on (deploy/install.sh's cmdline.txt step).
 MemoryHigh=192M
 MemoryMax=288M
 Environment=NODE_OPTIONS=--max-old-space-size=192

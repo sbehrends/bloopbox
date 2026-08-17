@@ -208,14 +208,17 @@ single source of truth — there is no hand-written parallel interface.
   },
   "audio": {
     "speakerVolumePercent": 70,
-    "maxVolumeCapPercent": 85,
-    "micGainPercent": 60,
+    "ampVolumePercent": 100,
+    "ampBoostDc": 5,
+    "ampBoostAc": 5,
+    "micGainPercent": 80,
     "maxRecordingSeconds": 30
   },
   "quietHours": {
-    "enabled": true,
+    "enabled": false,
     "startTime": "20:00",
-    "endTime": "07:00"
+    "endTime": "07:00",
+    "timezone": "UTC"
   },
   "buttons": {
     "debounceMs": 150,
@@ -237,7 +240,6 @@ at. The field was called `phone` in earlier versions and is migrated automatical
 
 Cross-field rules, enforced against the **merged** config on every save:
 
-- `speakerVolumePercent` ≤ `maxVolumeCapPercent`
 - `debounceMs` < `recordThresholdMs` — without a gap there is no tap, so playing a received message
   becomes unreachable
 - an enabled contact must have a target
@@ -409,25 +411,52 @@ Two things this table cannot express on its own:
 
 ### The cues
 
-| Cue           | Sound                                | When                                          |
-| ------------- | ------------------------------------ | --------------------------------------------- |
-| `pop.wav`     | High, ultra-short (< 200 ms)          | A press has passed `recordThresholdMs`         |
-| `whoosh.wav`  | Upward sweep                          | A recording has been committed                 |
-| `swoosh.wav`  | Success                               | Delivered to WhatsApp                          |
-| `oops.wav`    | Low double-beep                       | A tap that sends nothing, or a failed send      |
-| `chime.wav`   | Short soft chime                      | Separator between queued notes during playback |
-| `notify.wav`  | Soft arrival tone                     | A voice note arrived                           |
+| Cue           | Sound                                | Source    | When                                          |
+| ------------- | ------------------------------------ | --------- | --------------------------------------------- |
+| `boot.wav`    | Designed startup sound (825 ms)       | Recorded  | The device has come up                         |
+| `pop.wav`     | High, ultra-short (< 200 ms)          | Tones     | A press has passed `recordThresholdMs`         |
+| `whoosh.wav`  | Upward sweep                          | Tones     | A recording has been committed                 |
+| `swoosh.wav`  | Designed success sound (456 ms)       | Recorded  | Delivered to WhatsApp                          |
+| `oops.wav`    | Low double-beep                       | Tones     | A tap that sends nothing, or a failed send      |
+| `chime.wav`   | Short soft chime                      | Tones     | Separator between queued notes during playback |
+| `notify.wav`  | Designed arrival sound (318 ms)       | Recorded  | A voice note arrived                           |
 
-`notify.wav` is **beyond the original cue list**: §7 never named an inbound chime but stated that
-silent mode suppresses one, which implies it exists. The WAVs are **generated, not committed** —
-`npm run sounds` synthesises them from `scripts/generate-sounds.ts`.
+Two cues are **beyond the original cue list**. `notify.wav`: §7 never named an inbound chime but
+stated that silent mode suppresses one, which implies it exists. `boot.wav`: §6 defines a boot LED
+pattern but names no sound, and on a box with no screen the noise it makes when power returns is the
+only way a parent across the room learns it came back.
+
+**The WAVs are generated, not committed** — `npm run sounds` builds all seven, and a fresh clone has
+none. Three of them are **designed recordings**, committed as MP3 under `box/software/src/audio/samples/`
+and mastered by that script; the rest are synthesised from tone recipes in it. Both halves write one
+WAV per cue into the same directory under the cue's own name, so nothing downstream — the HAL, the
+`/sounds` route, the simulator — can tell which kind a cue is. `aplay` on the device reads WAV and
+nothing else, which is why even the designed sounds are transcoded rather than shipped as authored.
+
+Mastering is a decision in `scripts/generate-sounds.ts`, not a filter's side effect:
+
+- **Every cue is trimmed to its audible span.** The three sources arrive padded out to a round two or
+  three seconds of silence, and a cue file's length is dwell time on the audio device — untrimmed,
+  "delivered" would hold the speaker for 2 s to say something that takes 400 ms, and the chime
+  separating two queued notes would land on top of it.
+- **Peak level is declared per cue on one 0–1 scale**, shared with the synthesised tones' `gain`. The
+  designed sounds and the beeps come out of the same small speaker next to a child's ear, so a cue
+  twice as loud as its neighbour is a defect however good it sounds alone.
 
 ### Silence and quiet hours
 
 - **Manual toggle:** hold Button 1 + Button 3 together for `silentComboMs` (3 s).
-- **Scheduled quiet hours:** a start and end time from the admin panel, 20:00 → 07:00 by default.
-  The window **wraps past midnight**, which is the normal case for a child's bedroom rather than an
-  edge case, and is half-open — quiet at exactly 20:00, audible at exactly 07:00.
+- **Scheduled quiet hours:** a start and end time from the admin panel, 20:00 → 07:00 when switched
+  on. The window **wraps past midnight**, which is the normal case for a child's bedroom rather
+  than an edge case, and is half-open — quiet at exactly 20:00, audible at exactly 07:00.
+- **The window is read in `quietHours.timezone`, an IANA zone name, not on the device's clock.**
+  That clock is not neutral: Raspberry Pi OS defaults to **Europe/London** (measured on a real
+  device, 2026-08-17), so an unset zone means the schedule silently runs on somebody else's
+  afternoon. The admin panel offers a picker and names the browser's own zone underneath it.
+- **Quiet hours ship disabled**, because the only zone the device can honestly default to is UTC
+  and a window in the wrong zone is worse than no window: the box goes silent at the wrong hours,
+  and on a device with no screen that is indistinguishable from a broken one. Switching it on and
+  choosing a zone is one visit to the admin panel.
 - The chord toggles the **effective** state, so during scheduled quiet hours a parent can force
   audio back on without editing the schedule.
 
@@ -436,13 +465,30 @@ Behaviour while silent:
 | Path                       | Silent mode                                                        |
 | -------------------------- | ------------------------------------------------------------------ |
 | Inbound notification chime | **Suppressed.** The lamp blinks silently                            |
+| Boot sound                 | **Suppressed.** Power returns at whatever hour the grid decides; the boot LED chase still runs |
 | Record start / stop cues   | **Suppressed**                                                     |
 | Sent / oops cues           | **Suppressed**                                                     |
 | **Playback of a voice note** | **Not suppressed.** Always plays at the configured volume         |
 | LED patterns               | Unaffected, plus the outer-pair heartbeat                           |
 
-Playback is never silenced because a child who taps a light expects to hear something. Volume is
-always clamped to `audio.maxVolumeCapPercent` — this sits next to a small child's ears.
+Playback is never silenced because a child who taps a light expects to hear something.
+
+**Loudness is four numbers, not one**, because the output chain has four stages and they multiply:
+`speakerVolumePercent` is the digital DAC volume, `ampVolumePercent` the analogue output stage, and
+`ampBoostDc` / `ampBoostAc` the class-D amplifier boost. Measured on a real WM8960 HAT on
+2026-08-17, the last three powered up at −20 dB, 0 and 0 — leaving the box roughly 26 dB quieter
+than the hardware allows, with no setting of the first able to reach it. All four are in the admin
+panel because the top of the range is not automatically right: the boosts trade headroom for
+distortion, which depends on the speaker and the enclosure. **Amplifier Test speaker** plays the
+start-up cue on demand so the result can be judged by ear, and is the one sound that ignores silent
+mode — someone tuning the box is asking a direct question.
+
+**There used to be a second field, `maxVolumeCapPercent`** — a ceiling a parent set once, with the
+volume as the daily knob. It was removed on 2026-08-17. It never delivered the protection it
+implied: both fields sat in the same admin card behind the same save button, so anyone who could
+raise the volume could raise the cap in the same click. What it did deliver was a save that failed
+with an error naming a field the parent had not touched. A ceiling only earns a second field if it
+is harder to change than the thing it caps.
 
 One consequence worth knowing: `oops` is suppressed too, so **during quiet hours a failed send
 produces no sound at all**, and the LED error pattern is the only indication.

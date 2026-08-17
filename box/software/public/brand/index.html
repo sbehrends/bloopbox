@@ -53,11 +53,10 @@
       <section class="band">
         <h2>1 · Logo system</h2>
         <p class="band-note">
-          Three concentric ring pairs, overlapping into a single speech bubble with a tail. The
-          rings cluster tightly so the silhouette closes into one shape; the three small buttons fan
-          out evenly across it. It carries the device's technical side (a message, a voice) and its
-          physical one (three big tactile buttons) in one form, and the buttons are in the order
-          they sit on the enclosure: <strong>yellow, coral, teal</strong>.
+          A rounded speech-bubble pill with a tail, holding three overlapping colour fields and
+          three small ring buttons laid across them. It carries the device's technical side (a
+          message, a voice) and its physical one (three big tactile buttons) in one form, and the
+          buttons are in the order they sit on the enclosure: <strong>yellow, coral, teal</strong>.
         </p>
 
         <div class="sizes">
@@ -91,11 +90,12 @@
           </figure>
         </div>
         <p class="band-note">
-          <strong>The mark stops working below about 24px</strong> — rings, bands and holes all
-          collapse into one blur, as the third figure shows. So there is a second drawing,
-          <code>bloopbox-favicon.svg</code>, and it is the only one allowed: three solid discs and
-          the tail, which is what survives in a browser tab. It is a different job, not a variant.
-          Change the colours or the button order in one and change them in the other.
+          <strong>The mark stops working below about 24px</strong> — the fields, hairlines and
+          button holes all collapse into one blur, as the third figure shows. So there is a second
+          drawing, <code>bloopbox-favicon.svg</code>, and it is the only one allowed: the pill, the
+          tail and the three colour fields, no hairlines or buttons, which is what survives in a
+          browser tab. It is a different job, not a variant. Change the colours or the button order
+          in one and change them in the other.
         </p>
 
         <h3>Lockups</h3>
@@ -136,9 +136,10 @@
           the type scale.
         </p>
         <p class="band-note">
-          There is no reversed asset: the ring interiors are opaque cream, so on cream the mark
-          reads as three rings and on navy the bubble lights up. Same file, both themes, nothing to
-          keep in step.
+          There is no reversed asset: the outline is the one part of the file that switches, via an
+          embedded <code>prefers-color-scheme</code> rule — navy on cream, cream on navy, resolved
+          from the same OS signal this page's own background already resolves from. Same file, both
+          themes, nothing to keep in step.
         </p>
 
         <ul class="rules">
@@ -146,8 +147,9 @@
             <strong>Do</strong> keep clear space around the mark equal to the width of one button.
           </li>
           <li>
-            <strong>Do</strong> put the mark on cream, navy or teal — the three backgrounds it is
-            drawn to survive.
+            <strong>Do</strong> put the mark on cream or navy — its outline is drawn to survive
+            whichever one the OS theme puts behind it. On a fixed teal tile it stays navy, which
+            still passes (4.6:1).
           </li>
           <li><strong>Do</strong> use the favicon drawing below 24px, and the mark above it.</li>
           <li class="dont">

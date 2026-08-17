@@ -274,7 +274,9 @@ export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfi
         patch.audio?.speakerVolumePercent,
         base.audio.speakerVolumePercent,
       ),
-      maxVolumeCapPercent: pick(patch.audio?.maxVolumeCapPercent, base.audio.maxVolumeCapPercent),
+      ampVolumePercent: pick(patch.audio?.ampVolumePercent, base.audio.ampVolumePercent),
+      ampBoostDc: pick(patch.audio?.ampBoostDc, base.audio.ampBoostDc),
+      ampBoostAc: pick(patch.audio?.ampBoostAc, base.audio.ampBoostAc),
       micGainPercent: pick(patch.audio?.micGainPercent, base.audio.micGainPercent),
       maxRecordingSeconds: pick(patch.audio?.maxRecordingSeconds, base.audio.maxRecordingSeconds),
     },
@@ -282,6 +284,7 @@ export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfi
       enabled: pick(patch.quietHours?.enabled, base.quietHours.enabled),
       startTime: pick(patch.quietHours?.startTime, base.quietHours.startTime),
       endTime: pick(patch.quietHours?.endTime, base.quietHours.endTime),
+      timezone: pick(patch.quietHours?.timezone, base.quietHours.timezone),
     },
     buttons: mergeButtons(patch.buttons, base.buttons),
     whatsapp: {

@@ -221,9 +221,9 @@ export default function Home() {
             <article className="card">
               <h3>It goes quiet at night</h3>
               <p>
-                Quiet hours default to 20:00–07:00 and are yours to change, and holding the outer
-                two buttons for three seconds silences the cues on the spot. Playback still works —
-                a child who taps a light expects to hear something.
+                Switch on quiet hours, pick your timezone, and 20:00–07:00 is there to change.
+                Holding the outer two buttons for three seconds silences the cues on the spot.
+                Playback still works — a child who taps a light expects to hear something.
               </p>
             </article>
           </div>
@@ -231,6 +231,7 @@ export default function Home() {
 
         {/* ---- closing ---- */}
         <section className={`wrap ${styles.closing}`}>
+          <img src="/bloopbox-logo-light.svg" alt="" className={styles.mark} />
           <h2 className={styles.closingTitle}>Three buttons. Three people who love them.</h2>
           <p className={styles.closingLede}>
             Everything that makes this work — hardware to software — is open source. Take it and

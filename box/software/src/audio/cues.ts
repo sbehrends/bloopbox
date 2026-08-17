@@ -6,6 +6,12 @@
  */
 
 export const AudioCue = {
+  /**
+   * The device has come up. Beyond the spec's cue list: §6 defines a boot LED pattern but
+   * names no sound, and a screenless box that makes no noise when it powers on is
+   * indistinguishable from one that did not power on at all.
+   */
+  Boot: 'boot',
   /** Recording confirmed — short, high "pop". */
   Pop: 'pop',
   /** Recording finished — upward "whoosh". */
@@ -33,6 +39,12 @@ export const ALL_AUDIO_CUES: readonly AudioCue[] = Object.values(AudioCue);
  * tapping a blinking button always plays at the configured volume (PRODUCT.md §7).
  */
 const SILENCED_IN_SILENT_MODE: ReadonlySet<AudioCue> = new Set<AudioCue>([
+  /*
+   * Silenced like every other courtesy sound. Power is restored at whatever hour the grid
+   * decides, so a boot chime is exactly the kind of noise quiet hours exist to stop — and
+   * the boot LED chase still says the same thing to anyone awake to see it.
+   */
+  AudioCue.Boot,
   AudioCue.Pop,
   AudioCue.Whoosh,
   AudioCue.Swoosh,

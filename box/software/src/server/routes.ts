@@ -290,6 +290,25 @@ export function createApiRouter(context: RoutesContext): Router {
 
   /* ---- device actions ---- */
 
+  /**
+   * Plays the boot cue through the speaker, so the amplifier settings can be judged by ear.
+   *
+   * Awaited rather than fire-and-forget: the point of the button is to answer "did that
+   * change anything", and a 200 that arrives before the sound does invites a second press on
+   * top of the first. A failure here is a real one — unlike a cue during an interaction, this
+   * request has nothing else to report.
+   */
+  router.post('/audio/test', admin, async (_req: Request, res: Response) => {
+    try {
+      await context.controller.playTestCue();
+      res.json({ played: true });
+    } catch (error: unknown) {
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'could not play the test sound',
+      });
+    }
+  });
+
   router.post('/silent', admin, (req: Request, res: Response) => {
     const desired = readBoolean(req.body, 'silent');
     if (desired === null) {

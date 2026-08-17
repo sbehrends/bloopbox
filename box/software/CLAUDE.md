@@ -238,6 +238,13 @@ are 48 kHz. Its ALSA controls are **`Playback`/`Capture`** — measured 2026-08-
 
 Two more ALSA facts, both learned the same day by having neither direction work on a live device:
 
+- **Playback volume is four multiplying stages, and only the first was being set.** Measured
+  2026-08-17: `Playback` was at 0 dB while `Speaker` powered up at **−20 dB** and both class-D
+  boosts at 0, so the box was ~26 dB below what the HAT can do and no `speakerVolumePercent` could
+  reach it — every one of those stages is *downstream* of it. They are now `config.audio`
+  (`ampVolumePercent`, `ampBoostDc`, `ampBoostAc`), applied by `GpioHal` at init through
+  `ALSA_AMP_*_MIXER_CONTROL`, **unset by default** because a USB adapter has none. Table in
+  `docs/hardware.md`.
 - **`aplay` is not a decoder.** It reads WAV/AU/VOC and plays anything else as raw PCM *without
   failing*, so an inbound Ogg/Opus note came out as full-volume noise. `GpioHal.play()` decodes to a
   `play-*.wav` in the RAM disk first; `playCue` does not, because cues are generated as WAV. Locked by
@@ -330,7 +337,7 @@ work around it locally. Full reasoning for each is in
 | **Cue timing** | The "pop" is deferred to `recordThresholdMs`, not press time — at press we cannot tell a tap from a hold, and popping early meant every tap-to-play chimed. Capture still starts at t=0; the LED goes solid immediately | `button.test.ts` |
 | **Whoosh after finalise** | `#commitCapture` finalises the capture **before** playing the whoosh — the speaker sits next to the microphone and it was recording itself into every message | `deviceController.test.ts` |
 | **Silent chord** | Buttons 1 + 3 for `silentComboMs` toggles the **effective** state. Both presses are swallowed the instant the chord forms; released early, nothing happens | `button.test.ts` |
-| **Silent mode gating** | Suppressed: inbound chime, record cues, sent, oops. **Not** suppressed: playback, always at the configured volume, always clamped to `maxVolumeCapPercent` | `hal.test.ts`, `audioQueue.test.ts` |
+| **Silent mode gating** | Suppressed: inbound chime, record cues, sent, oops. **Not** suppressed: playback, nor the admin panel's **Test speaker** cue (`POST /api/audio/test`), the one deliberate bypass. `maxVolumeCapPercent` was removed 2026-08-17 | `hal.test.ts`, `audioQueue.test.ts`, `routes.test.ts` |
 | **Boot animation held** | Status resolves instantly, so `BOOTING` would never be seen. `BOOT_ANIMATION_MS` (2.6 s) holds it; the simulator has a Reboot injector to replay it | — |
 | **Beyond the spec** | `notify.wav` (§7 implies an inbound chime without listing one), `boot.wav` (§6 defines a boot LED pattern but no sound; the only channel for "it came back on its own") and `src/core/` itself (the spec's blueprint has no home for the state machine) | `deviceController.test.ts` |
 | **Designed vs synthesised cues** | `boot`, `notify` and `swoosh` are mastered from committed MP3s in `src/audio/samples/`; the rest are tone recipes. Both write one WAV per cue into `src/audio/sounds/`, so nothing below `playCue` knows the difference. Trim and peak level are decided in `scripts/generate-sounds.ts`, never left to a filter | `soundFiles.test.ts` |

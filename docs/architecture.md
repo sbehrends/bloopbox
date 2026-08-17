@@ -112,7 +112,7 @@ Everything in `src/core/` is I/O-free. It consumes events and timings, and its o
 | `ledAnimator`         | Device state → LED frames, on a 50 ms tick                                  |
 | `deviceState`         | The observable state, in one place, with change notification                |
 | `networkSupervisor`   | When the setup hotspot goes up and when it steps aside                      |
-| `quietHours`          | Whether now falls inside the configured window                              |
+| `quietHours`          | Whether now falls inside the window, read in the configured IANA zone       |
 | `deviceController`    | The wiring: intents in, capture / playback / cues / LEDs out                |
 
 That purity is the whole reason the timing behaviour is testable on fake timers with no hardware
@@ -281,7 +281,7 @@ new values — `requestRestart()` in `hardware-server.ts`.
 
 There is deliberately **no live-reload path.** Applying some values live and others only on restart
 produces states no test covers and no user can reason about: new button timings against a stale
-volume cap, say. A restart is a couple of seconds on this device and leaves exactly one code path.
+speaker volume, say. A restart is a couple of seconds on this device and leaves exactly one code path.
 
 | Context                | Supervisor                                                                        |
 | ---------------------- | --------------------------------------------------------------------------------- |
@@ -469,8 +469,13 @@ Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys
 clients show the voice bubble but refuse to play it.
 
 Silent mode suppresses the inbound notification chime and the record start/stop cues. It does
-**not** suppress playback, which always plays at the configured volume (spec §7). Volume is always
-clamped to `audio.maxVolumeCapPercent`.
+**not** suppress playback, which always plays at the configured volume (spec §7). That volume is
+four multiplying stages — `speakerVolumePercent` into `ampVolumePercent` into `ampBoostDc` /
+`ampBoostAc` — applied by `GpioHal` at init from control names the environment supplies. The former
+`maxVolumeCapPercent` ceiling was removed on 2026-08-17; see `docs/PRODUCT.md` §7 for why.
+
+`POST /api/audio/test` plays the boot cue on demand and is the **only** cue that ignores silent
+mode, so the amplifier stages can be judged by ear at any hour.
 
 ---
 
@@ -540,7 +545,10 @@ are testing configuration at all.
 | `LED_ACTIVE_HIGH`                            | `true`                     | Pi only, unverified — the ULN2003 inverts, so try both     |
 | `BUTTON_ACTIVE_LOW`                          | `true`                     | Pi only, unverified — pull-ups mean a press reads low      |
 | `ALSA_CAPTURE_DEVICE` / `ALSA_PLAYBACK_DEVICE` | `default`                | Pi only, unverified                                       |
-| `ALSA_MIXER_CONTROL`                         | `PCM`                      | Pi only. Differs across USB adapters; a wrong name silently ignores the volume cap |
+| `ALSA_MIXER_CONTROL`                         | `PCM`                      | Pi only. Differs across USB adapters; a wrong name silently ignores the volume setting |
+| `ALSA_AMP_MIXER_CONTROL`                     | *(unset)*                  | Pi only. The analogue output stage below the DAC — `Speaker` on the WM8960. Unset means the card has none |
+| `ALSA_AMP_DC_MIXER_CONTROL`                  | *(unset)*                  | Pi only. Class-D DC boost — `Speaker DC` on the WM8960 |
+| `ALSA_AMP_AC_MIXER_CONTROL`                  | *(unset)*                  | Pi only. Class-D AC boost — `Speaker AC` on the WM8960 |
 
 ---
 

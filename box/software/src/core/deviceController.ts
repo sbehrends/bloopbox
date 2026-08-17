@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { AudioCue, shouldPlayCue } from '../audio/cues.ts';
 import { AudioQueueManager, type QueuedNote } from '../audio/queueManager.ts';
 import type { ConfigManager } from '../config/configManager.ts';
-import { clampVolume, type ButtonIndex, type DeviceConfig } from '../config/schema.ts';
+import type { ButtonIndex, DeviceConfig } from '../config/schema.ts';
 import type { Hal, RecordingHandle } from '../hal/types.ts';
 import { ButtonInterpreter } from './buttonInterpreter.ts';
 import { DeviceState, type DeviceStatus } from './deviceState.ts';
@@ -119,10 +119,9 @@ export class DeviceController {
     return this.#hal.name;
   }
 
-  /** Current output volume, always clamped to the configured safety cap. */
+  /** Current output volume. The schema bounds it to 0-100; there is nothing else to apply. */
   volumePercent(): number {
-    const audio = this.#audio();
-    return clampVolume(audio.speakerVolumePercent, audio);
+    return this.#audio().speakerVolumePercent;
   }
 
   /** Lifecycle status, driven by the process layer as Wi-Fi and WhatsApp come up. */
@@ -142,6 +141,21 @@ export class DeviceController {
     if (!shouldPlayCue(AudioCue.Boot, this.state.silentMode)) return;
     // Not awaited: nothing about coming up should wait on a speaker.
     void this.#safeCue(AudioCue.Boot);
+  }
+
+  /**
+   * Plays the boot cue on demand, so the admin panel can prove the speaker works.
+   *
+   * **Deliberately ignores silent mode**, which is the whole difference between this and
+   * `announceBoot()`. Someone tuning the amplifier stages is standing at the box asking a
+   * direct question; a test button that silently does nothing because quiet hours started an
+   * hour ago answers it wrongly, and on a device with no screen there is nothing to say so.
+   *
+   * Awaited, unlike every other cue here, because the caller is an HTTP request that should
+   * not report success before the sound has actually come out.
+   */
+  async playTestCue(): Promise<void> {
+    await this.#hal.playCue(AudioCue.Boot);
   }
 
   /**

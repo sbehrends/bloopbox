@@ -35,11 +35,13 @@ type ConfigView = {
   contacts: Record<ButtonKey, ContactView>;
   audio: {
     speakerVolumePercent: number;
-    maxVolumeCapPercent: number;
+    ampVolumePercent: number;
+    ampBoostDc: number;
+    ampBoostAc: number;
     micGainPercent: number;
     maxRecordingSeconds: number;
   };
-  quietHours: { enabled: boolean; startTime: string; endTime: string };
+  quietHours: { enabled: boolean; startTime: string; endTime: string; timezone: string };
   buttons: {
     debounceMs: number;
     recordThresholdMs: number;
@@ -274,24 +276,67 @@ function renderContacts(
   return section;
 }
 
+/**
+ * Plays the boot cue on the box.
+ *
+ * Sits **above** the save button on purpose, and says so: the settings are read at boot, so
+ * this proves what the device is running right now, not what is typed in the boxes above it.
+ * Saving restarts the daemon, which is what makes an edit audible.
+ */
+function testSpeakerButton(): HTMLElement {
+  const row = element('div', 'field');
+  row.append(
+    actionButton(
+      'Test speaker',
+      async () => {
+        const response = await fetch('/api/audio/test', { method: 'POST' });
+        if (!response.ok) throw new Error('the device could not play the test sound');
+      },
+      reportError,
+    ),
+    element('span', 'field-hint', 'Plays the start-up sound at the settings currently running.'),
+  );
+  return row;
+}
+
 function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
   const section = card('Audio');
 
   const volume = numberInput(config.audio.speakerVolumePercent, 0, 100);
-  const cap = numberInput(config.audio.maxVolumeCapPercent, 0, 100);
+  const ampVolume = numberInput(config.audio.ampVolumePercent, 0, 100);
+  const boostDc = numberInput(config.audio.ampBoostDc, 0, 5);
+  const boostAc = numberInput(config.audio.ampBoostAc, 0, 5);
   const gain = numberInput(config.audio.micGainPercent, 0, 100);
   const maxSeconds = numberInput(config.audio.maxRecordingSeconds, 1, 120);
 
+  /*
+   * Four numbers rather than one because the output chain has four stages and they multiply.
+   * On the WM8960 the amplifier stages shipped at -20 dB and no boost, which no amount of
+   * turning the first one up could reach — see docs/hardware.md.
+   */
   section.append(
-    field('Speaker volume (%)', volume, 'Never exceeds the cap below.'),
-    field('Maximum volume cap (%)', cap, 'Hard ceiling — this sits near a child’s ears.'),
+    field('Speaker volume (%)', volume, 'Digital volume, before the amplifier.'),
+    field(
+      'Amplifier volume (%)',
+      ampVolume,
+      'The analogue output stage. Most of the loudness lives here — the WM8960 HAT powers up 20 dB down.',
+    ),
+    field('Amplifier boost — DC (0-5)', boostDc),
+    field(
+      'Amplifier boost — AC (0-5)',
+      boostAc,
+      'Class-D boost, normally set equal to DC. Louder, but too high distorts on a small speaker.',
+    ),
     field('Microphone gain (%)', gain),
     field('Maximum recording length (s)', maxSeconds),
+    testSpeakerButton(),
     saveButton('Save audio', () =>
       onSave({
         audio: {
           speakerVolumePercent: volume.valueAsNumber,
-          maxVolumeCapPercent: cap.valueAsNumber,
+          ampVolumePercent: ampVolume.valueAsNumber,
+          ampBoostDc: boostDc.valueAsNumber,
+          ampBoostAc: boostAc.valueAsNumber,
           micGainPercent: gain.valueAsNumber,
           maxRecordingSeconds: maxSeconds.valueAsNumber,
         },
@@ -300,6 +345,42 @@ function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
   );
 
   return section;
+}
+
+/**
+ * The zone list, from the browser rather than a list we ship.
+ *
+ * `Intl.supportedValuesOf` is the whole tzdata and stays current with the browser. Where it
+ * is missing the fallback is deliberately tiny — the stored value plus UTC plus wherever this
+ * browser thinks it is, which between them cover "leave it alone" and "set it to here", the
+ * only two things a parent on an old phone actually needs.
+ */
+function timeZoneNames(current: string): readonly string[] {
+  // try/catch rather than a feature test: TypeScript's lib types `supportedValuesOf` as
+  // always present, so an optional call is a lint error even though old browsers lack it.
+  let supported: readonly string[] = [];
+  try {
+    supported = Intl.supportedValuesOf('timeZone');
+  } catch {
+    supported = [];
+  }
+  const names = supported.length > 0 ? supported : [browserTimeZone(), 'UTC'];
+  return [...new Set([current, ...names])].toSorted((a, b) => a.localeCompare(b));
+}
+
+function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
+
+function timeZoneSelect(current: string): HTMLSelectElement {
+  const select = element('select');
+  for (const name of timeZoneNames(current)) {
+    const option = element('option', undefined, name);
+    option.value = name;
+    select.append(option);
+  }
+  select.value = current;
+  return select;
 }
 
 function renderQuietHours(config: ConfigView, onSave: SaveFn): HTMLElement {
@@ -312,17 +393,36 @@ function renderQuietHours(config: ConfigView, onSave: SaveFn): HTMLElement {
   const end = element('input');
   end.type = 'time';
   end.value = config.quietHours.endTime;
+  const timezone = timeZoneSelect(config.quietHours.timezone);
+
+  /*
+   * Off is the shipped default, so the window's controls open greyed out. Without this the
+   * panel invites a parent to set 20:00–07:00, shows it saved, and does nothing — the times
+   * are stored either way, but only `enabled` decides whether they mean anything.
+   */
+  const schedule = [start, end, timezone];
+  const syncEnabled = (): void => {
+    for (const input of schedule) input.disabled = !enabled.checked;
+  };
+  enabled.addEventListener('change', syncEnabled);
+  syncEnabled();
 
   section.append(
     checkboxField('Enabled', enabled),
     field('Start', start),
     field('End', end, 'May cross midnight, e.g. 20:00 to 07:00.'),
+    field(
+      'Timezone',
+      timezone,
+      `The times above are read in this zone, not the box's clock. This browser is in ${browserTimeZone()}.`,
+    ),
     saveButton('Save quiet hours', () =>
       onSave({
         quietHours: {
           enabled: enabled.checked,
           startTime: start.value,
           endTime: end.value,
+          timezone: timezone.value,
         },
       }),
     ),

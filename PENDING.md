@@ -9,6 +9,43 @@ Ordered roughly by priority within each group.
 
 ## Features
 
+### Normalise the loudness of inbound voice notes on decode (`loudnorm` / `dynaudnorm`)
+
+Raised 2026-08-16 from a live device: at maximum volume playback is still underwhelming.
+
+`toPlayableWav()` in `box/software/src/audio/ffmpeg.ts` is a bare Opus→PCM decode with no gain
+stage anywhere in it, so a received note plays back at whatever level the sender's phone happened
+to record — and a voice note held at arm's length in a kitchen is quiet. Raising
+`speakerVolumePercent` scales the noise floor along with it; normalisation is the thing that
+actually changes *perceived* loudness, and it is the single largest win available on the playback
+path.
+
+Two candidate ffmpeg filters, and the choice is a real trade-off:
+
+- **`loudnorm`** (EBU R128) is the correct one. Two-pass is the accurate mode and is not available
+  to us — the decode already sits on the tap-to-play path, and doubling it on a Pi 3B+ is latency a
+  child notices. Single-pass with an explicit target (`I=-16` or louder, plus a true-peak ceiling
+  so the class-D amp does not clip) is what fits.
+- **`dynaudnorm`** is frame-based and much cheaper, but it pumps on speech with pauses in it, which
+  is exactly the shape of the material here.
+
+Constraints on whoever does this:
+
+- **Cues must not go through it.** `boot`, `notify` and `swoosh` are mastered to a decided peak in
+  `scripts/generate-sounds.ts`, and normalising them would undo that and break the premise of
+  `soundFiles.test.ts`. `playCue` does not decode at all, so confining the filter to `play()` keeps
+  this true by construction — but it is worth saying, because "add it to the ffmpeg helper" is the
+  obvious wrong move.
+- Measure the CPU cost on the target board, not on a laptop. The decode is already a few hundred
+  milliseconds of a Pi's time and this adds to it.
+
+This is one half of the loudness question. **The analogue half is now done** — measured on the real
+HAT 2026-08-17 and shipped: `Speaker` powered up at −20 dB and both class-D boosts at 0, worth about
+26 dB in total, and all three are now `config.audio.ampVolumePercent` / `ampBoostDc` / `ampBoostAc`
+with an admin **Test speaker** button. The table is in `docs/hardware.md`. So this entry is purely
+about source material that is quiet before it reaches the amplifier, which no amount of gain fixes
+without lifting the hiss with it.
+
 ### Loading after config save
 
 When a change is made in the Admin, the server restarts. Add a loading in the admin page that blocks the page. Ping the server until is back responsive.
@@ -36,16 +73,6 @@ device is buyable or shipping.** Every call to action is "build one".
 Smaller, and deliberate: the site has **no ESLint** (`npm run check` is `tsc --noEmit` plus a full
 export), and `npm audit` reports three high advisories that are all transitive inside Next itself
 (`postcss`, `sharp`) — the offered fix is `next@9`, so they stand until Next ships past them.
-
-### Quiet hours have no timezone configuration
-
-`config.quietHours` (`box/software/src/config/schema.ts`) is just `enabled` / `startTime` /
-`endTime` — the window is evaluated against whatever timezone the device's system clock is set to,
-which is not necessarily the child's actual timezone and is not exposed anywhere in the admin panel
-for a parent to set or confirm. Worth adding a `timezone` field to the schema (IANA name, e.g.
-`America/New_York`) and wiring it into `src/core/quietHours.ts`'s evaluation, with a sane default
-and a picker in the admin UI. Raised while rewording the website's "It goes quiet at night" card to
-stop implying the hours are fixed — they're configurable in time-of-day, but not yet in timezone.
 
 ### The monorepo defers one thing now that there is a second package
 
@@ -1004,8 +1031,8 @@ Either add it to the image builder's list or stop claiming it in `--help`.
 
 Unchanged and still worth an explicit check: the `amixer` control name differs across USB adapters
 (`PCM`, `Speaker`, `Master`), and `GpioHal` treats a mixer failure as non-fatal — so a wrong name
-means playback at whatever volume the adapter booted with, silently, including the volume cap being
-ignored. Set the volume in the admin panel, then read it back with `amixer sget <control>`.
+means playback at whatever volume the adapter booted with, silently, ignoring `speakerVolumePercent`
+entirely. Set the volume in the admin panel, then read it back with `amixer sget <control>`.
 
 ### The MVP board (Pi 3B+ + WM8960 HAT) is configured from documentation, not measurement
 

@@ -345,7 +345,7 @@ ssh bloop@bloopbox.local 'arecord -l; aplay -l; amixer scontrols'
 ```
 
 The mixer control name is the trap: it differs across USB adapters (`PCM`, `Speaker`, `Master`),
-and a wrong one means the volume cap is silently ignored — playback at whatever the adapter
+and a wrong one means the configured volume is silently ignored — playback at whatever the adapter
 booted at, in a child's room. Set `ALSA_MIXER_CONTROL` to what `amixer scontrols` actually
 prints, then prove it moves:
 

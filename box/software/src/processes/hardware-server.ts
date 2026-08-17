@@ -123,6 +123,11 @@ async function main(): Promise<void> {
     recordingDirectory: RECORDING_DIRECTORY,
     micGainPercent: config.current.audio.micGainPercent,
     volumePercent: config.current.audio.speakerVolumePercent,
+    amp: {
+      volumePercent: config.current.audio.ampVolumePercent,
+      boostDc: config.current.audio.ampBoostDc,
+      boostAc: config.current.audio.ampBoostAc,
+    },
   };
 
   /*

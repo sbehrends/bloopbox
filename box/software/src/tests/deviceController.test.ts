@@ -446,20 +446,59 @@ describe('silent mode', () => {
     expect(sent).toHaveLength(1);
   });
 
-  it('applies quiet hours on start', async () => {
-    // Default schedule is 20:00 -> 07:00; move the clock into it.
-    vi.setSystemTime(new Date(2026, 5, 15, 22, 30, 0));
-    await controller.start();
+  /*
+   * Quiet hours ships **disabled**, so these two switch it on rather than leaning on the
+   * template. The zone is pinned to UTC alongside a UTC instant: with a wall clock now read
+   * through `quietHours.timezone`, a local-time fixture would put the window an offset away
+   * on every machine but Greenwich.
+   */
+  async function withQuietHours(now: Date): Promise<DeviceController> {
+    await controller.stop();
+    await config.update({
+      quietHours: { enabled: true, startTime: '20:00', endTime: '07:00', timezone: 'UTC' },
+    });
+    vi.setSystemTime(now);
+    // Standing in for the restart a config save triggers.
+    const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    rebuilt.setStatus(DeviceStatus.Ready);
+    await rebuilt.start();
+    return rebuilt;
+  }
 
-    expect(controller.state.silentMode).toBe(true);
-    expect(controller.state.snapshot().silentFromSchedule).toBe(true);
+  it('applies quiet hours on start', async () => {
+    // Schedule is 20:00 -> 07:00 UTC; move the clock into it.
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 22, 30, 0)));
+
+    expect(scheduled.state.silentMode).toBe(true);
+    expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
+    await scheduled.stop();
   });
 
   it('stays audible outside quiet hours', async () => {
-    vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0));
-    await controller.start();
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 12, 0, 0)));
 
-    expect(controller.state.silentMode).toBe(false);
+    expect(scheduled.state.silentMode).toBe(false);
+    await scheduled.stop();
+  });
+
+  it('reads the window in the configured zone, not the device clock', async () => {
+    await controller.stop();
+    await config.update({
+      quietHours: {
+        enabled: true,
+        startTime: '20:00',
+        endTime: '07:00',
+        timezone: 'Europe/Berlin',
+      },
+    });
+    // 19:00 UTC is 20:00 in Berlin in June (CEST, UTC+2 — so 18:00 UTC is the boundary).
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 15, 18, 30, 0)));
+    const scheduled = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    scheduled.setStatus(DeviceStatus.Ready);
+    await scheduled.start();
+
+    expect(scheduled.state.silentMode).toBe(true);
+    await scheduled.stop();
   });
 });
 
@@ -503,12 +542,11 @@ describe('the silent-mode chord', () => {
 });
 
 describe('volume', () => {
-  it('clamps the configured volume to the safety cap', () => {
-    // Default config is 70 with an 85 cap.
+  it('reports the configured volume', () => {
     expect(controller.volumePercent()).toBe(70);
   });
 
-  it('applies the clamped volume to the HAL on start', async () => {
+  it('applies the configured volume to the HAL on start', async () => {
     await controller.start();
     expect(hal.volumeChanges).toContain(70);
   });

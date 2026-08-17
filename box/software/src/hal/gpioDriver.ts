@@ -7,7 +7,14 @@ import type { AudioCue } from '../audio/cues.ts';
 import { toPlayableWav, toVoiceNote } from '../audio/ffmpeg.ts';
 import { cuePath } from '../audio/soundFiles.ts';
 import type { ButtonIndex } from '../config/schema.ts';
-import type { Hal, HalEvents, HalOptions, RecordingHandle, RecordingResult } from './types.ts';
+import type {
+  AmpSettings,
+  Hal,
+  HalEvents,
+  HalOptions,
+  RecordingHandle,
+  RecordingResult,
+} from './types.ts';
 
 /**
  * ============================ UNVERIFIED ON HARDWARE ============================
@@ -82,6 +89,22 @@ const ALSA_MIXER_CONTROL = process.env['ALSA_MIXER_CONTROL'] ?? 'PCM';
 const ALSA_CAPTURE_MIXER_CONTROL = process.env['ALSA_CAPTURE_MIXER_CONTROL'] ?? 'Mic';
 
 /**
+ * The output stages below the DAC, if this card has any.
+ *
+ * **Unset by default, and that is the safe reading.** A USB adapter exposes one volume and
+ * nothing else, so naming a control that does not exist would spend three `amixer` calls per
+ * boot failing silently. `install.sh --audio-hat wm8960` writes all three.
+ *
+ * Why they exist at all: measured on the real HAT 2026-08-17, `Playback` was already at 0 dB
+ * while `Speaker` sat at **−20 dB** and both class-D boosts at 0. The box was 26 dB quieter
+ * than the hardware allows and `speakerVolumePercent` could not reach any of it, because
+ * every one of those stages is *downstream* of the control it sets.
+ */
+const ALSA_AMP_MIXER_CONTROL = process.env['ALSA_AMP_MIXER_CONTROL'] ?? '';
+const ALSA_AMP_DC_MIXER_CONTROL = process.env['ALSA_AMP_DC_MIXER_CONTROL'] ?? '';
+const ALSA_AMP_AC_MIXER_CONTROL = process.env['ALSA_AMP_AC_MIXER_CONTROL'] ?? '';
+
+/**
  * Capture format. The rate defaults to the encode target so a slow CPU never resamples.
  *
  * `CAPTURE_RATE` exists for codecs that cannot run capture and playback at different rates
@@ -112,6 +135,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   readonly name = 'gpio';
 
   readonly #recordingDirectory: string;
+  readonly #amp: AmpSettings | null;
   #volumePercent: number;
   #micGainPercent: number;
   #available = false;
@@ -131,6 +155,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     this.#recordingDirectory = options.recordingDirectory;
     this.#volumePercent = options.volumePercent;
     this.#micGainPercent = options.micGainPercent;
+    this.#amp = options.amp ?? null;
   }
 
   get available(): boolean {
@@ -174,6 +199,9 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     }
 
     this.#available = true;
+    // Amp stages first: they are downstream of the DAC, so setting them after would briefly
+    // play the boot cue through whatever gain the card powered up with.
+    await this.#applyAmpSettings();
     await this.setVolume(this.#volumePercent);
     await this.#applyMicGain();
     this.emit('available');
@@ -389,6 +417,29 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
         else reject(new Error(`aplay exited with code ${code}`));
       });
     });
+  }
+
+  /**
+   * Sets the output stages below the DAC, skipping any this card does not name.
+   *
+   * Each is its own `amixer` call rather than one batched invocation: a control name that
+   * does not exist fails the whole line, and batching would mean one wrong name silently
+   * costing the others. Failures are non-fatal by the same rule as every other mixer call
+   * here — a card without these stages is a supported configuration, not an error.
+   */
+  async #applyAmpSettings(): Promise<void> {
+    if (!this.#amp) return;
+    const stages: readonly [string, string][] = [
+      [ALSA_AMP_MIXER_CONTROL, `${this.#amp.volumePercent}%`],
+      // The boosts are 0-5 registers, not percentages; `-M` would rescale them into nonsense.
+      [ALSA_AMP_DC_MIXER_CONTROL, String(this.#amp.boostDc)],
+      [ALSA_AMP_AC_MIXER_CONTROL, String(this.#amp.boostAc)],
+    ];
+    for (const [control, value] of stages) {
+      if (control.length === 0) continue;
+      const mapped = control === ALSA_AMP_MIXER_CONTROL ? ['-M'] : [];
+      await runQuiet('amixer', [...mapped, 'sset', control, value]);
+    }
   }
 
   async #applyMicGain(): Promise<void> {

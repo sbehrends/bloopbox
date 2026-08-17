@@ -125,6 +125,8 @@ One USB device does both directions. The GPIO driver shells out to ALSA:
 | Playback  | `aplay`   | `ALSA_PLAYBACK_DEVICE` (default `default`)             |
 | Volume    | `amixer`  | `ALSA_MIXER_CONTROL` (default `PCM`)                   |
 | Mic gain  | `amixer`  | `ALSA_CAPTURE_MIXER_CONTROL` (default `Mic`)            |
+| Amp volume | `amixer` | `ALSA_AMP_MIXER_CONTROL` (unset — the card may have none) |
+| Amp boost | `amixer`  | `ALSA_AMP_DC_MIXER_CONTROL`, `ALSA_AMP_AC_MIXER_CONTROL` (unset) |
 
 Capture is 16 kHz mono S16_LE by default — the same shape as the encode target, so there is no
 resample on a slow CPU. `CAPTURE_RATE` overrides the rate for codecs that cannot run capture and
@@ -145,7 +147,7 @@ does not have would otherwise fail the line and take the gain with it) and
 
 **The mixer control name is the trap.** It differs across USB adapters (`PCM`, `Speaker`, `Master`),
 and `GpioHal` treats a mixer failure as non-fatal — so a wrong name means playback at whatever
-volume the adapter booted with, silently, **including the volume cap being ignored**. In a child's
+volume the adapter booted with, silently, **ignoring `speakerVolumePercent` entirely**. In a child's
 room that is the one failure worth checking explicitly: set the volume in the admin panel, then read
 it back with `amixer sget <control>`.
 
@@ -194,12 +196,35 @@ with 22/23/24/25/27, so the full pin map stays available for later.
    is **no `Master` control on this codec**, which is what the docs and the installer claimed until
    that was checked; the playback side is `Playback` (the DAC volume), with `Speaker` and
    `Headphone` as the two output amps below it. `Playback` is what `install.sh` writes because it
-   sits upstream of both amps, so the volume cap holds whichever output is wired. Both are
+   sits upstream of both amps, so the volume setting holds whichever output is wired. Both are
    env-settable (`ALSA_MIXER_CONTROL`, `ALSA_CAPTURE_MIXER_CONTROL`) and both failures are silent —
    see the trap above. This one had in fact been failing silently on the first real device.
    `Capture` also powers up **muted** on this codec, which a gain percentage does not clear; both the
    daemon and `bloopbox-audio-init.service` unmute it explicitly. That is one of three things the
    capture chain needs — see below.
+
+   **Setting `Playback` alone leaves the box ~26 dB quiet.** Measured on the same HAT on
+   2026-08-17, after a report that maximum volume was still underwhelming: `Playback` was already
+   at its 0 dB ceiling while the stages *below* it had never been touched by anything in the
+   codebase.
+
+   | Control | Powers up at | Set to | Worth |
+   | --- | --- | --- | --- |
+   | `Playback` (DAC volume) | 255/255, 0 dB | unchanged — `speakerVolumePercent` drives it | — |
+   | `Speaker` (output PGA) | **101/127, −20.00 dB** | 127 (+6.00 dB) | **26 dB** |
+   | `Speaker DC` (class-D boost) | **0** | 5 | a few dB |
+   | `Speaker AC` (class-D boost) | **0** | 5 | a few dB |
+
+   `Speaker` is the one that matters; the boosts are trim on top. All three are now
+   `config.audio.ampVolumePercent` / `ampBoostDc` / `ampBoostAc`, applied by `GpioHal` at init
+   through `ALSA_AMP_MIXER_CONTROL`, `ALSA_AMP_DC_MIXER_CONTROL` and `ALSA_AMP_AC_MIXER_CONTROL`
+   — written by `install.sh --audio-hat wm8960`, and **unset by default**, because a USB adapter
+   has no such stages and naming a control that does not exist fails silently.
+
+   They are configuration rather than constants because the boosts trade headroom for distortion
+   on a small speaker, which is a judgement about a particular enclosure. The admin panel's
+   **Test speaker** button plays the boot cue so the result can be heard; note the settings are
+   read at boot, so a change is only audible after the save restarts the daemon.
 3. **The microphone needs three settings, not one, and two of them are not gain.** Measured
    2026-08-10 by playing a full-scale 1 kHz tone through the HAT's own speaker (it sits centimetres
    from the mics) and reading the captured level back, so each figure is a real measurement:

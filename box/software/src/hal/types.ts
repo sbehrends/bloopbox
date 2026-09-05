@@ -72,6 +72,26 @@ export type HalCore = {
   /** Play an audio file to completion. Rejects if playback fails. */
   play(path: string): Promise<void>;
 
+  /**
+   * Get a file ready to play, ahead of anyone asking for it.
+   *
+   * Called when a voice note arrives, which is the one moment nobody is waiting: the lamp is
+   * already blinking and the child may not tap for minutes. On the device this is where the
+   * Ogg/Opus a phone sent becomes something `aplay` can read, so the tap itself only has to
+   * spawn a player — the decode used to sit between the tap and the first sound.
+   *
+   * Best effort by contract: **never rejects**, and `play()` must work whether or not this ran.
+   */
+  prepare(path: string): Promise<void>;
+
+  /**
+   * Drop whatever `prepare()` produced for this file. Called once the note is gone.
+   *
+   * Also best effort, and for the same reason: the RAM disk it frees is swept by the purge
+   * anyway, so failing here costs a little memory for a while and nothing else.
+   */
+  release(path: string): Promise<void>;
+
   /** Play a built-in cue to completion. */
   playCue(cue: AudioCue): Promise<void>;
 

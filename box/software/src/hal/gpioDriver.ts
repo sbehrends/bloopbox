@@ -109,10 +109,14 @@ const ALSA_AMP_AC_MIXER_CONTROL = process.env['ALSA_AMP_AC_MIXER_CONTROL'] ?? ''
  *
  * `CAPTURE_RATE` exists for codecs that cannot run capture and playback at different rates
  * at the same time. The WM8960 HAT is one: it is the clock consumer on a shared I2S bit
- * clock, and the record cues are 48 kHz (`scripts/generate-sounds.ts`) — so the "pop" that
- * fires at `recordThresholdMs`, *while* capture is open, would be a second rate on the same
- * clock. Setting 48000 makes both directions agree and lets ffmpeg resample during encode,
- * which it already does. Costs a larger intermediate WAV in tmpfs.
+ * clock, and the cues are 48 kHz (`scripts/generate-sounds.ts`). Setting 48000 makes both
+ * directions agree and lets ffmpeg resample during encode, which it already does. Costs a
+ * larger intermediate WAV in tmpfs.
+ *
+ * The overlap that forced it is **gone**: the "pop" used to fire at `recordThresholdMs` while
+ * capture was open, and now finishes before the microphone opens, so no cue shares the clock
+ * with a recording any more. The value stays until a real device says otherwise — it is set by
+ * `install.sh --audio-hat wm8960` and cannot be re-measured here. See `PENDING.md`.
  */
 const CAPTURE_RATE = parseRate('CAPTURE_RATE', 16_000);
 export const CAPTURE_FORMAT = { rate: CAPTURE_RATE, channels: 1, format: 'S16_LE' } as const;
@@ -143,6 +147,11 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   readonly #ledLines: (Output | null)[] = [null, null, null];
   readonly #buttonWatches: (Watch | null)[] = [null, null, null];
+
+  /** Note path -> the WAV `prepare()` decoded it into, both in the RAM disk. */
+  readonly #decoded = new Map<string, string>();
+  /** Serialises `prepare()`, so a boot's worth of notes is one decode at a time. */
+  #prepareQueue: Promise<void> = Promise.resolve();
 
   #captureProcess: ChildProcess | null = null;
   #captureId: string | null = null;
@@ -210,6 +219,9 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   async dispose(): Promise<void> {
     await this.stopPlayback();
     await this.#stopCapture();
+
+    // Prepared decodes are derived data, and a restart re-derives them from the notes.
+    await Promise.all([...this.#decoded.keys()].map(async (path) => this.release(path)));
 
     // Contract: dispose leaves every LED off — before releasing the lines.
     for (const index of [0, 1, 2] as const) this.setLed(index, false);
@@ -299,9 +311,37 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   }
 
   /**
+   * Decodes a note ahead of the tap that plays it. Never rejects (HAL contract).
+   *
+   * This is the whole latency fix: a tap used to pay for an ffmpeg spawn and a full decode
+   * before the first sample reached the speaker, on a machine where spawning anything is not
+   * free. Doing it on arrival spends the same CPU while the child is not waiting.
+   */
+  async prepare(path: string): Promise<void> {
+    if (APLAY_CONTAINERS.has(extname(path).toLowerCase())) return;
+    if (this.#decoded.has(path)) return;
+
+    /*
+     * One at a time. Boot recovery restores every unread note at once, and a dozen concurrent
+     * ffmpeg processes on a Pi Zero — to get ahead of a tap that may never come — would be
+     * competing with the daemon coming up. Nobody awaits this, so the queue costs nothing.
+     */
+    this.#prepareQueue = this.#prepareQueue.then(async () => this.#decodeAhead(path));
+    await this.#prepareQueue;
+  }
+
+  /** Drops a prepared decode. Never rejects (HAL contract). */
+  async release(path: string): Promise<void> {
+    const decodedPath = this.#decoded.get(path);
+    if (decodedPath === undefined) return;
+    this.#decoded.delete(path);
+    await rm(decodedPath, { force: true }).catch(() => undefined);
+  }
+
+  /**
    * Plays a voice note. Decoded to WAV first unless it already is one — see
-   * `APLAY_CONTAINERS`. The decode is a few hundred milliseconds of a Pi's CPU against
-   * playing noise, so it is not conditional on anything but the container.
+   * `APLAY_CONTAINERS`. `prepare()` will usually have done that already; when it has not, the
+   * decode happens here and the file is cleaned up straight after.
    */
   async play(path: string): Promise<void> {
     await this.stopPlayback();
@@ -312,12 +352,23 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     }
 
     /*
+     * Checked on disk, not just in the map: these live in a RAM disk the purge also sweeps,
+     * so a note old enough to outlive its own decode still has to play.
+     */
+    const prepared = this.#decoded.get(path);
+    if (prepared !== undefined && (await exists(prepared))) {
+      await this.#spawnPlayback(prepared);
+      return;
+    }
+    this.#decoded.delete(path);
+
+    /*
      * Decoded beside the note, in the same tmpfs: the RAM disk is the only writable path
      * either daemon has. The `play-` prefix keeps it out of `audio/recovery.ts`'s
      * `wa-<index>-<id>.ogg` pattern, so a leftover from a power cut is never mistaken for
      * an unread message — and `audio/purge.ts` already sweeps `.wav` here.
      */
-    const decodedPath = join(this.#recordingDirectory, `play-${stem(path)}.wav`);
+    const decodedPath = this.#decodedPath(path);
     const epoch = this.#playbackEpoch;
     try {
       await toPlayableWav(path, decodedPath);
@@ -465,6 +516,36 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   #wavPath(recordingId: string): string {
     return join(this.#recordingDirectory, `${recordingId}.wav`);
+  }
+
+  /** One `prepare()`'s worth of work. Never throws: it is the tail of a shared chain. */
+  async #decodeAhead(path: string): Promise<void> {
+    // Re-checked here, not only in `prepare()`: two calls for the same note can queue before
+    // either has run.
+    if (this.#decoded.has(path)) return;
+
+    const decodedPath = this.#decodedPath(path);
+    try {
+      await toPlayableWav(path, decodedPath);
+      this.#decoded.set(path, decodedPath);
+    } catch {
+      // `play()` falls back to decoding on demand, exactly as it did before.
+      await rm(decodedPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  #decodedPath(path: string): string {
+    return join(this.#recordingDirectory, `play-${stem(path)}.wav`);
+  }
+}
+
+/** Whether a path is still on disk. The purge may have taken it. */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -440,22 +440,30 @@ function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
   const resumeGrace = numberInput(config.buttons.resumeGraceMs, 0, 3000);
   const combo = numberInput(config.buttons.silentComboMs, 500, 15_000);
 
-  /** Shows the resulting press windows, so the numbers are not abstract. */
+  /**
+   * Shows the resulting press windows, so the numbers are not abstract.
+   *
+   * The tap window ends at threshold + minimum recording, not at the threshold: the bip plays
+   * there and the microphone opens behind it, but a press that catches less than the minimum
+   * is still a tap. Showing the threshold as the boundary would have a parent tuning the wrong
+   * number when taps stopped working.
+   */
   const summary = element('p', 'field-hint');
   const refreshSummary = (): void => {
     const d = debounce.valueAsNumber;
     const t = threshold.valueAsNumber;
+    const m = minRecording.valueAsNumber;
     const g = resumeGrace.valueAsNumber;
     const tail = g > 0 ? ` · then ${String(g)}ms to carry on before it sends` : '';
     summary.textContent =
       d < t
-        ? `Under ${String(d)}ms: ignored · ${String(d)}–${String(t)}ms: tap to play · ` +
-          `over ${String(t)}ms: record${tail}`
+        ? `Under ${String(d)}ms: ignored · ${String(d)}–${String(t + m)}ms: tap to play · ` +
+          `over ${String(t + m)}ms: record · bip at ${String(t)}ms${tail}`
         : 'Debounce must be below the record threshold, or tapping to play is impossible.';
   };
-  debounce.addEventListener('input', refreshSummary);
-  threshold.addEventListener('input', refreshSummary);
-  resumeGrace.addEventListener('input', refreshSummary);
+  for (const input of [debounce, threshold, minRecording, resumeGrace]) {
+    input.addEventListener('input', refreshSummary);
+  }
   refreshSummary();
 
   section.append(
@@ -465,11 +473,17 @@ function renderButtonTimings(config: ConfigView, onSave: SaveFn): HTMLElement {
       'Saving restarts the device to apply these. Tune them to suit the child.',
     ),
     field('Debounce (ms)', debounce, 'Presses shorter than this are ignored as accidental.'),
-    field('Record threshold (ms)', threshold, 'Hold at least this long to record.'),
+    field(
+      'Bip delay (ms)',
+      threshold,
+      'How long a press waits before the bip plays and the microphone opens. Nothing said ' +
+        'before the bip is recorded, so shorter means less of the first word is lost.',
+    ),
     field(
       'Minimum recording (ms)',
       minRecording,
-      'Recordings with less actual audio than this are discarded rather than sent.',
+      'How much the microphone must catch for a press to be a message. Under this it counts ' +
+        'as a tap and plays whatever is waiting instead.',
     ),
     field(
       'Carry-on window (ms)',

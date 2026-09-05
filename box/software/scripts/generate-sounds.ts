@@ -97,18 +97,13 @@ const RECIPES: readonly CueRecipe[] = [
   },
   {
     cue: AudioCue.Pop,
-    description: 'high, ultra-short "pop" — recording started',
+    description: 'high, ultra-short "pop" — the microphone is about to open',
     tones: [{ from: 1200, durationMs: 90, gain: 0.5 }],
   },
   {
     cue: AudioCue.Whoosh,
-    description: 'upward glide — recording finished',
+    description: 'upward glide — message sent',
     tones: [{ from: 500, to: 1300, durationMs: 220, gain: 0.45 }],
-  },
-  {
-    cue: AudioCue.Swoosh,
-    description: 'designed success sound — delivered to WhatsApp',
-    peak: 0.45,
   },
   {
     cue: AudioCue.Oops,

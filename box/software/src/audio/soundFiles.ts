@@ -31,11 +31,14 @@ export const SAMPLES_DIRECTORY = resolve(import.meta.dirname, 'samples');
  * is the only place the two vocabularies meet, so a redesign is a one-line change here and
  * the provenance of every cue stays legible. Cues absent from this table are synthesised;
  * the recipes for those live in `scripts/generate-sounds.ts`.
+ *
+ * `success.mp3` sits in `samples/` without an entry here: it was the delivery cue, retired
+ * 2026-08-17 when a send went down to one sound. Kept because it is authored audio — a
+ * checkout can regenerate a WAV but not a recording.
  */
 export const CUE_SAMPLES = {
   [AudioCue.Boot]: 'boot.mp3',
   [AudioCue.Notify]: 'notification-in.mp3',
-  [AudioCue.Swoosh]: 'success.mp3',
 } as const satisfies Partial<Record<AudioCue, string>>;
 
 export type SampledCue = keyof typeof CUE_SAMPLES;

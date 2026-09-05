@@ -291,20 +291,32 @@ output lines and the audio cues carry all the feedback.
 3. `Master` / `Capture` are the mixer control names. If the mic records silence at a plausible level,
    the WM8960's input **boost** switches are the next suspect: `amixer contents` shows them, and their
    names vary by kernel.
-4. `CAPTURE_RATE=48000` is needed. If capture and the 48 kHz cues genuinely cannot share the I²S
-   clock, the symptom without it is the *record* pop failing, or capture dying, the moment the pop
-   plays — about 500 ms into every hold.
+4. `CAPTURE_RATE=48000` is set, and **may no longer be needed** — the only cue that overlapped a
+   capture was the bip, and since 2026-08-17 it finishes before the microphone opens. Worth testing
+   both here: if 16 kHz records cleanly, it removes a resample and shrinks the intermediate WAV. The
+   symptom of getting it wrong is capture dying or recording silence, so change it deliberately.
 
 Also worth checking, because the speaker and the microphone are on the same small board this time:
-whether the device records itself. `#commitCapture` finalises before the whoosh for exactly that
-reason, but the inbound chime and the pop still play while the mic is live.
+whether the device records itself. Neither the bip nor the whoosh should now be audible in a message —
+the bip plays before capture opens and `#commitCapture` finalises before the whoosh. **If either is
+in there, the ordering is not doing what it claims** and the place to look is `#beginCapture`'s awaited
+`playCue` and the ALSA stream lingering after `aplay` exits. The inbound chime can still land in a
+recording, since a note can arrive while a child is talking; that one is accepted.
 
-**And this is the first chance to actually hear the three designed cues.** `boot`, `notify` and
-`swoosh` are mastered from recordings rather than synthesised, matched to the beeps by peak amplitude —
+Two more things this gate is the first chance to measure:
+
+- **How long ALSA takes to open a capture stream.** It sits directly in front of the child's first
+  word now. `PENDING.md` has the watch item.
+- **The bip on a tap.** A press over 150 ms bips and opens a microphone before turning out to be a
+  tap. Confirm the queue still starts promptly afterwards — `#playQueue` waits for the capture to be
+  torn down first, on purpose.
+
+**And this is the first chance to actually hear the designed cues.** `boot` and `notify` are mastered
+from recordings rather than synthesised, matched to the beeps by peak amplitude —
 the honest measure, but not the one ears use. Power-cycle the board and listen to `boot`, then send
-and receive one note each, and compare all three against `pop` and `oops` for loudness. Their levels
+and receive one note each, and compare both against `pop` and `oops` for loudness. Their levels
 are one `peak` value each in `scripts/generate-sounds.ts`; the tone gains are the ones to leave alone.
-`PENDING.md` has the three specific things to listen for.
+`PENDING.md` has the specific things to listen for.
 
 ---
 

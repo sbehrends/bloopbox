@@ -25,6 +25,9 @@ export class MockHal extends EventEmitter<HalEvents> implements Hal {
   readonly ledWrites: LedWrite[] = [];
   readonly cuesPlayed: CuePlay[] = [];
   readonly filesPlayed: FilePlay[] = [];
+  /** Paths handed to prepare()/release(), in order. */
+  readonly prepared: string[] = [];
+  readonly released: string[] = [];
   readonly volumeChanges: number[] = [];
   readonly activeRecordings = new Map<string, RecordingHandle>();
   readonly cancelledRecordings: string[] = [];
@@ -94,6 +97,17 @@ export class MockHal extends EventEmitter<HalEvents> implements Hal {
   play(path: string): Promise<void> {
     if (this.failPlayback) return Promise.reject(new Error(`mock: cannot play ${path}`));
     this.filesPlayed.push({ path, at: Date.now() });
+    return Promise.resolve();
+  }
+
+  /** Records the request. Never rejects, per the contract — not even with `failPlayback`. */
+  prepare(path: string): Promise<void> {
+    this.prepared.push(path);
+    return Promise.resolve();
+  }
+
+  release(path: string): Promise<void> {
+    this.released.push(path);
     return Promise.resolve();
   }
 

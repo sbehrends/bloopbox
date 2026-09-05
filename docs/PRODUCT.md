@@ -27,39 +27,54 @@ values below are the shipped defaults.
 ### Sending a message
 
 1. The child holds a button. The lamp goes **solid on immediately**, so acknowledgement is instant.
-   Audio capture starts at the same moment, so nothing said is lost.
-2. At `recordThresholdMs` (500 ms) the press is unambiguously a recording, and the short high
-   **"pop"** plays.
+   Nothing is captured yet.
+2. At `recordThresholdMs` (150 ms) the short high **"pop"** plays, and **the microphone opens once
+   it has finished**. The bip is the invitation to speak, not a report that recording began.
 
-   > **Deliberate deviation.** The original spec played the pop the instant the button was held. But
-   > a tap on a blinking button plays that contact's queue (§1, receiving), and at press time a tap
-   > and a hold are indistinguishable — so popping immediately meant every tap-to-play began with a
-   > spurious recording chime. The cue is deferred; the lamp is not.
+   > **Deliberate deviation.** The original spec played the pop the instant the button was held, over
+   > an already-open microphone. The speaker sits centimetres from the microphone, so the bip was
+   > recorded into the head of every message. Opening capture behind the cue is what keeps it out —
+   > at the price of everything said before the bip, which is the point of making the bip prompt.
+   >
+   > It also means this threshold cannot be the tap/hold boundary, since the bip has to play long
+   > before a tap and a hold are distinguishable. See step 6.
 
 3. The child speaks.
 4. The child releases. **The recording is not sent yet.** It stays open for a **carry-on window**
    (`resumeGraceMs`, 400 ms) with the lamp still **solid on**. Pressing the *same* button again
    inside that window continues the same message rather than starting a new one, so a grip that
    slips mid-sentence costs nothing. Nothing new has to be learned: solid means "still listening".
-5. The window expires. The upward **"whoosh"** plays, the lamp flashes 3× rapidly, and the audio is
-   converted to `.ogg` (Opus, `ptt: true`) and sent to WhatsApp.
+5. The window expires. The audio is converted to `.ogg` (Opus, `ptt: true`), the upward **"whoosh"**
+   plays, and it is sent to WhatsApp. Once WhatsApp accepts it the lamp flashes 3× rapidly.
 
    The cue plays *after* the capture is finalised, deliberately: the speaker sits next to the
    microphone, and playing it first recorded it into the tail of every message.
 
-6. A press released before `recordThresholdMs` sends nothing. With messages waiting it plays them
-   (below); with nothing waiting it produces the low **"oops"** double-beep. A tap never opens a
-   carry-on window.
-7. A press shorter than `debounceMs` (150 ms) is ignored entirely, silently — that is a toddler
+   **One sound, not two.** A successful send used to play the whoosh and then a designed "delivered"
+   swoosh once WhatsApp accepted it; back to back they read as one confused noise rather than as two
+   facts. Delivery is now reported by the lamp alone. Only a *failure* adds a second sound — the
+   "oops" — which is the case worth interrupting a child for.
+
+6. **A press that never held the microphone open long enough to carry a message is a tap**, whether
+   or not the bip played. With messages waiting it plays them (below); with nothing waiting it
+   produces the low **"oops"** double-beep. A tap never opens a carry-on window, so the queue it
+   asks for is not delayed by one.
+
+   The boundary is `recordThresholdMs + minRecordingMs` — 650 ms with the shipped defaults, a wider
+   tap window than the 150–500 ms the old single threshold allowed. A tap over 150 ms is preceded by
+   the bip and opens a microphone that catches nothing, which is the accepted cost of a prompt bip.
+
+7. A press shorter than `debounceMs` (60 ms) is ignored entirely, silently — that is a toddler
    brushing past.
 
 Bounds:
 
 - A recording is capped at `audio.maxRecordingSeconds` (30 s), and **carrying on does not restart
   that ceiling** — pumping the button cannot grow a file in the RAM disk.
-- A committed recording carrying less than `minRecordingMs` (500 ms) of **actual audio** is
-  discarded rather than sent. Hold duration and captured duration differ: a slow microphone start
-  can leave a long hold nearly empty.
+- Held time decides whether a press was a message; the finished file then has to contain *something*
+  or the take is a failed capture and answers "oops". That floor is 150 ms and is not configurable —
+  it separates "the microphone produced audio" from "the microphone produced nothing", which is not
+  a feel judgement.
 - **A send that fails is dropped, not retried** — see §7 and the watch item in `PENDING.md`. There
   is no outbound queue, on purpose.
 
@@ -71,6 +86,10 @@ Bounds:
    (0.8 s on / 0.8 s off).
 3. The child taps that button once. Every pending note from that sender plays **sequentially, oldest
    first**, separated by a short soft chime, and the lamp goes out once the queue finishes.
+
+   The note is **decoded to WAV when it arrives**, not when it is tapped. `aplay` reads no other
+   container, and paying for an ffmpeg process at the tap put a visible pause between a child
+   pressing a blinking button and hearing anything. Arrival is the moment nobody is waiting.
 4. If read receipts are enabled (`whatsapp.markPlayedAsRead`, on by default), playing a note marks
    it read upstream, so the person who recorded it sees their two ticks turn blue. It is optional
    because it also reports *when* a small child is at the box.
@@ -239,8 +258,8 @@ single source of truth — there is no hand-written parallel interface.
     "timezone": "UTC"
   },
   "buttons": {
-    "debounceMs": 150,
-    "recordThresholdMs": 500,
+    "debounceMs": 60,
+    "recordThresholdMs": 150,
     "minRecordingMs": 500,
     "resumeGraceMs": 400,
     "silentComboMs": 3000
@@ -258,8 +277,9 @@ at. The field was called `phone` in earlier versions and is migrated automatical
 
 Cross-field rules, enforced against the **merged** config on every save:
 
-- `debounceMs` < `recordThresholdMs` — without a gap there is no tap, so playing a received message
-  becomes unreachable
+- `debounceMs` < `recordThresholdMs` — without a gap the bip could never precede a recording. The
+  tap window itself is wider than this rule implies: it runs to `recordThresholdMs + minRecordingMs`
+  (§1, sending, step 6)
 - an enabled contact must have a target
 
 `buttons` and `whatsapp` were added after devices already had a `config.json`, so both use Zod's
@@ -432,9 +452,8 @@ Two things this table cannot express on its own:
 | Cue           | Sound                                | Source    | When                                          |
 | ------------- | ------------------------------------ | --------- | --------------------------------------------- |
 | `boot.wav`    | Designed startup sound (825 ms)       | Recorded  | The device has come up                         |
-| `pop.wav`     | High, ultra-short (< 200 ms)          | Tones     | A press has passed `recordThresholdMs`         |
-| `whoosh.wav`  | Upward sweep                          | Tones     | A recording has been committed                 |
-| `swoosh.wav`  | Designed success sound (456 ms)       | Recorded  | Delivered to WhatsApp                          |
+| `pop.wav`     | High, ultra-short (90 ms)             | Tones     | A press has passed `recordThresholdMs`. **Plays before the microphone opens** |
+| `whoosh.wav`  | Upward sweep                          | Tones     | A recording has been committed — the only sound a send makes |
 | `oops.wav`    | Low double-beep                       | Tones     | A tap that sends nothing, or a failed send      |
 | `chime.wav`   | Short soft chime                      | Tones     | Separator between queued notes during playback |
 | `notify.wav`  | Designed arrival sound (318 ms)       | Recorded  | A voice note arrived                           |
@@ -444,8 +463,13 @@ stated that silent mode suppresses one, which implies it exists. `boot.wav`: §6
 pattern but names no sound, and on a box with no screen the noise it makes when power returns is the
 only way a parent across the room learns it came back.
 
-**The WAVs are generated, not committed** — `npm run sounds` builds all seven, and a fresh clone has
-none. Three of them are **designed recordings**, committed as MP3 under `box/software/src/audio/samples/`
+One has been **retired**: `swoosh.wav`, the designed "delivered to WhatsApp" sound. Removed
+2026-08-17 because it played immediately after the whoosh and the pair read as noise rather than as
+two separate facts — see §1, sending, step 5. Its source recording (`success.mp3`) stays in
+`samples/` unreferenced, because a checkout can regenerate a WAV but not a recording.
+
+**The WAVs are generated, not committed** — `npm run sounds` builds all six, and a fresh clone has
+none. Two of them are **designed recordings**, committed as MP3 under `box/software/src/audio/samples/`
 and mastered by that script; the rest are synthesised from tone recipes in it. Both halves write one
 WAV per cue into the same directory under the cue's own name, so nothing downstream — the HAL, the
 `/sounds` route, the simulator — can tell which kind a cue is. `aplay` on the device reads WAV and

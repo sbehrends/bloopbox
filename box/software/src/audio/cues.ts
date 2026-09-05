@@ -12,12 +12,18 @@ export const AudioCue = {
    * indistinguishable from one that did not power on at all.
    */
   Boot: 'boot',
-  /** Recording confirmed — short, high "pop". */
+  /** Start talking — short, high "pop". Plays *before* the microphone opens. */
   Pop: 'pop',
-  /** Recording finished — upward "whoosh". */
+  /**
+   * Message sent — upward "whoosh". The only sound a successful send makes.
+   *
+   * There was a second cue here once, `swoosh`, played when WhatsApp accepted the message.
+   * Retired 2026-08-17: back to back the two read as one confused noise to a small child
+   * rather than as two facts, and delivery is already reported by the lamp flashing. Its
+   * source recording is still in `samples/`, unreferenced, if a delivery sound is ever wanted
+   * back somewhere it can stand alone.
+   */
   Whoosh: 'whoosh',
-  /** Delivered to WhatsApp — success "swoosh". */
-  Swoosh: 'swoosh',
   /** Nothing sent — low double-beep. */
   Oops: 'oops',
   /** Separator between queued voice notes. */
@@ -47,7 +53,6 @@ const SILENCED_IN_SILENT_MODE: ReadonlySet<AudioCue> = new Set<AudioCue>([
   AudioCue.Boot,
   AudioCue.Pop,
   AudioCue.Whoosh,
-  AudioCue.Swoosh,
   AudioCue.Oops,
   AudioCue.Notify,
 ]);

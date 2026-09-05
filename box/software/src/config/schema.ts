@@ -296,12 +296,24 @@ const quietHoursSchema = z.object({
  */
 const buttonTimingsShape = z.object({
   /** Presses shorter than this are contact bounce or an accidental brush. */
-  debounceMs: z.number().int().min(0).max(2000).default(150),
-  /** At or beyond this, a press is a recording rather than a tap. */
-  recordThresholdMs: z.number().int().min(100).max(10_000).default(500),
+  debounceMs: z.number().int().min(0).max(2000).default(60),
   /**
-   * A committed recording carrying less *actual audio* than this is discarded. Distinct
-   * from the threshold above: a slow microphone start can leave a long hold nearly empty.
+   * At or beyond this, the microphone opens: the "pop" plays and capture starts behind it.
+   *
+   * **This is how long the child waits for the bip**, which is why it is short. It is not the
+   * tap/hold boundary any more — that is `recordThresholdMs + minRecordingMs`, because a take
+   * carrying less than `minRecordingMs` of audio is treated as a tap (see `buttonInterpreter`).
+   * Lowering it makes the bip prompter and costs nothing else; the old 500 ms value was chosen
+   * when this single number had to serve both jobs.
+   */
+  recordThresholdMs: z.number().int().min(100).max(10_000).default(150),
+  /**
+   * The least *actual audio* a take must carry to be a message rather than a tap.
+   *
+   * Distinct from the threshold above, and the second half of the tap/hold boundary: with the
+   * defaults, a press under 650 ms plays the waiting queue and one over it sends. Measured as
+   * held time, in `buttonInterpreter`; whether the microphone then actually delivered is a
+   * separate question, answered by `MIN_USABLE_AUDIO_MS` in `deviceController`.
    */
   minRecordingMs: z.number().int().min(0).max(10_000).default(500),
   /**

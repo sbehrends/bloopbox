@@ -245,14 +245,14 @@ describe('PUT /config', () => {
   });
 
   it('rejects a lone debounce that would swallow the threshold', async () => {
-    // Same shape of rule, on the timings: the stored threshold is 500, so 600 alone is invalid
+    // Same shape of rule, on the timings: the stored threshold is 150, so 600 alone is invalid
     // even though nothing in the patch says so.
     api = await startApi({ configured: false });
     const response = await send(api, 'PUT', '/api/config', { buttons: { debounceMs: 600 } });
 
     expect(response.status).toBe(400);
     expect(JSON.stringify(await response.json())).toContain('recordThresholdMs');
-    expect(api.config.current.buttons.debounceMs).toBe(150);
+    expect(api.config.current.buttons.debounceMs).toBe(60);
   });
 
   it('will not enable a button that has nobody behind it', async () => {

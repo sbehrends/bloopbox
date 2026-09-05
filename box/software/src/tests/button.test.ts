@@ -12,9 +12,19 @@ type Recorded = { event: string; payload?: unknown };
 const { debounceMs: DEBOUNCE_MS, recordThresholdMs: RECORD_THRESHOLD_MS } = DEFAULT_BUTTON_TIMINGS;
 const SILENT_COMBO_MS = DEFAULT_BUTTON_TIMINGS.silentComboMs;
 const RESUME_GRACE_MS = DEFAULT_BUTTON_TIMINGS.resumeGraceMs;
+const MIN_RECORDING_MS = DEFAULT_BUTTON_TIMINGS.minRecordingMs;
+
+/**
+ * The tap/hold boundary: the microphone opens at the threshold, and what it catches has to
+ * reach `minRecordingMs` for the press to be a message rather than a tap.
+ */
+const MESSAGE_MS = RECORD_THRESHOLD_MS + MIN_RECORDING_MS;
 
 /** Comfortably inside the tap window: past debounce, short of the record threshold. */
 const TAP_MS = Math.round((DEBOUNCE_MS + RECORD_THRESHOLD_MS) / 2);
+
+/** A tap the child held too long: the bip played and the microphone opened, briefly. */
+const LONG_TAP_MS = Math.round((RECORD_THRESHOLD_MS + MESSAGE_MS) / 2);
 
 /** How many times one event was emitted. */
 const counts = (log: Recorded[], event: string): number =>
@@ -36,7 +46,6 @@ function setup(
 
   const log: Recorded[] = [];
   const track = [
-    'captureStart',
     'captureConfirmed',
     'captureResumed',
     'captureCommit',
@@ -76,14 +85,20 @@ describe('configurable timings', () => {
   it('ships the tuned defaults', () => {
     // Retuned during manual testing; adjustable per-device from the admin panel.
     expect(DEFAULT_BUTTON_TIMINGS).toEqual({
-      debounceMs: 150,
-      recordThresholdMs: 500,
+      debounceMs: 60,
+      recordThresholdMs: 150,
       minRecordingMs: 500,
       resumeGraceMs: 400,
       silentComboMs: 3000,
     });
-    // A tap window must exist between them or tap-to-play is unreachable.
+    // The schema's own rule: without a gap here the bip could never precede a recording.
     expect(DEBOUNCE_MS).toBeLessThan(RECORD_THRESHOLD_MS);
+    /*
+     * And the tap window has to be wide enough for a small child to land in. It is no longer
+     * bounded by the threshold — that only says when the bip plays — but by the threshold plus
+     * `minRecordingMs`, which is where a press starts carrying a message.
+     */
+    expect(MESSAGE_MS - DEBOUNCE_MS).toBeGreaterThanOrEqual(500);
   });
 
   it('honours a custom record threshold', () => {
@@ -135,8 +150,8 @@ describe('debounce — presses under the debounce window', () => {
     vi.advanceTimersByTime(DEBOUNCE_MS - 50);
     interpreter.handleButtonUp(0);
 
-    // Capture started (so nothing is ever lost) but was discarded silently.
-    expect(names()).toContain('captureStart');
+    // Too short even for the bip, so the microphone was never asked for.
+    expect(names()).not.toContain('captureConfirmed');
     expect(names()).toContain('captureCancel');
     expect(names()).not.toContain('cancelBeep');
     expect(names()).not.toContain('playQueue');
@@ -197,8 +212,66 @@ describe('tap — between debounce and the record threshold', () => {
     vi.advanceTimersByTime(RECORD_THRESHOLD_MS - 1);
     interpreter.handleButtonUp(0);
 
+    // Not even the bip: the microphone is never asked for below the threshold.
     expect(names()).not.toContain('captureConfirmed');
     expect(names()).toContain('cancelBeep');
+  });
+});
+
+/**
+ * The bip fires at 150 ms, long before anyone can tell a tap from a hold, so a press can open
+ * the microphone and still turn out to be a tap. What decides is whether the microphone was
+ * open long enough to hold a message — see `#isMessage`. Without this, lowering the threshold
+ * would have made tap-to-play unreachable for any press over 150 ms.
+ */
+describe('tap — past the record threshold but short of a message', () => {
+  it('plays the queue rather than sending an empty take', () => {
+    const { interpreter, names } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(LONG_TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    // The bip did play — the accepted cost of a prompt one.
+    expect(names()).toContain('captureConfirmed');
+    expect(names()).toContain('playQueue');
+    expect(names()).not.toContain('captureCommit');
+  });
+
+  it('gives the "oops" beep when there is nothing waiting', () => {
+    const { interpreter, names, find } = setup({ unread: [] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(LONG_TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).toContain('cancelBeep');
+    expect(find('captureCancel')?.payload).toMatchObject({ reason: 'tooShort' });
+  });
+
+  it('does not hold the queue behind a resume window', () => {
+    // The child is asking for a message, not carrying on a take there is no audio for.
+    // Waiting `resumeGraceMs` here would be latency for its own sake.
+    const { interpreter, names } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(LONG_TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(interpreter.hasPendingCommit(1)).toBe(false);
+    expect(names()).toContain('playQueue');
+  });
+
+  it('sends the moment the take clears minRecordingMs', () => {
+    const { interpreter, names } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(MESSAGE_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    expect(names()).toContain('captureCommit');
+    expect(names()).not.toContain('playQueue');
   });
 });
 
@@ -298,8 +371,7 @@ describe('the resume window — letting go by accident', () => {
     vi.advanceTimersByTime(RESUME_GRACE_MS);
 
     expect(names()).toContain('captureResumed');
-    // One take: the capture never restarted, so no second start and no second pop.
-    expect(counts(log, 'captureStart')).toBe(1);
+    // One take: the capture never restarted, so no second bip and no second microphone.
     expect(counts(log, 'captureConfirmed')).toBe(1);
     expect(counts(log, 'captureCommit')).toBe(1);
     expect(names()).not.toContain('captureCancel');
@@ -359,7 +431,7 @@ describe('the resume window — letting go by accident', () => {
     interpreter.handleButtonUp(0);
 
     expect(names()).not.toContain('captureResumed');
-    expect(counts(log, 'captureStart')).toBe(2);
+    expect(counts(log, 'pressVisualOn')).toBe(2);
     expect(names()).not.toContain('captureCommit');
   });
 
@@ -381,19 +453,20 @@ describe('the resume window — letting go by accident', () => {
   it('cannot be pumped past the recording ceiling', () => {
     const { interpreter, log, find } = setup({ maxRecordingSeconds: 3 });
 
-    // Three grips with gaps between them. If a resume restarted the ceiling, the last one
-    // would push the commit out to well past 3s.
+    // Three grips with gaps between them, each long enough to carry a message so each release
+    // opens a window. If a resume restarted the ceiling, the last one would push the commit
+    // out to well past 3s.
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(600);
+    vi.advanceTimersByTime(800);
     interpreter.handleButtonUp(0);
     vi.advanceTimersByTime(200);
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(600);
+    vi.advanceTimersByTime(800);
     interpreter.handleButtonUp(0);
     vi.advanceTimersByTime(200);
     interpreter.handleButtonDown(0);
 
-    vi.advanceTimersByTime(1399);
+    vi.advanceTimersByTime(999);
     expect(counts(log, 'captureCommit')).toBe(0);
 
     // 3s after the very first press, exactly.
@@ -418,7 +491,9 @@ describe('the resume window — letting go by accident', () => {
 
     expect(find('captureCommit')?.payload).toMatchObject({ index: 0 });
     expect(interpreter.hasPendingCommit(0)).toBe(false);
-    expect(counts(log, 'captureStart')).toBe(2);
+    // The new press is live in its own right, not a continuation of the one it closed.
+    expect(counts(log, 'pressVisualOn')).toBe(2);
+    expect(interpreter.isPressed(1)).toBe(true);
   });
 
   it('reset() drops an open window without sending', () => {
@@ -505,7 +580,7 @@ describe('robustness', () => {
     interpreter.handleButtonDown(0);
     interpreter.handleButtonDown(0);
 
-    expect(log.filter((e) => e.event === 'captureStart')).toHaveLength(1);
+    expect(log.filter((e) => e.event === 'pressVisualOn')).toHaveLength(1);
   });
 
   it('ignores a release with no matching press', () => {

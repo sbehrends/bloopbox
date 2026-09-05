@@ -161,8 +161,27 @@ export async function toVoiceNote(inputPath: string, outputPath: string): Promis
   ]);
 }
 
-/** Decodes any audio file to signed 16-bit PCM WAV, ready to pipe into `aplay`. */
-export async function toPlayableWav(inputPath: string, outputPath: string): Promise<void> {
+/**
+ * What a decoded note is written as, when the caller does not say otherwise.
+ *
+ * Speech that arrived as 16 kHz mono Opus — which is what every phone sends — has nothing to
+ * gain from being decoded to Opus's internal 48 kHz stereo. It costs three times the RAM disk
+ * for the same sound, and the device decodes these ahead of time into a tmpfs measured in tens
+ * of megabytes.
+ */
+export const PLAYBACK_DECODING = { sampleRate: 16_000, channels: 1 } as const;
+
+/**
+ * Decodes any audio file to signed 16-bit PCM WAV, the one container `aplay` can read.
+ *
+ * The rate and channel count are forced rather than inherited so the output size is
+ * predictable — see `PLAYBACK_DECODING`. Pass `format: null` to keep the source's own.
+ */
+export async function toPlayableWav(
+  inputPath: string,
+  outputPath: string,
+  format: { readonly sampleRate: number; readonly channels: number } | null = PLAYBACK_DECODING,
+): Promise<void> {
   await runFfmpeg([
     '-hide_banner',
     '-loglevel',
@@ -171,6 +190,7 @@ export async function toPlayableWav(inputPath: string, outputPath: string): Prom
     '-i',
     inputPath,
     '-vn',
+    ...(format ? ['-ar', String(format.sampleRate), '-ac', String(format.channels)] : []),
     '-f',
     'wav',
     '-acodec',

@@ -132,6 +132,113 @@ describe('play', () => {
   });
 });
 
+describe('prepare', () => {
+  it('decodes on arrival, so the tap that plays the note only has to spawn aplay', async () => {
+    const note = join(directory, 'wa-0-MNO345.ogg');
+    await writeFile(note, '');
+    const hal = await makeHal();
+
+    await hal.prepare(note);
+    decoded.mockClear();
+    await hal.play(note);
+
+    // The decode is the expensive half, and it happened while nobody was waiting.
+    expect(decoded).not.toHaveBeenCalled();
+    const played = spawned.find(({ command }) => command === 'aplay');
+    expect(played?.args).toContain(join(directory, 'play-wa-0-MNO345.wav'));
+  });
+
+  it('keeps the decode for a second listen rather than redoing it', async () => {
+    const note = join(directory, 'wa-1-PQR678.ogg');
+    await writeFile(note, '');
+    const hal = await makeHal();
+
+    await hal.prepare(note);
+    await hal.play(note);
+    decoded.mockClear();
+    await hal.play(note);
+
+    expect(decoded).not.toHaveBeenCalled();
+  });
+
+  it('decodes again when the purge has taken the prepared copy', async () => {
+    // Both files live in a RAM disk the purge sweeps by age, and a note that outlives its own
+    // decode still has to play.
+    const note = join(directory, 'wa-2-STU901.ogg');
+    await writeFile(note, '');
+    const hal = await makeHal();
+
+    await hal.prepare(note);
+    await rm(join(directory, 'play-wa-2-STU901.wav'), { force: true });
+    decoded.mockClear();
+    await hal.play(note);
+
+    expect(decoded).toHaveBeenCalledOnce();
+    expect(spawned.some(({ command }) => command === 'aplay')).toBe(true);
+  });
+
+  it('never rejects, and leaves play() to decode on demand when it fails', async () => {
+    const note = join(directory, 'wa-0-VWX234.ogg');
+    await writeFile(note, '');
+    decoded.mockRejectedValueOnce(new Error('ffmpeg exited with code 1'));
+    const hal = await makeHal();
+
+    await expect(hal.prepare(note)).resolves.toBeUndefined();
+    decoded.mockClear();
+    await hal.play(note);
+
+    expect(decoded).toHaveBeenCalledOnce();
+  });
+
+  it('does not decode a WAV: aplay reads those already', async () => {
+    const wav = join(directory, 'injected-1.wav');
+    await writeFile(wav, '');
+    const hal = await makeHal();
+
+    await hal.prepare(wav);
+
+    expect(decoded).not.toHaveBeenCalled();
+  });
+
+  it('decodes one note at a time, however many arrive at once', async () => {
+    /*
+     * Boot recovery restores every unread note in one pass. A dozen concurrent ffmpeg
+     * processes on a Pi Zero, to get ahead of a tap that may never come, would be competing
+     * with the daemon coming up.
+     */
+    let inFlight = 0;
+    let peak = 0;
+    decoded.mockImplementation(async (_input, output) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      await writeFile(output, '');
+      inFlight -= 1;
+    });
+
+    const hal = await makeHal();
+    const notes = ['wa-0-A.ogg', 'wa-1-B.ogg', 'wa-2-C.ogg'].map((name) => join(directory, name));
+    await Promise.all(notes.map(async (note) => writeFile(note, '')));
+
+    await Promise.all(notes.map(async (note) => hal.prepare(note)));
+
+    expect(peak).toBe(1);
+    expect(decoded).toHaveBeenCalledTimes(3);
+  });
+
+  it('release() frees the decode once the note it came from is gone', async () => {
+    const note = join(directory, 'wa-1-YZA567.ogg');
+    await writeFile(note, '');
+    const hal = await makeHal();
+
+    await hal.prepare(note);
+    await hal.release(note);
+
+    const { readdir } = await import('node:fs/promises');
+    expect(await readdir(directory)).toEqual(['wa-1-YZA567.ogg']);
+  });
+});
+
 describe('playCue', () => {
   it('plays the cue WAV directly — cues are generated as WAV and never need ffmpeg', async () => {
     const hal = await makeHal();

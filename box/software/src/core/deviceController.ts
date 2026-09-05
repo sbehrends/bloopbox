@@ -39,6 +39,21 @@ export type DeviceControllerOptions = {
 /** How often the quiet-hours schedule is re-evaluated when no transition is imminent. */
 const QUIET_HOURS_MAX_SLEEP_MS = 15 * 60 * 1000;
 
+/**
+ * Below this much audio, a committed take is a failed capture rather than a short message.
+ *
+ * Not in the config schema, unlike every press timing, because it is not a feel judgement a
+ * parent could have an opinion about: it separates "the microphone produced something" from
+ * "the microphone produced nothing". How long a press has to be to count as a message is
+ * `buttons.minRecordingMs`, and the interpreter has already applied it to held time by the
+ * time a commit arrives here.
+ *
+ * Deliberately far below that: the bip plays before capture opens and ALSA takes its own
+ * moment after, so a take that just clears the interpreter's boundary legitimately arrives
+ * shorter than `minRecordingMs`. Exported so tests assert against the same number.
+ */
+export const MIN_USABLE_AUDIO_MS = 150;
+
 export class DeviceController {
   readonly state = new DeviceState();
   readonly queue: AudioQueueManager;
@@ -53,9 +68,10 @@ export class DeviceController {
   /**
    * In-flight captures, keyed by button.
    *
-   * The *promise* rather than the handle, because a capture can be cancelled before the HAL
-   * has finished opening it: `ButtonInterpreter` emits `captureCancel` synchronously inside
-   * the same `handleButtonDown` that emitted `captureStart` when the silent-mode chord forms.
+   * The *promise* rather than the handle, because a capture is routinely cancelled before the
+   * HAL has finished opening it. Two ways that happens: the silent-mode chord makes
+   * `ButtonInterpreter` emit `captureCancel` synchronously, and the bip now runs *inside* this
+   * promise, so any release during those 90 ms lands on a capture that has not opened yet.
    * Storing the handle only once it resolves let that cancel find nothing and return, which
    * left the microphone open for the life of the process — and the next press on that button
    * reused the stale handle, shipping every second recorded since as one voice note.
@@ -63,6 +79,8 @@ export class DeviceController {
   readonly #captures = new Map<ButtonIndex, Promise<RecordingHandle | null>>();
   /** messageId -> file path, so played notes can be deleted ahead of the TTL. */
   readonly #pathsByMessageId = new Map<string, string>();
+  /** The most recent capture teardown, awaited before playback. See `#playQueue`. */
+  #teardown: Promise<void> | undefined;
   #quietHoursTimer: NodeJS.Timeout | null = null;
   #started = false;
 
@@ -194,6 +212,13 @@ export class DeviceController {
     if (!this.queue.enqueue(index, note)) return false;
     this.#pathsByMessageId.set(note.messageId, note.path);
     this.state.addUnread(index);
+    /*
+     * Decode it now rather than when the button is tapped. Arrival is the one moment nobody
+     * is waiting — the lamp is already blinking and the child may not come for minutes —
+     * whereas a tap is the moment they are least able to wait. Not awaited, and it never
+     * rejects; `hal.play()` still copes if it has not finished, or never ran.
+     */
+    void this.#hal.prepare(note.path);
     return true;
   }
 
@@ -241,16 +266,10 @@ export class DeviceController {
       this.#animator.setPressed(index, false);
     });
 
-    this.#interpreter.on('captureStart', ({ index }) => {
-      this.#beginCapture(index);
-    });
-
-    // Now certainly a recording: light it solid and play the pop.
+    // Now certainly a recording: light it solid, bip, and open the microphone behind the bip.
     this.#interpreter.on('captureConfirmed', ({ index }) => {
       this.state.setRecording(index);
-      if (shouldPlayCue(AudioCue.Pop, this.state.silentMode)) {
-        void this.#safeCue(AudioCue.Pop);
-      }
+      this.#beginCapture(index);
     });
 
     /*
@@ -268,7 +287,10 @@ export class DeviceController {
     });
 
     this.#interpreter.on('captureCancel', ({ index }) => {
-      void this.#discardCapture(index);
+      // Kept so `#playQueue` can wait for the microphone to actually be closed — a tap past
+      // `recordThresholdMs` opens one before it turns out to be a tap, and `playQueue`
+      // follows this event in the very same tick.
+      this.#teardown = this.#discardCapture(index);
     });
 
     this.#interpreter.on('playQueue', ({ index }) => {
@@ -313,13 +335,30 @@ export class DeviceController {
 
   /* ---- capture lifecycle ---- */
 
+  /**
+   * Plays the "pop" and *then* opens the microphone.
+   *
+   * The order is the whole point: the speaker is centimetres from the microphone, so a cue
+   * played while capture is open is recorded into the message — and this one fires 150 ms in,
+   * where it landed on top of the child's first word. Waiting for it costs the 90 ms the bip
+   * takes, and buys a message that starts where the child was actually invited to start.
+   *
+   * Both steps live inside the stored promise rather than being awaited here, because
+   * `#commitCapture` and `#discardCapture` already await it (see `#captures`): a button
+   * released during the bip finds a capture that is still opening and tears it down properly,
+   * which is exactly the case the promise was introduced for.
+   */
   #beginCapture(index: ButtonIndex): void {
     if (this.#captures.has(index)) return;
+    const silent = this.state.silentMode;
     // No microphone, or no browser attached: the press simply produces nothing, and the
     // null is what commit and discard below check for.
     this.#captures.set(
       index,
-      this.#hal.startRecording(index).catch(() => null),
+      (async (): Promise<RecordingHandle | null> => {
+        if (shouldPlayCue(AudioCue.Pop, silent)) await this.#safeCue(AudioCue.Pop);
+        return await this.#hal.startRecording(index).catch(() => null);
+      })(),
     );
   }
 
@@ -352,11 +391,13 @@ export class DeviceController {
     }
 
     /*
-     * The hold was long enough, but the audio may not be: a slow microphone start or
-     * dropped chunks can leave almost nothing in the file. Sending a fragment wastes the
-     * recipient's attention, so treat it exactly like a cancelled take.
+     * The interpreter has already ruled on length — it only commits a press that held the
+     * microphone open long enough to carry a message. What it cannot see is whether the
+     * microphone actually delivered, so this is the one thing left to check: a file with
+     * essentially nothing in it is a failed capture, and answering "oops" is more honest than
+     * sending a click.
      */
-    if (durationMs < this.#config.current.buttons.minRecordingMs) {
+    if (durationMs < MIN_USABLE_AUDIO_MS) {
       await rm(path, { force: true }).catch(() => undefined);
       if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
         await this.#safeCue(AudioCue.Oops);
@@ -364,6 +405,14 @@ export class DeviceController {
       return;
     }
 
+    /*
+     * One sound for a send, played once the take is safely finalised.
+     *
+     * There used to be a second — a "delivered" cue after WhatsApp accepted it — and back to
+     * back the two read as one confused noise rather than two facts. Delivery is still
+     * reported, visually: `reportMessageSent` flashes the lamp. Only a *failure* now adds a
+     * second sound, which is the case actually worth interrupting a child for.
+     */
     if (shouldPlayCue(AudioCue.Whoosh, this.state.silentMode)) {
       await this.#safeCue(AudioCue.Whoosh);
     }
@@ -371,9 +420,6 @@ export class DeviceController {
     try {
       await this.#send({ index, path, durationMs });
       this.state.reportMessageSent(index);
-      if (shouldPlayCue(AudioCue.Swoosh, this.state.silentMode)) {
-        await this.#safeCue(AudioCue.Swoosh);
-      }
     } catch {
       // Delivery failed. The file stays for the purge to collect.
       if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
@@ -399,6 +445,14 @@ export class DeviceController {
   }
 
   async #playQueue(index: ButtonIndex): Promise<void> {
+    /*
+     * Let any microphone this press opened close first. On the WM8960 both directions hang
+     * off one I2S clock, so starting a note while `arecord` is still being torn down asks the
+     * codec for two things at once. `#discardCapture` swallows its own errors, so this only
+     * ever waits — and it is a SIGTERM and a process exit, not audio.
+     */
+    await this.#teardown;
+
     try {
       await this.queue.playQueue(index);
     } catch {
@@ -413,7 +467,11 @@ export class DeviceController {
     await Promise.all(
       this.#playedPaths(messageIds)
         .filter((path) => !stillQueued.has(path))
-        .map((path) => rm(path, { force: true }).catch(() => undefined)),
+        .map(async (path) => {
+          await rm(path, { force: true }).catch(() => undefined);
+          // The decode `prepare()` made is derived from a file that no longer exists.
+          await this.#hal.release(path);
+        }),
     );
   }
 

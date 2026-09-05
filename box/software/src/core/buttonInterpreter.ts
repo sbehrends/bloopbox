@@ -20,20 +20,19 @@ import type { ButtonIndex, ButtonTimings } from '../config/schema.ts';
 export const SILENT_COMBO_BUTTONS: readonly ButtonIndex[] = [0, 2];
 
 export type CancelReason =
-  /** Released before the recording threshold. */
+  /**
+   * Not a message: released before the microphone opened, or holding too little audio to be
+   * one. Either way the press falls through to tap handling below.
+   */
   | 'tooShort'
   /** Swallowed because the silent-mode chord took over. */
   | 'combo';
 
 export type ButtonInterpreterEvents = {
   /**
-   * Begin capturing audio. Fires immediately on press so nothing the child says is lost,
-   * before we know whether this will end up a recording or a tap.
-   */
-  captureStart: [{ index: ButtonIndex }];
-  /**
-   * The press has passed `recordThresholdMs` and is definitely a recording.
-   * This is when the "pop" cue plays — see the note on cue timing below.
+   * The press has passed `recordThresholdMs`: play the "pop" and open the microphone behind
+   * it, in that order. The single "start capturing" signal — see the note on cue timing below
+   * for why nothing is captured before this point.
    */
   captureConfirmed: [{ index: ButtonIndex }];
   /**
@@ -99,14 +98,18 @@ type PendingCommit = {
 /**
  * Cue timing note (a deliberate deviation from PRODUCT.md §1).
  *
- * The spec plays the "pop" the moment the button is held. But we also resolved that a tap
- * on a blinking button plays that contact's queue (see CLAUDE.md), and at press time we
- * cannot yet tell a tap from a hold. Popping immediately would mean every tap-to-play
- * started with a spurious recording chime.
+ * The "pop" is the *invitation to speak*, so it plays at `recordThresholdMs` (150 ms) and the
+ * microphone opens **behind it**. Nothing before the bip is captured, which is the point: the
+ * speaker sits next to the microphone, and opening first meant the bip landed inside every
+ * message. Visual feedback (LED solid) still fires at press, so the child gets instant
+ * acknowledgement that the device noticed them.
  *
- * So the pop is deferred to `recordThresholdMs`, when the press is unambiguously a
- * recording. Visual feedback (LED solid) still fires immediately, so the child always
- * gets instant acknowledgement that the device noticed them.
+ * The consequence is that this threshold can no longer be the tap/hold boundary — the bip has
+ * to come long before we could know which a press is. So the boundary is
+ * `recordThresholdMs + minRecordingMs` instead, and it is decided at *release* by
+ * `#capturedMs()`: a press that never held the microphone open long enough to carry a message
+ * falls through to tap handling and plays the waiting queue. A tap is therefore preceded by a
+ * short bip, which is the accepted cost of a prompt one.
  *
  * The resume window (`timings.resumeGraceMs`).
  *
@@ -180,7 +183,6 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.#active.set(index, press);
 
     this.emit('pressVisualOn', { index });
-    this.emit('captureStart', { index });
 
     const { recordThresholdMs } = this.#timings;
     press.confirmTimer = setTimeout(() => {
@@ -215,8 +217,13 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       return;
     }
 
+    /*
+     * Only a take that already carries a message waits to be continued. Holding the window
+     * open for a tap would delay the queue it is asking for by `resumeGraceMs` — and there is
+     * nothing to carry on, since the microphone caught nothing worth keeping.
+     */
     const { resumeGraceMs } = this.#timings;
-    if (press.confirmed && resumeGraceMs > 0) {
+    if (press.confirmed && resumeGraceMs > 0 && this.#isMessage(press.startedAt)) {
       this.#openWindow(press, resumeGraceMs);
       return;
     }
@@ -366,11 +373,17 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.#clearPress(press);
     this.emit('pressVisualOff', { index });
 
-    if (press.confirmed) {
+    /*
+     * A confirmed press only sends if the microphone was open long enough to hold a message.
+     * The ceiling firing is by definition long enough, and asking again on a fake-timer
+     * boundary would be a needless way to lose a full-length recording.
+     */
+    if (press.confirmed && (reachedMaxDuration || this.#isMessage(press.startedAt))) {
       this.emit('captureCommit', { index, durationMs, reachedMaxDuration });
       return;
     }
 
+    // Either the bip never played, or it did and the child let go straight after: a tap.
     this.emit('captureCancel', { index, durationMs, reason: 'tooShort' });
 
     if (durationMs < this.#timings.debounceMs) {
@@ -418,6 +431,24 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     if (this.#comboTimer === null) return;
     clearTimeout(this.#comboTimer);
     this.#comboTimer = null;
+  }
+
+  /**
+   * Whether a take that started at `startedAt` and is ending now carries a message.
+   *
+   * The microphone opens at `recordThresholdMs`, so everything before that is the wait for the
+   * bip and not speech. What is left has to reach `minRecordingMs` to be worth sending —
+   * anything less is a tap the child held a moment too long, and treating it as one is what
+   * keeps tap-to-play reachable now that the bip fires at 150 ms.
+   *
+   * Held time rather than file length on purpose: this is a pure module, and the answer has to
+   * be the same before the HAL has finalised anything. `deviceController` still checks the
+   * finished file, which catches the case this cannot see — a long hold whose microphone
+   * delivered nothing.
+   */
+  #isMessage(startedAt: number): boolean {
+    const capturedMs = Date.now() - startedAt - this.#timings.recordThresholdMs;
+    return capturedMs >= this.#timings.minRecordingMs;
   }
 
   #clearPress(press: ActivePress): void {

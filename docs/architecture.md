@@ -187,25 +187,35 @@ the chase cannot drift into disagreeing about what booting is.
 `PRODUCT.md` says a short press is the "oops" cancel *and* that a tap plays unread messages. That is
 resolved by press duration and unread state:
 
-| Press duration                     | Unread present | Result                                                        |
-| ---------------------------------- | -------------- | ------------------------------------------------------------- |
-| `< debounceMs`                     | either         | Ignored entirely — a toddler brushing it                      |
-| `debounceMs` – `recordThresholdMs` | yes            | Play that contact's queue                                     |
-| `debounceMs` – `recordThresholdMs` | no             | "Oops" double-beep, nothing sent                              |
-| `≥ recordThresholdMs`              | either         | Record; stays open for `resumeGraceMs` after release, then sends |
+Write `MESSAGE_MS` for `recordThresholdMs + minRecordingMs` — 650 ms with the shipped defaults, and
+the actual boundary between the two gestures:
+
+| Press duration              | Unread present | Result                                                           |
+| --------------------------- | -------------- | ---------------------------------------------------------------- |
+| `< debounceMs`              | either         | Ignored entirely — a toddler brushing it                         |
+| `debounceMs` – `MESSAGE_MS` | yes            | Play that contact's queue                                        |
+| `debounceMs` – `MESSAGE_MS` | no             | "Oops" double-beep, nothing sent                                 |
+| `≥ MESSAGE_MS`              | either         | Record; stays open for `resumeGraceMs` after release, then sends  |
+
+`recordThresholdMs` sits *inside* the tap window at 150 ms, and crossing it is not what decides the
+gesture — it is only where the bip plays and the microphone opens. A tap longer than that therefore
+bips and opens a microphone that catches nothing; the take is discarded and the press falls through
+to the tap rows above. That fallback is what keeps tap-to-play reachable, and without it lowering the
+threshold to make the bip prompt would have made every press over 150 ms a recording.
 
 **These are configuration, not constants.** They live in `config.buttons` and are editable from the
 admin panel, because finding the right feel by editing source and rebuilding was far too slow.
 `DEFAULT_BUTTON_TIMINGS` in [`src/config/schema.ts`](../box/software/src/config/schema.ts) is derived from the
 schema's own field defaults, so nothing can drift.
 
-Two rules the schema enforces, because both break the device in ways a parent could not diagnose:
+Two rules, because both break the device in ways a parent could not diagnose:
 
-- `debounceMs` **must** be below `recordThresholdMs`. Without a gap there is no tap, so playing a
-  received message becomes unreachable.
-- A committed recording carrying less than `minRecordingMs` of **actual audio** is discarded rather
-  than sent. Hold duration and captured duration are not the same thing: a slow microphone start
-  can leave a long hold with almost nothing in it.
+- `debounceMs` **must** be below `recordThresholdMs`, enforced by the schema. Without a gap the bip
+  could never precede a recording.
+- Held time decides the gesture, but a committed take still has to *contain* something: below
+  `MIN_USABLE_AUDIO_MS` (150 ms, in `deviceController`) it is a failed capture and answers "oops".
+  That one is not configurable — it separates "the microphone produced audio" from "the microphone
+  produced nothing", which is not a feel judgement a parent could have an opinion about.
 
 ### A released recording stays open for a moment
 
@@ -220,7 +230,9 @@ alternative and is disproportionate.
 
 Rules, all locked by [`src/tests/button.test.ts`](../box/software/src/tests/button.test.ts):
 
-- Only a **confirmed** press opens a window. A tap never does, so tap-to-play is untouched.
+- Only a press that already **carries a message** opens a window. A tap never does — including one
+  held past `recordThresholdMs`, since there is nothing to carry on and waiting `resumeGraceMs`
+  before playing the queue would be latency for its own sake.
 - `maxRecordingSeconds` is **not** restarted by a resume — the ceiling is carried across, so
   pumping the button cannot grow a file in the RAM disk. If it fires mid-window, the take commits
   there.
@@ -235,18 +247,30 @@ No cue marks the resume and none is needed: the LED never goes out. `pressVisual
 release, but ladder rule 1 keeps the light solid, so **solid means "still listening"** and the
 whoosh still means "gone".
 
-### Cue timing, and why the pop is late
+### Cue timing: the box's own sounds must not end up inside the message
 
-Spec §1 plays the "pop" the moment a button is held. But at press time we cannot yet tell a tap
-from a hold, and popping immediately would mean every tap-to-play began with a spurious recording
-chime. So the pop is deferred to `recordThresholdMs`, where the press is unambiguously a recording.
+The speaker sits centimetres from the microphone, so **every cue that plays while a capture is open
+is recorded into the message**. Both ends of a take are shaped by that, and neither was obvious until
+a real device recorded itself:
 
-Audio capture still starts at t=0, so nothing the child says is lost, and the LED goes solid
-immediately, so they always get instant acknowledgement.
+- **The bip plays first, and the microphone opens behind it.** `#beginCapture` awaits `playCue(Pop)`
+  before calling `startRecording`, both inside the promise stored in `#captures`. The pop used to
+  fire over an already-open microphone 500 ms into the take, landing on the child's first word.
+- **`#commitCapture` finalises the capture before playing the whoosh**, for the same reason at the
+  other end — playing it first recorded it into the tail of every message.
 
-Relatedly, `#commitCapture` finalises the capture **before** playing the whoosh. The cue comes out
-of a speaker sitting next to the microphone; playing it first recorded it into the tail of every
-message.
+The cost of the first is real and deliberate: nothing said before the bip exists, so the bip has to
+be *prompt*, which is why `recordThresholdMs` is 150 ms and why the tap/hold boundary had to move off
+it (above). The LED still goes solid at press, so acknowledgement is instant and unchanged.
+
+A second consequence, worth naming because it looks like an accident: the bip is now the only cue
+that can overlap a capture *opening*, so a release during those 90 ms cancels a capture that does not
+exist yet. That is exactly the case `#captures` stores a promise for, and it is the reason the map
+holds `Promise<RecordingHandle | null>` rather than the handle.
+
+A send makes **one** sound. The whoosh means "sent"; delivery is the lamp flashing. A designed
+"delivered" swoosh used to follow the whoosh and the two read as noise rather than as two facts, so
+it was retired (`PRODUCT.md` §7). Only a failure adds a second sound.
 
 ### The silent chord
 
@@ -468,6 +492,32 @@ back, one from yesterday is a confusing thing to hand a small child.
 
 Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys' own docs, or some
 clients show the voice bubble but refuse to play it.
+
+### Inbound notes are decoded on arrival, not on the tap
+
+`aplay` reads WAV, AU and VOC and nothing else, and a WhatsApp voice note is Ogg/Opus — so playing
+one always costs an ffmpeg decode somewhere. It used to be *between the tap and the first sound*,
+which on a Pi Zero 2 W is a process spawn plus the decode itself, in the one place a child is least
+able to wait.
+
+`Hal.prepare(path)` moves it to arrival: `restoreUnread` calls it as the note is queued, for both a
+fresh delivery and one restored at boot, and it is not awaited. `GpioHal` writes
+`play-<stem>.wav` beside the note in the same RAM disk and remembers it, so the tap only has to spawn
+`aplay`. Details that make it safe rather than clever:
+
+- **Best effort by contract, both ways.** `prepare()` and `release()` never reject, and `play()`
+  still decodes on demand when a prepared copy is missing — which the purge can make happen, since
+  it sweeps `.wav` by age and the decode is exactly as old as its note. `play()` therefore checks the
+  file on disk, not just its own map.
+- **`release()` is called when the note's file is deleted**, from `#deletePlayed`, because the decode
+  is derived data with nothing left to derive from.
+- **16 kHz mono** (`PLAYBACK_DECODING`), not Opus's internal 48 kHz: the note arrived at 16 kHz, and
+  three times the RAM disk for the same speech is not a trade worth making in a tmpfs measured in
+  tens of megabytes.
+- The `play-` prefix keeps these out of `recovery.ts`'s `wa-<index>-<id>.ogg` pattern, so a leftover
+  from a power cut is never mistaken for an unread message.
+
+The simulator implements both as no-ops: the browser decodes through Web Audio and needs no help.
 
 Silent mode suppresses the inbound notification chime and the record start/stop cues. It does
 **not** suppress playback, which always plays at the configured volume (spec §7). That volume is

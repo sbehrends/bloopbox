@@ -13,7 +13,11 @@ const {
   resumeGraceMs: RESUME_GRACE_MS,
 } = DEFAULT_BUTTON_TIMINGS;
 
-import { DeviceController, type OutboundRequest } from '../core/deviceController.ts';
+import {
+  DeviceController,
+  MIN_USABLE_AUDIO_MS,
+  type OutboundRequest,
+} from '../core/deviceController.ts';
 import { DeviceStatus } from '../core/deviceState.ts';
 import { MockHal } from '../hal/mockDriver.ts';
 
@@ -139,23 +143,43 @@ describe('recording and sending', () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ index: 0, durationMs: 3000 });
-    expect(hal.cueSequence()).toContain(AudioCue.Pop);
-    expect(hal.cueSequence()).toContain(AudioCue.Whoosh);
-    expect(hal.cueSequence()).toContain(AudioCue.Swoosh);
+    /*
+     * Exactly two sounds, in this order: the bip that invited the child to speak, and one
+     * confirmation that the message went. There used to be a third — a "delivered" cue after
+     * WhatsApp accepted it — and two sounds back to back read as noise rather than as news.
+     */
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop, AudioCue.Whoosh]);
+  });
+
+  it('plays the bip before opening the microphone, never during', async () => {
+    /*
+     * The speaker is centimetres from the microphone: a cue played while capture is open is
+     * recorded into the message, which is exactly what the pop used to do 500ms into every
+     * take. Asserting on order rather than on timing, because the ordering is the guarantee.
+     */
+    hal.fixedDurationMs = 3000;
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 50);
+
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop]);
+    expect(hal.activeRecordings.size).toBe(1);
+    const [recording] = [...hal.activeRecordings.values()];
+    const [pop] = hal.cuesPlayed;
+    expect(pop?.at).toBeLessThanOrEqual(recording?.startedAt ?? 0);
   });
 
   it('discards a recording whose audio is shorter than the minimum, and says so', async () => {
     // The hold was long enough, but the microphone delivered almost nothing.
-    hal.fixedDurationMs = MIN_RECORDING_MS - 1;
+    hal.fixedDurationMs = MIN_USABLE_AUDIO_MS - 1;
 
-    await press(0, RECORD_THRESHOLD_MS + 1000);
+    await press(0, RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 1000);
     await waitFor(
       () => hal.cueSequence().includes(AudioCue.Oops),
       'the oops cue after discarding a fragment',
     );
 
     expect(sent).toHaveLength(0);
-    expect(hal.cueSequence()).not.toContain(AudioCue.Swoosh);
+    expect(hal.cueSequence()).not.toContain(AudioCue.Whoosh);
   });
 
   it('deletes the fragment rather than leaving it for the purge', async () => {
@@ -191,7 +215,7 @@ describe('recording and sending', () => {
 
   it('holds the LED solid while recording, then releases it', async () => {
     hal.pressButton(0);
-    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 100);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 100);
     expect(controller.state.recording).toBe(0);
 
     hal.releaseButton(0);
@@ -211,7 +235,7 @@ describe('the resume window', () => {
     const stop = vi.spyOn(hal, 'stopRecording');
 
     hal.pressButton(0);
-    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 400);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 400);
     hal.releaseButton(0);
 
     // The grip slipped: nothing has stopped and nothing has been sent.
@@ -239,17 +263,41 @@ describe('the resume window', () => {
     // A second tap after the window would have elapsed is its own press, never a resume.
     await press(0, 300);
 
+    /*
+     * Held past the threshold, so each one did open a microphone and did bip — that is the
+     * price of a bip prompt enough to be an invitation. Neither carried enough audio to be a
+     * message, so both end as taps.
+     */
     expect(start).toHaveBeenCalledTimes(2);
     expect(sent).toHaveLength(0);
-    expect(hal.cueSequence()).toEqual([AudioCue.Oops, AudioCue.Oops]);
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop, AudioCue.Oops, AudioCue.Pop, AudioCue.Oops]);
   });
 });
 
 describe('taps', () => {
   it('beeps when there is nothing to play', async () => {
-    await press(0, 300);
+    // Short enough that the microphone was never asked for: no bip either.
+    await press(0, 100);
 
     expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('plays the queue for a tap held past the threshold, rather than sending nothing', async () => {
+    // The press opened a microphone and then turned out to be a tap. What the child asked for
+    // is the message, and answering "oops" while a light is blinking would be a lie.
+    controller.handleIncoming(0, {
+      messageId: 'm-tap',
+      path: join(workDir, 'm-tap.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+
+    await press(0, 300);
+    await waitFor(() => hal.playSequence().length > 0, 'the queued note to play');
+
+    expect(hal.playSequence()).toEqual([join(workDir, 'm-tap.ogg')]);
+    expect(hal.cueSequence()).not.toContain(AudioCue.Oops);
     expect(sent).toHaveLength(0);
   });
 
@@ -273,6 +321,33 @@ describe('receiving', () => {
     // Synchronous on purpose: the blinking LED must not wait behind a cue.
     expect(controller.state.unreadCount(1)).toBe(1);
     expect(controller.queue.count(1)).toBe(1);
+  });
+
+  it('gets the note ready to play the moment it arrives', () => {
+    /*
+     * The decode used to sit between the tap and the first sound, on a machine where spawning
+     * ffmpeg is not free. Arrival is the moment nobody is waiting — the lamp is blinking and
+     * the child may not come for minutes.
+     */
+    controller.handleIncoming(1, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+
+    expect(hal.prepared).toEqual(['/tmp/m1.ogg']);
+  });
+
+  it('prepares a note restored at boot too, not only a freshly delivered one', () => {
+    controller.restoreUnread(2, {
+      messageId: 'm2',
+      path: '/tmp/m2.ogg',
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+
+    expect(hal.prepared).toEqual(['/tmp/m2.ogg']);
   });
 
   it('counts a note once even when it arrives by two routes', () => {
@@ -368,6 +443,9 @@ describe('receiving', () => {
     // PRODUCT.md §1: the light goes out once the queue finishes.
     expect(controller.state.unreadCount(1)).toBe(0);
     expect(controller.state.playing).toBeNull();
+    // And the decodes go with the notes: they are derived from files that no longer exist.
+    await waitFor(() => hal.released.length === 2, 'the prepared decodes to be released');
+    expect(hal.released.toSorted()).toEqual(['/tmp/m1.ogg', '/tmp/m2.ogg']);
   });
 
   it('protects queued files from the purge until they are played', () => {
@@ -516,13 +594,11 @@ describe('the silent-mode chord', () => {
   });
 
   /*
-   * The chord swallows both presses from inside the same `handleButtonDown` that started
-   * their captures, so the cancel can reach the controller before the HAL has finished
-   * opening the microphone. Losing it left a capture running for the life of the process,
-   * and the next press on that button reused the stale handle — the child's next voice note
-   * would have been everything recorded since the chord.
+   * The chord is swallowed inside the same `handleButtonDown` that started both presses,
+   * which is before either could reach the threshold — so neither ever asks for a microphone.
+   * It used to open two and rely on the cancel finding them.
    */
-  it('closes both captures it swallows, even the one still opening', async () => {
+  it('never opens a microphone at all', async () => {
     hal.pressButton(0);
     hal.pressButton(2);
     await vi.advanceTimersByTimeAsync(3000);
@@ -531,13 +607,48 @@ describe('the silent-mode chord', () => {
     await vi.advanceTimersByTimeAsync(50);
     await flush();
 
-    expect(hal.cancelledRecordings).toHaveLength(2);
     expect(hal.activeRecordings.size).toBe(0);
+    expect(hal.completedRecordings).toHaveLength(0);
+    expect(hal.cueSequence()).not.toContain(AudioCue.Pop);
 
     // And the button still records afterwards, into a capture of its own.
     hal.fixedDurationMs = 3000;
-    await press(2, RECORD_THRESHOLD_MS + 400);
+    await press(2, RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 400);
     await waitFor(() => sent.length === 1, 'the recording after the chord to be sent');
+  });
+
+  /*
+   * The race the stored *promise* exists for, now reached through the bip instead: capture
+   * opens behind a cue, so a button released during those 90ms cancels a capture the HAL has
+   * not finished opening. Losing that cancel left a capture running for the life of the
+   * process, and the next press on that button reused the stale handle — the child's next
+   * voice note would have been everything recorded since.
+   */
+  it('closes a capture that was still opening behind the bip', async () => {
+    // Every cue is held open, not just the bip: releasing the press plays the "oops" too, and
+    // resolving only the most recent one would leave the bip — and the capture behind it —
+    // pending forever.
+    const pendingCues: (() => void)[] = [];
+    vi.spyOn(hal, 'playCue').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          pendingCues.push(resolve);
+        }),
+    );
+
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 10);
+    // The bip is still playing, so no microphone exists yet to cancel.
+    expect(hal.activeRecordings.size).toBe(0);
+
+    hal.releaseButton(0);
+    for (const resolve of pendingCues) resolve();
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+    await flush();
+
+    expect(hal.cancelledRecordings).toHaveLength(1);
+    expect(hal.activeRecordings.size).toBe(0);
+    expect(sent).toHaveLength(0);
   });
 });
 

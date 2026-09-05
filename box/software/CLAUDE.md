@@ -233,8 +233,9 @@ with all three buttons and all three lamps wired. Three things that follow from 
 `docs/hardware.md`: the HAT's own button is on **GPIO17, which is already button 1**, so keep button 1
 there and the HAT needs no wiring of its own; nothing the HAT occupies (GPIO 2, 3 and 18–21) collides
 with the buttons or lamps, so the full pin map stands; and this
-codec needs `CAPTURE_RATE=48000` because it cannot hold two rates on one I²S clock and the record cues
-are 48 kHz. `BUTTON_PINS` and `LED_PINS` still shorten the pin lists for a reduced board — an empty
+codec is set to `CAPTURE_RATE=48000` because it cannot hold two rates on one I²S clock and the cues
+are 48 kHz — though the overlap that forced it (the bip firing over an open capture) is gone as of
+2026-08-17, so the value is now belt-and-braces pending a real device; see `PENDING.md`. `BUTTON_PINS` and `LED_PINS` still shorten the pin lists for a reduced board — an empty
 `LED_PINS=` (what `--no-leds` writes) claims no output lines — without touching anything above the HAL. Its ALSA controls are **`Playback`/`Capture`** — measured 2026-08-10; this codec has no
 `Master`, and the wrong name fails silently because a mixer error is non-fatal by design.
 
@@ -334,15 +335,17 @@ work around it locally. Full reasoning for each is in
 | Decision | Rule | Locked by |
 | -------- | ---- | --------- |
 | **LED priority ladder** | `PRODUCT.md` §6's nine patterns collide, so they resolve **per LED, first match wins**: recording → overlay → lifecycle status → unread → silent heartbeat → off. The setup hotspot outranks the Wi-Fi error | `ledPriority.test.ts` |
-| **Tap vs. cancel** | `< debounceMs` ignored; `debounceMs`–`recordThresholdMs` plays the queue or beeps "oops"; `≥ recordThresholdMs` records. Defaults 150 / 500 / 500 / 400 / 3000 ms, all in `config.buttons` | `button.test.ts` |
+| **Tap vs. cancel** | `< debounceMs` ignored; `debounceMs`–`recordThresholdMs + minRecordingMs` plays the queue or beeps "oops"; beyond that it records. **The boundary is the sum, not the threshold** — the threshold is only where the bip plays. Defaults 60 / 150 / 500 / 400 / 3000 ms, all in `config.buttons` | `button.test.ts` |
 | **Carry-on window** | A **confirmed** recording stays open `resumeGraceMs` after release; the same button resumes the *same* take. `maxRecordingSeconds` is **not** restarted by a resume. A different button commits what is waiting. `durationMs` counts held time only | `button.test.ts` |
-| **Cue timing** | The "pop" is deferred to `recordThresholdMs`, not press time — at press we cannot tell a tap from a hold, and popping early meant every tap-to-play chimed. Capture still starts at t=0; the LED goes solid immediately | `button.test.ts` |
-| **Whoosh after finalise** | `#commitCapture` finalises the capture **before** playing the whoosh — the speaker sits next to the microphone and it was recording itself into every message | `deviceController.test.ts` |
+| **Bip before the mic** | `#beginCapture` awaits `playCue(Pop)` **then** calls `startRecording`, both inside the promise in `#captures` — the speaker is centimetres from the microphone, so a cue over an open capture is recorded into the message. Nothing said before the bip exists, which is why the bip is early (150 ms) and why the tap boundary moved off it | `button.test.ts`, `deviceController.test.ts` |
+| **Whoosh after finalise** | `#commitCapture` finalises the capture **before** playing the whoosh — same reason at the other end of the take | `deviceController.test.ts` |
+| **One sound per send** | The whoosh means "sent"; delivery is `flashSent` on the lamp. The designed `swoosh` cue was retired 2026-08-17 — back to back the two read as noise, not as two facts. Only a failure adds a second sound | `deviceController.test.ts` |
+| **Notes are decoded on arrival** | `hal.prepare()` from `restoreUnread`, never awaited and never rejecting; `play()` still decodes on demand if the prepared WAV is missing (the purge sweeps `.wav` by age). `release()` from `#deletePlayed` | `gpioPlayback.test.ts`, `deviceController.test.ts` |
 | **Silent chord** | Buttons 1 + 3 for `silentComboMs` toggles the **effective** state. Both presses are swallowed the instant the chord forms; released early, nothing happens | `button.test.ts` |
-| **Silent mode gating** | Suppressed: inbound chime, record cues, sent, oops. **Not** suppressed: playback, nor the admin panel's **Test speaker** cue (`POST /api/audio/test`), the one deliberate bypass. `maxVolumeCapPercent` was removed 2026-08-17 | `hal.test.ts`, `audioQueue.test.ts`, `routes.test.ts` |
+| **Silent mode gating** | Suppressed: inbound chime, bip, sent, oops — and the bip being suppressed means capture opens *immediately* at the threshold in silent mode. **Not** suppressed: playback, nor the admin panel's **Test speaker** cue (`POST /api/audio/test`), the one deliberate bypass. `maxVolumeCapPercent` was removed 2026-08-17 | `hal.test.ts`, `audioQueue.test.ts`, `routes.test.ts` |
 | **Boot animation held** | Status resolves instantly, so `BOOTING` would never be seen. `BOOT_ANIMATION_MS` (2.6 s) holds it; the simulator has a Reboot injector to replay it | — |
 | **Beyond the spec** | `notify.wav` (§7 implies an inbound chime without listing one), `boot.wav` (§6 defines a boot LED pattern but no sound; the only channel for "it came back on its own") and `src/core/` itself (the spec's blueprint has no home for the state machine) | `deviceController.test.ts` |
-| **Designed vs synthesised cues** | `boot`, `notify` and `swoosh` are mastered from committed MP3s in `src/audio/samples/`; the rest are tone recipes. Both write one WAV per cue into `src/audio/sounds/`, so nothing below `playCue` knows the difference. Trim and peak level are decided in `scripts/generate-sounds.ts`, never left to a filter | `soundFiles.test.ts` |
+| **Designed vs synthesised cues** | `boot` and `notify` are mastered from committed MP3s in `src/audio/samples/`; the rest are tone recipes. `success.mp3` is an unreferenced leftover of the retired `swoosh`, kept because authored audio cannot be regenerated. Both write one WAV per cue into `src/audio/sounds/`, so nothing below `playCue` knows the difference. Trim and peak level are decided in `scripts/generate-sounds.ts`, never left to a filter | `soundFiles.test.ts` |
 
 ## Safety constraints (these protect a real device in a child's room)
 

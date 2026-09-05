@@ -178,6 +178,18 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
     );
   }
 
+  /**
+   * Nothing to prepare: the browser decodes the note itself, through the same Web Audio path
+   * it uses for every other sound, and its `AudioContext` needs no help from this side.
+   */
+  prepare(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  release(): Promise<void> {
+    return Promise.resolve();
+  }
+
   async stopPlayback(): Promise<void> {
     this.#transport.sendStopPlayback();
     for (const [token, playback] of this.#playbacks) {

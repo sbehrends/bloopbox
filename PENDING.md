@@ -22,16 +22,21 @@ path.
 
 Two candidate ffmpeg filters, and the choice is a real trade-off:
 
-- **`loudnorm`** (EBU R128) is the correct one. Two-pass is the accurate mode and is not available
-  to us — the decode already sits on the tap-to-play path, and doubling it on a Pi 3B+ is latency a
-  child notices. Single-pass with an explicit target (`I=-16` or louder, plus a true-peak ceiling
-  so the class-D amp does not clip) is what fits.
+- **`loudnorm`** (EBU R128) is the correct one, and **two-pass is now on the table** — it was not
+  when this was written. The decode moved off the tap-to-play path on 2026-08-17 (`hal.prepare()`
+  runs it when the note *arrives*, see `docs/architecture.md` § Audio), so a second pass costs a
+  little more CPU while nobody is waiting rather than latency a child notices. Single-pass with an
+  explicit target (`I=-16` or louder, plus a true-peak ceiling so the class-D amp does not clip) is
+  still the safer first move; two-pass is worth measuring now that it is affordable.
+  **Whichever is chosen, it belongs in `prepare()`'s decode, not only in `play()`'s fallback** — the
+  fallback decode still happens on the tap, so the two must produce audio of the same loudness or a
+  purged-and-re-decoded note plays back noticeably different from every other one.
 - **`dynaudnorm`** is frame-based and much cheaper, but it pumps on speech with pauses in it, which
   is exactly the shape of the material here.
 
 Constraints on whoever does this:
 
-- **Cues must not go through it.** `boot`, `notify` and `swoosh` are mastered to a decided peak in
+- **Cues must not go through it.** `boot` and `notify` are mastered to a decided peak in
   `scripts/generate-sounds.ts`, and normalising them would undo that and break the premise of
   `soundFiles.test.ts`. `playCue` does not decode at all, so confining the filter to `play()` keeps
   this true by construction — but it is worth saying, because "add it to the ffmpeg helper" is the
@@ -392,23 +397,91 @@ and `npm run check` does not run it. What is left, in order of size:
 
 ### The mark is drawn twice and copied twice more, and nothing enforces that the four agree
 
-`box/software/public/shared/bloopbox-mark.svg` (the pill, its three colour fields and three ring
-buttons, for 24px and up) and `bloopbox-favicon.svg` (the pill and its colour fields, no buttons,
-for browser tabs) are separate hand-drawn files sharing no code. They have to agree on five
-colours and on the left-to-right button order — **yellow, coral, teal** — and today the only thing
-keeping them in step is the comment in each and `/brand/`,
-which renders both side by side.
+`box/software/public/shared/bloopbox-mark.svg` (the line-art pill, its three arcs and three ring
+buttons, for 24px and up) and `bloopbox-favicon.svg` (the pill filled with three flat colour
+fields, no buttons, for browser tabs) are separate drawings sharing no code. They have to agree on
+five colours and on the left-to-right button order — **yellow, coral, teal** — and today the only
+thing keeping them in step is the comment in each and `/brand/`, which renders both side by side.
 
-Since 2026-08-02 both are also **copied into `website/public/`**, along with the palette in
+Both are also **copied from `website/public/`**, along with the palette in
 `website/app/tokens.css`. The duplication is deliberate — the site and the box share a brand, not a
 build (`website/README.md`) — but it doubles the count: a colour or button-order change is now four
 files, and only the two in `box/software/` are ever seen side by side.
 
-Cheap guard if this ever drifts: a test that parses both SVGs and asserts the `fill` values appear
-in the same order, and that both match `--ch-1/2/3` in `tokens.css`. Three assertions, no browser.
-Not written yet because `src/tests` has no fixture that reads `public/`. Extending it to the
-website's copies means reading across packages from a box test, which the decoupling rule argues
-against — the honest options are a root-level script or accepting the comment as the guard.
+As of 2026-09-05 the copy is mechanical, which makes a guard cheaper than it was. The box's two
+files are `website/public/bloopbox-logo-light.svg` and `bloopbox-iso-light.svg` path for path, with
+`fill="black"` replaced by `class="ink"` and a header comment and `<style>` block prepended. So the
+drift check is: strip everything before the first `<path`, replace `class="ink"` with
+`fill="black"`, and the remainder must be byte-identical to the site's file. That is a shell
+one-liner, not a browser test — but it reads across packages from a box test, which the decoupling
+rule argues against, so it wants to be a root-level script or a `.githooks/pre-commit` step.
+
+The colour assertion is still worth having and is now **known to fail**: see the entry below.
+
+### The refined artwork's hexes are not the brand palette, and the site's dark logo is a bad export
+
+Found 2026-09-05 while syncing the box's logos to the site's refined ones.
+
+Two things came out of the site's artwork that want fixing **in the site**, because the box copies
+it path for path and a fix applied only in the box would break that:
+
+1. **The artwork's three colours are not the tokens.** It draws `#F3B333`, `#F0776C` and `#0B97C4`
+   where `tokens.css` says `--brand-yellow: #f7b733`, `--brand-coral: #ff6f61` and
+   `--brand-teal: #00a7e1`. Yellow is imperceptible and coral is close; **teal is visibly duller and
+   darker**. So `/brand/` §1 renders a mark whose teal does not match the teal swatch two sections
+   below it, which is a real defect in a page whose whole premise is that it shows the real thing.
+   Either retint the artwork to the palette or move the palette to the artwork — but decide it once,
+   in `website/public/`, and re-copy.
+
+2. **`website/public/bloopbox-logo-dark.svg` is wrong.** It is not the light file with a reversed
+   outline: the pill's left arc is teal where it should be yellow, the pill outline is white while
+   the three button outlines are still black (so they vanish on navy), and it carries an extra white
+   backing path the light file does not have. `bloopbox-iso-dark.svg`, by contrast, is a clean
+   `black` → `white` fill swap and is fine. Nothing in the product uses the broken file; the only
+   place it appears is `/brand/` §1's dark hero tile, deliberately and captioned as a known-bad
+   asset, because a kit that quietly substituted the good file would be the one page the defect
+   could not be seen on. The **site still ships it for real**, and `website/components/Lockup.tsx`
+   and `app/page.tsx` reference the dark and light variants directly.
+
+Also worth a look while in there: `website/app/layout.tsx` still points `icons.icon` at
+`website/public/bloopbox-favicon.svg`, which is the **old** speech-bubble drawing, not the refined
+`bloopbox-iso-*.svg`. The site's `bloopbox-mark.svg` is the old drawing too and now has no
+reference pointing at it.
+
+### The three product pages pick the light-inked mark unconditionally
+
+Found 2026-09-05 while wiring up `/brand/` §1's pinned specimen panels.
+
+The mark is now two files that differ in one path — `bloopbox-iso-light.svg` inked black,
+`bloopbox-iso-dark.svg` inked white — where it used to be one file switching its own ink from an
+embedded `<style>` block. `/brand/` picks between them with `<picture>` and a
+`prefers-color-scheme` `<source>`, which is the mechanism the swap wants everywhere. The setup
+portal, the admin panel and the simulator did not get it: all three hard-code
+`bloopbox-logo-light.svg` in their `.lockup`, so **in dark mode the outline is black on navy and
+the mark loses its pill**. It is a degradation rather than a disappearance — the three coloured
+arcs still draw — but it is on the first screen a parent sees.
+
+The fix is the same four lines in each of the three pages, plus moving `/brand/`'s
+
+```css
+.lockup picture {
+  display: flex;
+  flex: none;
+}
+```
+
+out of `brand.css` and into `base.css`, which is where it belongs the moment a product page needs
+it. Left undone here because it is three pages outside the one this task was scoped to.
+
+Two smaller things noticed alongside, neither urgent:
+
+- `docs/BRAND.md` §"There is no reversed asset — but the mark's ink does switch, in-file" still
+  describes the old single-file mechanism, which is now true only of `bloopbox-favicon.svg`.
+  `/brand/` §1's prose has been rewritten; the doc that owns the decision has not.
+- `.lockup-hero .lockup-mark` is a 5.5rem **square**, and `bloopbox-logo-*.svg` is 279 × 118. So
+  the hero mark letterboxes to about 40% of its box and the tile reads as mostly empty. `height:
+  5.5rem; width: auto` is probably the answer, but it is a base.css change for a variant only the
+  brand kit uses, so it wants deciding rather than patching.
 
 ### The brand kit ships to the device and is not behind the admin gate
 
@@ -1114,21 +1187,22 @@ In headless Chrome each 140ms clip took ~5s to report `ended`, because there is 
 device to drive the media clock. Order and completion were correct. Worth confirming on a real
 browser with speakers that playback runs at the right speed.
 
-### The three designed cues have only been measured, never heard on the device
+### The designed cues have only been measured, never heard on the device
 
 Added 2026-08-10, when `boot`, `notify` and `swoosh` became designed recordings
-(`box/software/src/audio/samples/*.mp3`) instead of synthesised tones. What is verified is arithmetic:
-each masters to mono 48 kHz PCM at its declared peak (−7.1 / −8.0 / −7.0 dBFS) and to its audible
-length (825 / 318 / 456 ms), and `dist/audio/sounds/` carries all seven cues after a build. What is
-not verified is how any of it sounds through a small speaker at a toddler's ear.
+(`box/software/src/audio/samples/*.mp3`) instead of synthesised tones. `swoosh` was retired on
+2026-08-17 when a send went down to one sound, so two remain. What is verified is arithmetic: each
+masters to mono 48 kHz PCM at its declared peak (−7.1 / −8.0 dBFS) and to its audible length
+(825 / 318 ms), and `dist/audio/sounds/` carries all six cues after a build. What is not verified is
+how any of it sounds through a small speaker at a toddler's ear.
 
 Three specific things to listen for during bring-up, in gate 4a's audio pass:
 
 1. **Whether the designed cues sit at the same loudness as the remaining beeps.** They were matched
-   by peak amplitude, which is the honest measure to match on but not the one ears use — a 456 ms
-   sound with sustain is perceived louder than a 90 ms click at the same peak. If `swoosh` and
-   `notify` come out obviously hotter than `pop` and `oops`, the fix is their `peak` in
-   `scripts/generate-sounds.ts`, and the tones are the ones to leave alone.
+   by peak amplitude, which is the honest measure to match on but not the one ears use — a 318 ms
+   sound with sustain is perceived louder than a 90 ms click at the same peak. If `notify` comes out
+   obviously hotter than `pop` and `oops`, the fix is its `peak` in `scripts/generate-sounds.ts`, and
+   the tones are the ones to leave alone.
 2. **Whether `boot` at 825 ms is too long to sit under a 2.6 s LED chase**, and whether it reads as
    "the box came back" rather than as a noise the box made.
 3. **The tail trim.** Trimming stops `MIN_SILENCE_S` (100 ms) after the last audible 100 ms window and
@@ -1143,6 +1217,25 @@ Three specific things to listen for during bring-up, in gate 4a's audio pass:
 
 Not work, but things that could bite.
 
+- **How much of a first word the microphone misses, now that it opens behind the bip.** Changed
+  2026-08-17: the "pop" plays at `recordThresholdMs` (150 ms) and `arecord` is spawned only once the
+  cue has finished, so nothing before the bip exists in the message. Deliberate — the bip is the
+  invitation to speak — but the dead window is `recordThresholdMs` + 90 ms of cue + however long ALSA
+  takes to open a stream on the WM8960, and **that last term has never been measured**. If a child
+  who starts talking right on the bip loses a syllable, the term to look at is the stream open, not
+  the cue: `arecord` writing its first frames late is invisible from here and would look exactly like
+  a child who spoke too early.
+- **A tap held past 150 ms opens and closes the microphone for nothing.** The bip has to precede the
+  tap/hold decision, so a press over `recordThresholdMs` bips, spawns `arecord`, and then turns out to
+  be a tap. `#playQueue` awaits `#teardown` before starting playback specifically so the capture is
+  closed before a note plays — the WM8960 runs both directions off one I2S clock, and this is the one
+  path that could ask it for two things at once. Watch for a stutter at the start of the first note of
+  a queue on real hardware; if it appears, the SIGTERM-to-exit of `arecord` is the thing in the way.
+- **`CAPTURE_RATE=48000` may no longer be necessary.** It exists because the codec cannot hold two
+  rates on one clock and the cues are 48 kHz — but the only cue that overlapped a capture was the bip,
+  and it no longer does (2026-08-17). Dropping to 16 kHz would shrink the intermediate WAV and remove
+  a resample from the encode. **Not changed blind**: it is written by `install.sh --audio-hat wm8960`
+  and the failure mode is a silent recording, so it wants a real device and gate 4a.
 - **An empty password hash opens the API even when `configured` is true — accepted, on purpose.**
   `requireAdmin` stands aside when `system.configured` is false **or** `adminPasswordHash` is
   empty. The second clause means a config in that half-written state leaves everything under

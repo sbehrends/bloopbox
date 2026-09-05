@@ -1,7 +1,47 @@
-<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M3 52.714C3 36.4505 15.9924 23.1821 32.1216 23.1821V26.9927L31.4666 27.002C17.7847 27.3545 6.8 38.7307 6.8 52.714C6.8 64.5699 14.6963 74.5532 25.4382 77.531L24.3843 89.867L39.1538 78.4353H87.4387C101.666 78.4353 113.2 66.9195 113.2 52.714C113.2 38.5085 101.308 26.9927 87.0806 26.9927V23.1821C103.323 23.1821 117 36.3207 117 52.714C117 69.0395 103.749 82.2459 87.4387 82.2459H40.4508L19.8588 98.1821L21.3988 80.1731C10.6036 75.8353 3 65.1628 3 52.714ZM58.1 23.1821V26.9927H32.1216V23.1821H58.1ZM67.6 23.1821V26.9927H58.1V23.1821H67.6ZM87.0806 23.1821V26.9927H67.6V23.1821H87.0806Z" fill="black"/>
-<path d="M31.8207 27.1821C17.5603 27.1821 6 38.721 6 52.9549C6 64.8346 14.0527 74.8371 25.0069 77.8208L23.931 90.1821L38.9931 78.7276L68 78.7276V27.1821H31.8207Z" fill="#F3B333"/>
-<path d="M114 53.1821C114 38.8227 101.914 27.1821 87.4545 27.1821L58 27.1821L58.3636 79.1821L87.8182 79.1821C102.278 79.1821 114 67.5415 114 53.1821Z" fill="#0B97C4"/>
-<path d="M83 53.1821C83 67.5415 71.8071 79.1821 58 79.1821C44.1929 79.1821 33 67.5415 33 53.1821C33 38.8227 44.1929 27.1821 58 27.1821C71.8071 27.1821 83 38.8227 83 53.1821Z" fill="#F0776C"/>
-<path d="M110 53.1821C110 67.5415 98.8071 79.1821 85 79.1821C71.1929 79.1821 60 67.5415 60 53.1821C60 38.8227 71.1929 27.1821 85 27.1821C98.8071 27.1821 110 38.8227 110 53.1821Z" fill="#0B97C4"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="bloopbox">
+  <title>bloopbox</title>
+  <!-- A COPY of box/software/public/shared/. The site and the box share a brand, not a
+       build, so this file is duplicated on purpose. Change one, change the other. -->
+  <!--
+    The Speech Bubble mark (docs/BRAND.md), favicon tier.
+
+    A pill with a tail, holding three overlapping colour fields — yellow, coral, teal, left to
+    right, the same order as the buttons on the enclosure and the ch-1/2/3 tokens. The fields
+    cover the pill's interior edge to edge, so unlike the ring mark this replaced there is no
+    opaque neutral interior: the outer edge sits directly against whatever the page is behind
+    it. That is the one thing that cannot be a single fixed colour any more — deep navy
+    disappears into a navy page exactly as it needs to stand out on cream. The .ink class below
+    is the fix, the same trick tokens.css already uses for the rest of the page: navy at the
+    default light rendering, cream under prefers-color-scheme dark. The colour fields keep
+    their exact brand hex regardless of theme.
+
+    This is the simpler of the two drawings — flat fields, no internal hairlines, no buttons —
+    because a browser tab is 16px and detail below that just blurs. bloopbox-mark.svg is the
+    other tier, for 24px and up. They share no code, so a colour or button-order change has to
+    be made in both.
+  -->
+  <style>
+    .ink {
+      fill: #1a2b48;
+    }
+    @media (prefers-color-scheme: dark) {
+      .ink {
+        fill: #f7f4ef;
+      }
+    }
+  </style>
+  <path
+    class="ink"
+    d="M30 56.5C30 47.964 36.8381 41 45.3271 41V43L44.9824 43.0049C37.7814 43.1899 32 49.1608 32 56.5C32 62.7226 36.1559 67.9624 41.8096 69.5254L41.2549 76L49.0283 70H74.4414C81.9295 70 88 63.9558 88 56.5C88 49.0442 81.741 43 74.2529 43V41C82.8014 41 90 47.8959 90 56.5C90 65.0685 83.026 72 74.4414 72H49.7109L38.873 80.3643L39.6836 70.9121C34.0019 68.6353 30 63.0339 30 56.5ZM59 41V43H45.3271V41H59ZM64 41V43H59V41H64ZM74.2529 41V43H64V41H74.2529Z"
+  />
+  <path
+    fill="#f7b733"
+    d="M45.3268 43C37.9666 43 32 49.0442 32 56.5C32 62.7227 36.1562 67.9621 41.81 69.525L41.2547 76L49.0287 70L64 70V43H45.3268Z"
+  />
+  <path
+    fill="#00a7e1"
+    d="M88 56.5C88 49.0442 81.7414 43 74.2532 43L59 43L59.1883 70L74.4416 70C81.9297 70 88 63.9558 88 56.5Z"
+  />
+  <circle fill="#ff6f61" cx="59" cy="56.5" r="13" />
+  <circle fill="#00a7e1" cx="73" cy="56.5" r="13" />
 </svg>

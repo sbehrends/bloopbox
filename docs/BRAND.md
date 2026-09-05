@@ -17,18 +17,19 @@ This file is the direction it implements, and the decisions taken while implemen
 The primary brand identity mark and logotype for bloopbox, a screenless, tactile WhatsApp
 messenger for toddlers, defining the **Retro-Futurist Intercom** visual language.
 
-**Visual description.** The mark is a rounded speech-bubble pill with a tail, holding three
-overlapping colour fields that fill it edge to edge, with three small ring "buttons" laid across
-them. Left to right the fields and buttons are **sunny yellow, coral pink and electric teal** —
-the order of the caps on the enclosure. Every field and button carries a navy hairline,
-cartoon-outline style, so the overlaps read as distinct shapes. Below the mark, the wordmark
-"bloopbox" is set in a chunky, rounded, geometric face, in amber, with thick letterforms and
-tight spacing.
+**Visual description.** The mark is a rounded speech-bubble pill with a tail, drawn as line art:
+a **sunny yellow** arc forming its left end, an **electric teal** arc forming its right, a **coral
+pink** ring overlapping both in the middle, and three small concentric ring "buttons" on the centre
+line in the same three colours. Left to right the order is yellow, coral, teal — the order of the
+caps on the enclosure. Every shape carries a heavy outline in the cartoon style, and every interior
+is transparent, so the mark sits on a background rather than covering a piece of one. Below the
+mark, the wordmark "bloopbox" is set in a chunky, rounded, geometric face, in amber, with thick
+letterforms and tight spacing.
 
-The vector is `public/shared/bloopbox-mark.svg`, traced from the artwork by measuring it: the
-pill spans 60×31 units in a 120 box (radius 15.5, so a true stadium), the yellow and teal fields
-are its left and right halves, the coral and right-hand teal circles are radius 13 centred 14
-units apart, and the three buttons sit at those same three centres, radius 5.6 with holes at 2.8.
+The vector is `public/shared/bloopbox-mark.svg`. It is the site's `bloopbox-logo-light.svg`, path
+for path, with the six black fills moved onto an `.ink` class so the outline can reverse (below).
+The pill spans 164×104 units in a 279×118 frame, which is the frame the artwork was exported in;
+nothing in the box crops it, so the two packages can be compared with `diff`.
 
 **Aesthetic mood.** Bold, playful, tactile, screenless, friendly, retro-modern, geometric.
 
@@ -65,8 +66,10 @@ own hotspot.
 | 3. Builders | `public/shared/dom.ts` | The DOM those classes expect — `card()`, `field()`, `checkboxField()`, `actionButton()`. Pages never hand-assemble markup a class depends on. |
 | 4. Token bridge | `public/shared/theme.ts` | `readToken()` and the channel token names, for code that cannot use a class — the simulator's canvas and the admin panel's row tints. |
 
-Plus one asset: `public/shared/bloopbox-mark.svg`, which is the mark, the lockup's partner and
-the favicon on all four pages.
+Plus two assets: `public/shared/bloopbox-mark.svg`, the lockup's partner on all four pages, and
+`public/shared/bloopbox-favicon.svg`, the simpler drawing every page points `rel="icon"` at. Both
+are copies of the site's artwork in `website/public/` — the site and the box share a brand, not a
+build, so **change one, change the other.**
 
 **Rule for layer 2:** nothing enters `base.css` unless two or more pages use it. Page-specific
 styling lives beside its page — `admin/admin.css`, `simulator/simulator.css`,
@@ -120,43 +123,62 @@ its own size.
 
 ### There is no reversed asset — but the mark's ink does switch, in-file
 
-The colour fields fill the pill edge to edge, so unlike the ring mark this replaced there is no
-opaque neutral interior to make the outline read for free. The outer edge sits directly against
-whatever the page is behind it, and that boundary cannot be a single fixed colour: deep navy
+The line-art mark has no fill at all: every interior is transparent, so the outline sits directly
+against whatever the page is behind it, and that boundary cannot be a single fixed colour. Black
 disappears into a navy page exactly as it needs to stand out on cream. So the outline is the one
 part of the SVG with a `<style>` block, `@media (prefers-color-scheme: dark)` swapping its fill
-from navy to cream — the same mechanism `tokens.css` already uses for the rest of the page,
-inlined into the asset instead of a second file. Every colour field and button keeps its exact
-brand hex regardless of theme, because they sit on a colour field or the artwork's own fill, never
-directly on the page.
+from black to white — the same mechanism `tokens.css` already uses for the rest of the page,
+inlined into the asset instead of a second file. Every coloured arc, ring and button keeps its
+exact artwork hex regardless of theme.
 
 This still isn't a reversed asset: one file, no variant to keep in step, and it resolves itself
 from the same OS signal the page's own `--bg` already resolves from, so the two are never out of
-sync in the four pages that actually use it. It **is** a reversal of the earlier decision: an
-opaque interior no longer being available to do this for free is a property of the new artwork,
-not a preference, so the change is deliberate rather than a workaround.
+sync in the four pages that actually use it. `bloopbox-favicon.svg` carries the identical
+`<style>` block for the identical reason.
 
-(An earlier mark inverted itself for a different reason — solid navy body, so it had to.)
+**The one thing it cannot see is what is actually behind it.** The rule reads the OS, not the
+element, so the mark on a panel whose colour the theme cannot move — a fixed cream card, a teal
+chip, a printed sticker — has to be checked by eye. That is why `/brand/` §1's two neutral lockup
+tiles follow `--bg` and `--text` instead of pinning cream and navy: pinned cream went on showing a
+cream tile in dark mode, where the mark's outline had just turned white and vanished into it.
+
+The site ships this as two files, `bloopbox-logo-light.svg` and `bloopbox-logo-dark.svg`, rather
+than one. **Do not sync the box from the dark one** — its export is wrong (teal where the yellow
+arc belongs, a white pill outline, and the three buttons still black so they vanish on navy).
+Noted in `PENDING.md`.
+
+(An earlier mark inverted itself for a different reason — solid navy body, so it had to. The one
+before that used navy and cream rather than black and white, which is the artwork's own choice and
+not this repo's; `--brand-navy` remains the ink for everything that is type.)
 
 ### One exception to "one drawing": the favicon
 
-**The mark stops working below about 24px.** The fields, hairlines and button holes collapse into
-a single blur, and a browser tab is 16px. So `bloopbox-favicon.svg` is a second, simpler drawing —
-the pill, the tail and the three colour fields, no hairlines, no buttons — and every page points
-`rel="icon"` at it while the `<img>` lockups use the mark.
+**The mark stops working below about 24px.** The arcs, the outlines and the button holes collapse
+into a single blur, and a browser tab is 16px. So `bloopbox-favicon.svg` is a second, simpler
+drawing — the same pill and tail, filled edge to edge with three flat colour fields, no inner
+outlines and no buttons — and every page points `rel="icon"` at it while the `<img>` lockups use
+the mark. It is the site's `bloopbox-iso-light.svg`, inked the same way.
 
 This is a different job, not a variant, which is the only reason two files are allowed. They
 share no code, so **a colour or button-order change has to be made in both.** The `/brand/` kit
 renders the mark at 20px next to the favicon at 16px so the reason stays visible.
 
-### The mark is traced, not eyeballed
+### The artwork lives in `website/public/`, and the box copies it
 
-`docs/` has no source vector — the artwork arrived as a raster. The SVG was built by measuring
-that raster (scan lines across the ring centres, colour bounding boxes) rather than by tracing by
-hand, which is why the numbers in it are odd. If new artwork arrives, measure it the same way.
+The mark started as a raster traced by measurement. It is now a real vector, and the copy that gets
+refined is the site's: `website/public/bloopbox-logo-light.svg` and `bloopbox-iso-light.svg`. The
+box's two files are those two, path for path, with the black fills moved onto `.ink`. Nothing else
+differs — not the frame, not a coordinate, not a hex — so a drift check is `diff` on the path data
+and nothing cleverer.
 
-Also: **no `--` inside an XML comment.** It is illegal, and it makes the whole SVG unparseable —
-which surfaces as a silent broken-image icon on all four pages, not as a build error.
+That also means the artwork carries hexes of its own: `#F3B333`, `#F0776C`, `#0B97C4`, which are
+**not** `--brand-yellow`, `--brand-coral` and `--brand-teal`. Teal is the visible one. Reconciling
+them is a change to the artwork, in the site, not a retint in the box — retinting here would break
+the `diff`. Noted in `PENDING.md`.
+
+Whatever arrives next, two rules hold. **No `--` inside an XML comment** — it is illegal, and it
+makes the whole SVG unparseable, which surfaces as a silent broken-image icon on all four pages and
+not as a build error. And **the `.ink` class survives the copy**, or dark mode loses the outline.
 
 ### Teal is an accent, not an ink
 

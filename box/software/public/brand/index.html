@@ -24,13 +24,16 @@
     <main class="brand-shell">
       <header class="page-head">
         <h1 class="lockup">
-          <img
-            class="lockup-mark"
-            src="../shared/bloopbox-mark.svg"
-            alt=""
-            width="40"
-            height="40"
-          />
+          <picture>
+            <source srcset="../shared/bloopbox-iso-dark.svg" media="(prefers-color-scheme: dark)" />
+            <img
+              class="lockup-mark"
+              src="../shared/bloopbox-iso-light.svg"
+              alt=""
+              width="40"
+              height="40"
+            />
+          </picture>
           <span class="lockup-word">bloopbox</span>
           <span class="lockup-tag">Brand kit</span>
         </h1>
@@ -53,25 +56,75 @@
       <section class="band">
         <h2>1 · Logo system</h2>
         <p class="band-note">
-          A rounded speech-bubble pill with a tail, holding three overlapping colour fields and
-          three small ring buttons laid across them. It carries the device's technical side (a
-          message, a voice) and its physical one (three big tactile buttons) in one form, and the
-          buttons are in the order they sit on the enclosure: <strong>yellow, coral, teal</strong>.
+          A rounded speech-bubble pill with a tail, drawn as line art: a yellow arc on the left, a
+          teal arc on the right, a coral ring overlapping them in the middle, and three small ring
+          buttons on the centre line. It carries the device's technical side (a message, a voice)
+          and its physical one (three big tactile buttons) in one form, and the buttons are in the
+          order they sit on the enclosure: <strong>yellow, coral, teal</strong>. Every interior is
+          transparent, so the mark sits on the page rather than covering a piece of it.
         </p>
 
-        <div class="sizes">
+        <!-- Both panels pin a theme rather than follow the OS, because each one *is* the page
+             its drawing was inked for: the light row would have nothing to say on a navy panel
+             and the dark row nothing to say on a cream one. -->
+        <div class="sizes pin-light">
+          <p class="sizes-label">bloopbox-iso-light.svg — black outline, for a light page</p>
           <figure>
-            <img src="../shared/bloopbox-mark.svg" alt="bloopbox mark at 96 pixels" width="96" />
+            <img
+              src="../shared/bloopbox-iso-light.svg"
+              alt="The light-page mark at 96 pixels"
+              width="96"
+            />
             <figcaption>mark 96px — hero</figcaption>
           </figure>
           <figure>
-            <img src="../shared/bloopbox-mark.svg" alt="bloopbox mark at 40 pixels" width="40" />
+            <img
+              src="../shared/bloopbox-iso-light.svg"
+              alt="The light-page mark at 40 pixels"
+              width="40"
+            />
             <figcaption>mark 40px — in-page</figcaption>
           </figure>
           <figure>
-            <img src="../shared/bloopbox-mark.svg" alt="bloopbox mark at 20 pixels" width="20" />
+            <img
+              src="../shared/bloopbox-iso-light.svg"
+              alt="The light-page mark at 20 pixels"
+              width="20"
+            />
             <figcaption>mark 20px — too small</figcaption>
           </figure>
+        </div>
+
+        <div class="sizes pin-dark">
+          <p class="sizes-label">bloopbox-iso-dark.svg — white outline, for a dark page</p>
+          <figure>
+            <img
+              src="../shared/bloopbox-iso-dark.svg"
+              alt="The dark-page mark at 96 pixels"
+              width="96"
+            />
+            <figcaption>mark 96px — hero</figcaption>
+          </figure>
+          <figure>
+            <img
+              src="../shared/bloopbox-iso-dark.svg"
+              alt="The dark-page mark at 40 pixels"
+              width="40"
+            />
+            <figcaption>mark 40px — in-page</figcaption>
+          </figure>
+          <figure>
+            <img
+              src="../shared/bloopbox-iso-dark.svg"
+              alt="The dark-page mark at 20 pixels"
+              width="20"
+            />
+            <figcaption>mark 20px — too small</figcaption>
+          </figure>
+        </div>
+
+        <div class="sizes">
+          <p class="sizes-label">bloopbox-favicon.svg — one file, it switches its own ink</p>
           <figure>
             <img
               src="../shared/bloopbox-favicon.svg"
@@ -90,19 +143,25 @@
           </figure>
         </div>
         <p class="band-note">
-          <strong>The mark stops working below about 24px</strong> — the fields, hairlines and
+          <strong>The mark stops working below about 24px</strong> — the arcs, the outlines and the
           button holes all collapse into one blur, as the third figure shows. So there is a second
-          drawing, <code>bloopbox-favicon.svg</code>, and it is the only one allowed: the pill, the
-          tail and the three colour fields, no hairlines or buttons, which is what survives in a
-          browser tab. It is a different job, not a variant. Change the colours or the button order
-          in one and change them in the other.
+          drawing, <code>bloopbox-favicon.svg</code>, and it is the only one allowed: the same pill
+          and tail, filled edge to edge with three flat colour fields, no inner outlines and no
+          buttons, which is what survives in a browser tab. It is a different job, not a variant.
+          Change the colours or the button order in one and change them in the other.
         </p>
 
         <h3>Lockups</h3>
         <div class="tiles">
-          <div class="tile" style="--tile-bg: var(--brand-cream); --tile-ink: var(--brand-navy)">
+          <div class="tile pin-light" style="--tile-bg: var(--bg); --tile-ink: var(--text)">
             <span class="lockup lockup-hero">
-              <img class="lockup-mark" src="../shared/bloopbox-mark.svg" alt="" />
+              <img class="lockup-mark" src="../shared/bloopbox-logo-light.svg" alt="" />
+              <span class="lockup-word">bloopbox</span>
+            </span>
+          </div>
+          <div class="tile pin-dark" style="--tile-bg: var(--bg); --tile-ink: var(--text)">
+            <span class="lockup lockup-hero">
+              <img class="lockup-mark" src="../shared/bloopbox-logo-dark.svg" alt="" />
               <span class="lockup-word">bloopbox</span>
             </span>
           </div>
@@ -110,20 +169,37 @@
         <p class="band-note">
           The <strong>hero lockup</strong>: mark above, amber wordmark below, as the artwork draws
           it. Display sizes only — amber on cream is 1.6:1, which is right for a logotype and wrong
-          for anything that has to be read as text.
+          for anything that has to be read as text. Both grounds are pinned, so the pair is always
+          side by side whichever theme you are reading this in.
+        </p>
+        <p class="band-note">
+          <strong>The right-hand tile is a known-bad asset, shown rather than hidden.</strong>
+          <code>bloopbox-logo-dark.svg</code> is not the light drawing with its outline reversed:
+          the left arc is teal where it should be yellow, the three button rings are still black and
+          so they sink into the navy, and an opaque white pill sits behind the whole thing where
+          every other drawing keeps its interior transparent. It came from the site that way and it
+          has to be fixed there, because the box copies that artwork path for path — see
+          <code>PENDING.md</code>. A kit that quietly substituted the good file here would be the
+          one place the defect could not be seen.
         </p>
 
         <h3>Chrome lockups</h3>
         <div class="tiles">
-          <div class="tile" style="--tile-bg: var(--brand-cream); --tile-ink: var(--brand-navy)">
+          <div class="tile" style="--tile-bg: var(--bg); --tile-ink: var(--text)">
             <span class="lockup">
-              <img class="lockup-mark" src="../shared/bloopbox-mark.svg" alt="" width="40" />
+              <picture>
+                <source
+                  srcset="../shared/bloopbox-iso-dark.svg"
+                  media="(prefers-color-scheme: dark)"
+                />
+                <img class="lockup-mark" src="../shared/bloopbox-iso-light.svg" alt="" width="40" />
+              </picture>
               <span class="lockup-word">bloopbox</span>
             </span>
           </div>
           <div class="tile" style="--tile-bg: var(--brand-teal); --tile-ink: var(--brand-navy)">
             <span class="lockup">
-              <img class="lockup-mark" src="../shared/bloopbox-mark.svg" alt="" width="40" />
+              <img class="lockup-mark" src="../shared/bloopbox-iso-dark.svg" alt="" width="40" />
               <span class="lockup-word">bloopbox</span>
               <span class="lockup-tag">Setup</span>
             </span>
@@ -136,10 +212,23 @@
           the type scale.
         </p>
         <p class="band-note">
-          There is no reversed asset: the outline is the one part of the file that switches, via an
-          embedded <code>prefers-color-scheme</code> rule — navy on cream, cream on navy, resolved
-          from the same OS signal this page's own background already resolves from. Same file, both
-          themes, nothing to keep in step.
+          The mark's interiors are all transparent, so its outline sits directly against whatever is
+          behind it and cannot be one fixed colour: black disappears into a navy page exactly as it
+          needs to stand out on a cream one. So the mark ships as
+          <strong>two files that differ in that one path</strong> — <code>-light</code> is inked
+          black, <code>-dark</code> white — and a surface that follows the OS picks between them
+          with <code>&lt;picture&gt;</code> and a <code>prefers-color-scheme</code>
+          <code>&lt;source&gt;</code>. The lockup at the top of this page and the neutral tile above
+          both do exactly that. <code>bloopbox-favicon.svg</code> is the one asset still doing it
+          the old way, switching its own ink from an embedded <code>&lt;style&gt;</code> block,
+          which it can afford because it is a solid drawing with a single ink.
+        </p>
+        <p class="band-note">
+          <code>&lt;picture&gt;</code> reads the OS, not the element, so it is only right where the
+          surface reads the OS too. <strong>Anywhere the colour is pinned, pin the file too</strong>
+          and check it by eye: the teal tile beside it keeps the black-inked mark in both themes
+          because the teal never moves, and §1's two size panels each pin the ground their drawing
+          was inked for.
         </p>
 
         <ul class="rules">
@@ -147,9 +236,13 @@
             <strong>Do</strong> keep clear space around the mark equal to the width of one button.
           </li>
           <li>
-            <strong>Do</strong> put the mark on cream or navy — its outline is drawn to survive
-            whichever one the OS theme puts behind it. On a fixed teal tile it stays navy, which
-            still passes (4.6:1).
+            <strong>Do</strong> pair the file with its ground: <code>-light</code> on cream,
+            <code>-dark</code> on navy. On a surface that follows the OS, let
+            <code>&lt;picture&gt;</code> choose.
+          </li>
+          <li>
+            <strong>Do</strong> pick the file by hand on any fixed-colour panel, and check it by
+            eye. <code>&lt;picture&gt;</code> reads the OS and cannot see the tile it is sitting on.
           </li>
           <li><strong>Do</strong> use the favicon drawing below 24px, and the mark above it.</li>
           <li class="dont">

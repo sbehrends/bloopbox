@@ -101,12 +101,29 @@ section.band {
 
 .sizes {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--space-6);
+  /* Column gap between specimens; the tighter row gap is for the label's own line. */
+  gap: var(--space-3) var(--space-6);
   padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
+}
+
+/* Three of these run in a column and two of them pin a theme, so they need to be told apart
+   both from each other and from the band note above them. */
+.sizes + .sizes {
+  margin-top: var(--space-4);
+}
+
+/* Its own line: `flex-wrap` is on for this and nothing else. */
+.sizes-label {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 .sizes figure {
@@ -119,6 +136,50 @@ section.band {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+}
+
+/* A themed mark is two files, chosen by `<picture>`. The lockup is a flex row, so the wrapper
+   has to get out of the way and let base.css's `.lockup-mark` do the sizing. Kept here rather
+   than in base.css until a product page needs it too. */
+.lockup picture {
+  display: flex;
+  flex: none;
+}
+
+/* ---- pinned themes ---- */
+
+/* Two specimens in §1 have to be a light page and a dark page *at the same time*, because each
+   one is showing the drawing that was inked for that ground. So they pin the semantic tokens
+   instead of following the OS.
+
+   These are `tokens.css`'s two halves, restated. CSS has no way to reuse a declaration block
+   from inside a media query without JS, so it is a copy — but a self-checking one: every pinned
+   panel on this page sits inches from panels that do follow the OS, so a token that moves in
+   `tokens.css` without moving here shows up as a seam, on the one page anyone would notice it.
+   Only `--bg`, `--surface`, `--border`, `--text` and `--muted` move; the palette, the accents
+   and the channels are theme-independent already. */
+.pin-light,
+.pin-dark {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.pin-light {
+  --bg: var(--brand-cream);
+  --surface: #fffdfa;
+  --border: #e0d9cb;
+  --border-strong: #c9bfab;
+  --text: var(--brand-navy);
+  --muted: #5b6b84;
+}
+
+.pin-dark {
+  --bg: #131a2c;
+  --surface: #1c2438;
+  --border: #2e3852;
+  --border-strong: #45516f;
+  --text: #f1eee7;
+  --muted: #99a6c0;
 }
 
 /* ---- rules: do / don't ---- */

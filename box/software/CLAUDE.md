@@ -61,6 +61,7 @@ that bite in development:
 | `CONFIG_PATH`    | `/data/config.json` | Point at `./data/config.json` locally             |
 | `RECORDING_DIR`  | `/run/bloopbox`     | Outbound captures + derived WAVs. tmpfs, by design |
 | `NOTES_DIR`      | `/data/notes`       | **Inbound notes, on the card.** Dev must set it — `/data` is not there |
+| `STATS_PATH`     | `/data/stats.json`  | Activity totals. Same story: unset off-device and nothing persists |
 | `BRIDGE_TOKEN`   | `''`                | Shared secret both processes must agree on        |
 | `PORTAL_PORT`    | `80` (dev: `8080`)  | Captive-portal listener; `0` disables it          |
 
@@ -107,6 +108,8 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
 | `src/processes/hardware-server.ts` | Never imports Baileys                                         |
 | `src/processes/whatsapp-bridge.ts` | Never touches GPIO or audio devices                           |
 | `src/net/`     | The **only** way the daemon learns whether Wi-Fi is up                              |
+| `src/stats/`   | Activity totals, on the card. Never a config section — see below                     |
+| `src/system/`  | Read-only health readings, and the reboot/poweroff request. Every reading is nullable |
 
 Networking sits outside both daemons: they run unprivileged under `ProtectSystem=strict` and cannot
 talk to NetworkManager, so `bloopbox-net.service` runs `deploy/net-agent.sh` as root and the two
@@ -187,6 +190,31 @@ Config is read at construction and never re-read. A save exits the process clean
 supervisor restarts it: systemd on the device (`Restart=always` is load-bearing),
 `scripts/dev-server.ts` under `npm run dev:hw`, and **nothing** under `npm run dev:hw:watch` —
 `tsx watch` will not restart a process that exits cleanly, so a config save leaves the server down.
+
+### Activity totals are not config, and must not become one
+
+`/data/stats.json`, `src/stats/statsStore.ts`. Two reasons it is a separate file, either sufficient
+on its own: **saving config restarts the daemon**, so a counter in it would reboot the box on every
+button press; and **an unparseable config drops the device into onboarding**, whereas an unparseable
+stats file is allowed to cost the totals and nothing else — hence a Zod `.catch()` on every field,
+the two-tier treatment `netState.ts` uses.
+
+- **`src/core/` stays I/O-free.** `DeviceController` takes a structurally typed `StatsRecorder` —
+  three synchronous methods — exactly as it already takes `send` and `markRead`. Never import the
+  store into `core/`.
+- **Count in `handleIncoming`, never in `restoreUnread`.** The boot scan calls the latter for every
+  unheard note on the card, and this device restarts on every settings save.
+- **Only a send WhatsApp accepted counts.** A failed one already played the "oops".
+- **Writes are coalesced.** Anything that ends the process must `flush()` first — the shutdown path
+  and the reboot/poweroff routes already do.
+
+### Reboot and shutdown go through the root agent
+
+`src/system/power.ts` writes `reboot` / `poweroff` into the **same** request file a Wi-Fi join uses,
+and `deploy/net-agent.sh` acts on them. The allowlist in `consume_request` is the boundary and is now
+guarding an action that can power the machine off — nothing from that file is ever evaluated as
+shell, and it must stay that way. `systemctl reboot` / `poweroff`, **never `--force`**: the ordinary
+path is what SIGTERMs the daemons, which is what flushes the counters.
 
 ### A button targets a person **or** a group
 

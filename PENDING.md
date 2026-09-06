@@ -9,6 +9,43 @@ Ordered roughly by priority within each group.
 
 ## Features
 
+### The activity card and the health card are read-only; some of what a Pi can say is missing
+
+Both landed 2026-09-06 (`docs/PRODUCT.md` §3). What was deliberately left out:
+
+- **No undervoltage or throttling reading.** `vcgencmd get_throttled` is the one Pi-specific figure
+  that explains a device behaving oddly rather than failing — a marginal USB supply throttles the SoC
+  and can brown out the codec, and nothing else on the health card would show it. `vcgencmd` needs
+  `/dev/vcio` and the `video` group, which the hardware unit does not have; adding it means widening
+  `SupplementaryGroups=` in `bloopbox-hardware.service`, which is a real privilege decision and not
+  one to make without a device on hand to measure whether the reading is even useful.
+- **Memory reads pessimistically off-device.** `/proc/meminfo`'s `MemAvailable` is the right number
+  and is what the device uses; anything else falls back to `os.freemem()`, which excludes the page
+  cache and reports a healthy Mac at 99% used. The card says so in words rather than hiding the row.
+  There is nothing to fix on a Pi, but a developer will meet it every time.
+- **Neither card is on the IPC contract.** Both poll `/api`. Pushing them over the existing
+  Socket.io status channel would be tidier and is not obviously worth an `events.ts` change; the
+  activity card refreshes on a 15 s interval and the health card on 5 s while open.
+- **The totals count messages, not attempts.** A parent diagnosing "she presses it and nothing
+  happens" wants the *failed* sends, which are exactly what is not counted (deliberately — see the
+  table in `docs/architecture.md`). A separate failure counter beside the success one would answer
+  both questions; it needs a decision about whether "3 sent, 11 failed" is information or alarm.
+- **Nothing tests the panel's rendering.** There is no browser test harness in this project at all,
+  so both cards were verified by driving the real page in Chrome and by covering their routes and
+  their store. Consistent with the rest of `public/`, and worth knowing before trusting a refactor of
+  either render function.
+
+### Rebooting the box is not verified on real hardware
+
+`reboot` and `poweroff` were added to the root agent's allowlist on 2026-09-06. The chain was
+verified end to end on macOS against `deploy/net-agent.sh` with a stubbed `systemctl` — the daemon
+writes the request, the agent parses it, deletes it, and calls `systemctl poweroff`, and an injected
+`{"action":"poweroff; touch /tmp/pwned"}` is dropped by the allowlist without running anything. What
+is **not** verified is that `systemctl poweroff` succeeds from inside `bloopbox-net.service`'s
+sandbox (`NoNewPrivileges=yes`, `ProtectSystem=strict`) on a real Trixie box. It runs as root and
+talks to systemd over D-Bus, which none of those directives block, but that is reasoning rather than
+a measurement. Add it to `docs/hardware-bringup.md`'s gate list.
+
 ### Normalise the loudness of inbound voice notes on decode (`loudnorm` / `dynaudnorm`)
 
 Raised 2026-08-16 from a live device: at maximum volume playback is still underwhelming.

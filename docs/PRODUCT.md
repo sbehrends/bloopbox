@@ -220,10 +220,57 @@ contact picker with no account behind it is a form that silently cannot work.
   attempt on a session that is still opening, which is what used to break both.
 - **Linked** — Contacts, Quiet hours, WhatsApp, Wi-Fi, then Advanced. *Read receipts* is a setting
   for a live account, so it appears only once the state is `connected`.
+- **Activity sits above everything, in both layouts.** It is the only card that reports rather
+  than asks — see below.
 - **On the first link of a page's life the panel reloads itself**, because Contacts and its group
   picker were rendered from an account that did not exist yet.
 - **Unlink and factory reset are two taps**, the second on a different button — see the
   factory-reset item in `PENDING.md` for why the bar is set there.
+
+### Activity — what each button has carried
+
+The first card on the panel, above the settings. Per button: how many voice notes the box **sent**
+and how much audio that was, how many **arrived** and how much audio *those* were, how many of them
+the child has **listened to**, and when each direction last happened. Underneath, the totals and the
+date counting started.
+
+Three rules decide what the numbers mean, and each exists because the obvious alternative would
+mislead:
+
+- **Sent counts deliveries WhatsApp accepted, not presses.** A held button whose send failed already
+  answered the child with the "oops"; counting it would tell a parent the button works, which is
+  exactly the thing they opened the panel to rule out.
+- **Received counts arrivals, not restores.** Every unheard note on the card is put back into its
+  queue at boot, and this device restarts on every settings save — a total that counted those would
+  climb on its own.
+- **A note WhatsApp gave no duration for is counted but not timed**, and the card says how many.
+  Treating an unknown as zero would quietly drag the total down with nothing on screen to explain it.
+
+Totals live in `/data/stats.json`, beside the config but deliberately **not inside it**: a counter in
+`config.json` would restart the daemon on every button press, and a stats file that fails to parse is
+allowed to cost the totals and nothing else. *Reset the counters* zeroes them and restarts the clock.
+
+The card also serves as the panel's only per-button diagnosis: three sends and no receives on one
+button is a wrong number or a contact who has not replied, and nothing else on the page shows it.
+
+### Device health, and turning the box off
+
+An *Advanced* card, collapsed until asked for and polling only while it is open. It reports what the
+board says about itself — SoC temperature, how long the machine has been powered on, how long the
+*software* has been running (the two diverge on a settings save, and a service uptime that keeps
+resetting is a crash loop), processor busy time and load, memory, free space on the card and in the
+RAM disk, and the Wi-Fi network and signal. Every reading is nullable: a value the box cannot obtain
+is a dash, never a zero.
+
+The same information is in `bloopbox-doctor`, which needs SSH — the tool a parent does not have.
+
+**Restart** and **Shut down** sit at the bottom of it, behind the same two-tap confirm as the factory
+reset. The box has no power button, and pulling the plug is what lost an unread note once already
+(§8), so "shut down, then unplug" is the safe way to move it between rooms. The daemon is
+unprivileged and cannot talk to systemd, so the request goes to the root agent by the same
+enum-validated file channel a Wi-Fi join uses; the agent stops the units the ordinary way, which is
+what flushes the counters and finalises anything mid-write. Where there is no agent — any development
+machine — the panel says the box cannot power itself off rather than reporting a failure.
 
 ### First Boot
 
@@ -579,6 +626,7 @@ else.
 | **Inbound notes on the card** | **Built 2026-09-06.** Arriving notes go to `/data/notes` so an unheard one survives a power cut — the most likely restart in a child's room. Bounded by the same 48 h purge, and deleted the moment they are played. See §1 |
 | **Automatic purge (TTL)** | **Built.** Audio is deleted 48 h after creation whether it has been heard or not, swept hourly. Playback deletes a note immediately |
 | **Atomic config writes** | **Built.** Temp file → `fsync` → `rename`. A half-written config during power loss would brick the device |
+| **Shut down without pulling the plug** | **Built 2026-09-06.** The box has no power button, and an unplug mid-write is what motivated the row above it. *Device health* → **Shut down** stops the units the ordinary way, which flushes the activity counters and finalises anything in flight. See §3 |
 | **Fallback on invalid config** | **Built.** A missing or corrupt `/data/config.json` falls back to `config.default.json` **in RAM** and boots into onboarding. It never crashes the daemon |
 | **Hardware watchdog** | **Built.** BCM watchdog plus its systemd half, 15 s, so a wedged device reboots itself |
 | **Read-only root filesystem (`overlayfs`)** | **Specified, not built.** `/data` currently lives *on* the root filesystem, so enabling the overlay would send every setting and the WhatsApp credentials into a RAM overlay, to vanish on reboot — a worse failure, and a silent one. It needs `/data` on its own partition first. See `PENDING.md` |
@@ -646,6 +694,10 @@ bloopbox/
 │   │   ├── captivePortal.ts        # probe redirection while the hotspot is up
 │   │   └── simulatorTransport.ts   # the browser end of the simulator
 │   ├── net/netState.ts             # reads what the root agent publishes
+│   ├── stats/statsStore.ts         # what each button has carried, on the card
+│   ├── system/
+│   │   ├── systemInfo.ts           # temperature, uptime, load, memory, card space
+│   │   └── power.ts                # asks the root agent to reboot or shut down
 │   ├── ipc/events.ts               # the IPC contract — edit this first
 │   ├── processes/
 │   │   ├── hardware-server.ts      # daemon 1

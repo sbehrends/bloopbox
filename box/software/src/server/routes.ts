@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path';
 import { toString as qrToString } from 'qrcode';
 import { ALL_AUDIO_CUES } from '../audio/cues.ts';
 import { ConfigValidationError, type ConfigManager } from '../config/configManager.ts';
-import { configUpdateSchema, enabledContacts } from '../config/schema.ts';
+import { BUTTON_KEYS, configUpdateSchema, enabledContacts } from '../config/schema.ts';
 import type { DeviceController } from '../core/deviceController.ts';
 import {
   QR_LIFETIME_MS,
@@ -12,6 +12,9 @@ import {
 } from '../ipc/events.ts';
 import { readBoolean, readField, readString } from '../ipc/payload.ts';
 import type { NetState } from '../net/netState.ts';
+import { isPowerAction, type PowerAction } from '../system/power.ts';
+import type { SystemInfo } from '../system/systemInfo.ts';
+import type { StatsSnapshot } from '../stats/statsStore.ts';
 import { hashAdminPassword, requireAdmin } from './auth.ts';
 
 /**
@@ -67,6 +70,17 @@ export type RoutesContext = {
    * comes back. Called after the response is sent.
    */
   readonly requestRestart: (reason: string) => void;
+  /** Running totals of what each button has sent and received. */
+  readonly stats: () => StatsSnapshot;
+  /** Zeroes those totals and starts counting again. Rejects only if the write fails. */
+  readonly resetStats: () => Promise<void>;
+  /** One reading of temperature, uptime, load, memory and card space. */
+  readonly systemInfo: () => Promise<SystemInfo>;
+  /**
+   * Asks the root agent to reboot or power the box off. Resolves false where there is no agent
+   * to ask — a development machine — which the panel reports rather than treating as an error.
+   */
+  readonly requestPower: (action: PowerAction) => Promise<boolean>;
 };
 
 export function buildStatusPayload(context: RoutesContext): DeviceStatusPayload {
@@ -437,6 +451,111 @@ export function createApiRouter(context: RoutesContext): Router {
       }
       context.requestRestart('factory reset');
     })();
+  });
+
+  /* ---- activity ---- */
+
+  /**
+   * How much each button has sent and received.
+   *
+   * Joined to the contacts here rather than in the browser, because the store counts by button
+   * index and only the config knows whose button that is — including a button whose contact has
+   * since been renamed or switched off, which still has a history worth showing.
+   */
+  router.get('/stats', admin, (_req, res) => {
+    const snapshot = context.stats();
+    const contacts = context.config.current.contacts;
+    res.json({
+      since: snapshot.since,
+      contacts: BUTTON_KEYS.map((key, index) => {
+        const contact = contacts[key];
+        return {
+          key,
+          index,
+          name: contact.name,
+          enabled: contact.enabled,
+          ...snapshot.contacts[index],
+        };
+      }),
+    });
+  });
+
+  /** Back to zero. Irreversible, and the panel asks twice before calling it. */
+  router.post('/stats/reset', admin, async (_req, res) => {
+    try {
+      await context.resetStats();
+      res.json({ ok: true, stats: context.stats() });
+    } catch {
+      res.status(500).json({ error: 'could not reset the counters' });
+    }
+  });
+
+  /* ---- device health ---- */
+
+  /**
+   * What the box can say about its own hardware.
+   *
+   * Behind the admin gate like everything else that describes this house: the SSID, the signal
+   * and the hostname together say rather more about where a device is than its status does.
+   */
+  router.get('/system', admin, async (_req, res) => {
+    try {
+      const info = await context.systemInfo();
+      const net = context.netState();
+      res.json({
+        ...info,
+        /*
+         * Signal comes from the reading the root agent publishes, not from a second source:
+         * `netState.ts` is the only way this daemon learns anything about the radio, and a
+         * diagnostics page that read it some other way could disagree with the LEDs.
+         */
+        wifi:
+          net === null
+            ? null
+            : {
+                ssid: net.ssid,
+                signal: net.signal,
+                online: net.online,
+                apActive: net.apActive,
+                apSsid: net.apSsid,
+                ageSeconds: Math.max(0, Math.round((Date.now() - net.updatedAtMs) / 1000)),
+                lastError: net.lastError,
+              },
+      });
+    } catch {
+      res.status(500).json({ error: 'could not read the device state' });
+    }
+  });
+
+  /**
+   * Reboot, or shut down.
+   *
+   * The box has no power button, so this is the only way to stop it cleanly — and stopping it
+   * cleanly is what lets systemd send SIGTERM, which is what flushes the counters and finalises
+   * anything mid-write. Answered *before* the request is written, because the answer cannot
+   * survive the machine going away.
+   */
+  router.post('/system/power', admin, async (req: Request, res: Response) => {
+    const action: unknown = readField(req.body, 'action');
+    if (!isPowerAction(action)) {
+      res.status(400).json({ error: 'action must be "reboot" or "poweroff"' });
+      return;
+    }
+
+    const handedToAgent = await context.requestPower(action);
+    if (!handedToAgent) {
+      /*
+       * 503 rather than 500: nothing went wrong, this box simply has no root agent to ask —
+       * which is every development machine. Saying so is more useful than a generic failure,
+       * because the fix is "run it on a device", not "look at the logs".
+       */
+      res.status(503).json({
+        error: 'no privileged agent is running on this box, so it cannot power itself off',
+      });
+      return;
+    }
+
+    res.json({ ok: true, action });
   });
 
   /* ---- diagnostics ---- */

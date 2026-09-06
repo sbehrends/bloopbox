@@ -194,3 +194,63 @@ button.danger:active:not(:disabled) {
   font-size: var(--text-xl);
   letter-spacing: 0.16em;
 }
+
+/* ---- activity and device health ---- */
+
+/* A label/value pair. Shared by the activity totals and the health readout because they are
+   the same thing — the box reporting a fact — and two grids that disagreed by two pixels
+   would read as two unrelated features. */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-2) 0;
+}
+
+.readout {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
+.readout-label {
+  color: var(--muted);
+}
+
+/* Tabular figures so a value that ticks on the refresh does not shuffle the column beside it. */
+.readout-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The activity rows reuse .contact for the channel stripe, but they are a readout rather than
+   a form: no inputs, so the generous form padding just spreads five short lines over a screen. */
+.stats-row {
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.stats-row h3 {
+  margin-bottom: var(--space-1);
+}
+
+.health h3 {
+  margin: var(--space-5) 0 var(--space-1);
+  font-size: var(--text-base);
+}
+
+/* Kernel version, board name, node version: read character by character or not at all. */
+.mono-line {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* The one thing on the health card that is a problem rather than a reading. */
+.field-hint.is-bad {
+  color: var(--danger);
+}

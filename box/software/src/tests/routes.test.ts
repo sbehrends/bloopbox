@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { AudioCue } from '../audio/cues.ts';
 import { QR_LIFETIME_MS } from '../ipc/events.ts';
 import { readField, readString } from '../ipc/payload.ts';
-import { startApi, type Harness } from './support/apiHarness.ts';
+import { netReading, startApi, type Harness } from './support/apiHarness.ts';
 
 /**
  * `/api`, the only mutable surface on the device.
@@ -656,5 +656,116 @@ describe('/audio', () => {
       attempts.map((path) => [path, false]),
     );
     expect(results.every(([, status]) => status === 400 || status === 404)).toBe(true);
+  });
+});
+
+describe('GET /api/stats', () => {
+  it('joins the totals to the contacts, so a count has a name on it', async () => {
+    api = await startApi({ configured: false });
+    api.stats.recordSent(0, 2500);
+    api.stats.recordReceived(1, 4000);
+    api.stats.recordPlayed(1, 1);
+
+    const payload: unknown = await (await fetch(api.url('/api/stats'))).json();
+    expect(payload).toMatchObject({
+      contacts: [
+        { key: 'button1', index: 0, name: 'Mom', enabled: true, sentCount: 1, sentMs: 2500 },
+        { key: 'button2', index: 1, name: 'Dad', receivedCount: 1, playedCount: 1 },
+        // Still listed with its history, even switched off: a button a parent has just
+        // disabled is exactly the one they are asking a question about.
+        { key: 'button3', index: 2, name: 'Grandma', enabled: false, sentCount: 0 },
+      ],
+    });
+  });
+
+  it('zeroes every total on reset', async () => {
+    api = await startApi({ configured: false });
+    api.stats.recordSent(0, 2500);
+
+    const response = await send(api, 'POST', '/api/stats/reset', {});
+    expect(response.status).toBe(200);
+
+    const contacts = readField(await (await fetch(api.url('/api/stats'))).json(), 'contacts');
+    expect(contacts).toHaveLength(3);
+    expect(Array.isArray(contacts) ? contacts[0] : null).toMatchObject({
+      sentCount: 0,
+      sentMs: 0,
+      lastSentAt: null,
+    });
+  });
+});
+
+describe('GET /api/system', () => {
+  it('reports the readings the health card renders', async () => {
+    api = await startApi({ configured: false });
+    const payload: unknown = await (await fetch(api.url('/api/system'))).json();
+
+    expect(payload).toMatchObject({
+      uptimeSeconds: expect.any(Number),
+      processUptimeSeconds: expect.any(Number),
+      memory: { totalBytes: expect.any(Number), usedPercent: expect.any(Number) },
+      host: { hostname: expect.any(String), nodeVersion: expect.any(String) },
+    });
+    // Nullable rather than absent: the panel renders a dash, and a missing key would render
+    // "undefined" instead. macOS has no thermal zone, so this is null on every dev machine.
+    expect(payload).toHaveProperty('temperatureC');
+    expect(Array.isArray(readField(payload, 'storage'))).toBe(true);
+  });
+
+  it('takes the Wi-Fi reading from the network agent, not from a second source', async () => {
+    api = await startApi({ configured: false });
+    api.netState = netReading({ ssid: 'Home', signal: 62 });
+
+    const payload: unknown = await (await fetch(api.url('/api/system'))).json();
+    expect(payload).toMatchObject({ wifi: { ssid: 'Home', signal: 62, online: true } });
+  });
+
+  it('says nothing about Wi-Fi where no agent is publishing', async () => {
+    // A development machine. Inventing an outage from missing information is the one thing
+    // this daemon must never do — see netState.ts.
+    api = await startApi({ configured: false });
+    const payload: unknown = await (await fetch(api.url('/api/system'))).json();
+    expect(payload).toMatchObject({ wifi: null });
+  });
+});
+
+describe('POST /api/system/power', () => {
+  it('hands a reboot to the root agent', async () => {
+    api = await startApi({ configured: false });
+    const response = await send(api, 'POST', '/api/system/power', { action: 'reboot' });
+
+    expect(response.status).toBe(200);
+    expect(api.powerRequests).toEqual(['reboot']);
+  });
+
+  it('hands a shutdown to the root agent', async () => {
+    api = await startApi({ configured: false });
+    const response = await send(api, 'POST', '/api/system/power', { action: 'poweroff' });
+
+    expect(response.status).toBe(200);
+    expect(api.powerRequests).toEqual(['poweroff']);
+  });
+
+  it('refuses anything that is not one of the two, without asking the agent', async () => {
+    /*
+     * The allowlist is the whole boundary on the far side of this too — the agent matches the
+     * action against a fixed list — but a request that reaches the file at all is one this
+     * daemon endorsed, so it is checked here first.
+     */
+    api = await startApi({ configured: false });
+    for (const action of ['halt', '', 'reboot; rm -rf /', 42, null]) {
+      const response = await send(api, 'POST', '/api/system/power', { action });
+      expect(response.status).toBe(400);
+    }
+    expect(api.powerRequests).toEqual([]);
+  });
+
+  it('says so plainly when there is no agent to ask', async () => {
+    // Every development machine. "This box cannot power itself off" is actionable; a 500 is not.
+    api = await startApi({ configured: false });
+    api.powerAccepted = false;
+
+    const response = await send(api, 'POST', '/api/system/power', { action: 'poweroff' });
+    expect(response.status).toBe(503);
   });
 });

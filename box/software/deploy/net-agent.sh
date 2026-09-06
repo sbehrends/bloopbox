@@ -14,6 +14,11 @@
 # it wrote itself, and so this script never chowns the daemon's recording directory out from
 # under it.
 #
+# The request channel is deliberately wider than networking: `reboot` and `poweroff` arrive
+# here too (src/system/power.ts), because this is the only process in the product running as
+# root and a box with no power button still has to be able to shut down cleanly. The allowlist
+# in consume_request is the whole boundary — it always was, and it is now guarding more.
+#
 # Never writes a passphrase here: the file is world-readable by design.
 #
 # No `pipefail`: the nmcli pipelines below would report a SIGPIPE'd producer as a failure.
@@ -275,6 +280,27 @@ join_network() {
   return 1
 }
 
+# Restarts or halts the machine, asked for from the admin panel's diagnostics card.
+#
+# `systemctl` rather than `reboot`/`halt` directly, so systemd stops the two daemons the ordinary
+# way: the hardware server's SIGTERM handler flushes the stats file, closes the HAL and leaves
+# every LED off (see its `shutdown`). Never `--force` — that is the one that skips exactly those
+# steps, which on this device means an unread note's file is the thing left half-written.
+#
+# Backgrounded after a short pause so this script can finish the poll it is in and the admin
+# panel's HTTP response can reach the browser before its network goes away.
+power_action() {
+  local what="$1"
+  log "${what} requested from the admin panel"
+  (
+    sleep 2
+    case "${what}" in
+      reboot) systemctl reboot ;;
+      poweroff) systemctl poweroff ;;
+    esac
+  ) >/dev/null 2>&1 &
+}
+
 # Reads one request, acts on it, deletes it. Unknown actions are logged and dropped: this is
 # the privilege boundary, so the allowlist is the whole security model.
 consume_request() {
@@ -310,6 +336,8 @@ consume_request() {
     ap-down) ap_down ;;
     join) join_network "${ssid}" "${psk}" ;;
     forget) forget_network ;;
+    reboot) power_action reboot ;;
+    poweroff) power_action poweroff ;;
     # Empty means the file was there but held nothing this script is willing to act on —
     # unparseable, the wrong shape, or an action outside the allowlist. Worth a line: silence
     # here would make a daemon asking for something impossible look like a daemon asking for
@@ -388,11 +416,18 @@ json_string() {
   printf '"%s"' "${value}"
 }
 
+# Initialised before either loop below can assign to it: the no-nmcli branch also consumes
+# requests now, and some of the handlers set this.
+LAST_ERROR=
+
 if ! command -v nmcli >/dev/null 2>&1; then
   # Publish once, then idle. Reporting "no information" is materially different from not
   # running: the daemon distinguishes them, and only this one keeps the LEDs quiet.
   log "no nmcli on PATH — publishing an empty reading and idling"
   while [[ "${running}" == true ]]; do
+    # Still read, because reboot and poweroff do not need NetworkManager and a box that cannot
+    # be shut down from the panel is exactly the box somebody unplugs mid-write.
+    consume_request
     publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":false,\"online\":false,\"ssid\":null,\"signal\":null,\"apActive\":false,\"apSsid\":null,\"scan\":[],\"scanAgeSeconds\":0,\"lastError\":null}"
     sleep "${POLL_SECONDS}" &
     wait $! 2>/dev/null || true
@@ -401,8 +436,6 @@ if ! command -v nmcli >/dev/null 2>&1; then
 fi
 
 log "publishing to ${STATE_FILE} every ${POLL_SECONDS}s; hotspot would be ${AP_SSID}"
-
-LAST_ERROR=
 
 while [[ "${running}" == true ]]; do
   consume_request

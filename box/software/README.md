@@ -44,8 +44,14 @@ WhatsApp bridge) only when you need real pairing or sending.
 
 Set `CONFIG_PATH=./data/config.json` if you are testing anything that saves settings — the default is
 the device's `/data`, which does not exist on a dev machine, and without it every save fails
-silently back to `config.default.json` in RAM. The full environment table is in
-[`../../docs/architecture.md`](../../docs/architecture.md#environment).
+silently back to `config.default.json` in RAM. `NOTES_DIR` and `STATS_PATH` want pointing at `./data`
+for the same reason: without them arriving notes and the activity totals go nowhere, silently, which
+is exactly what they are designed to do on a box whose card is unwritable. The full environment table
+is in [`../../docs/architecture.md`](../../docs/architecture.md#environment).
+
+The admin panel's **Device health** card works off-device and reports what a Mac can answer:
+temperature and the board name come back as dashes, and **Shut down** answers 503, because both need
+the root agent that only the device runs.
 
 In production there is one server: `npm run build` emits `dist/` and `dist/public/`, and
 `npm run start:hw` serves both from :3000.

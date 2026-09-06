@@ -70,7 +70,7 @@ if [[ "${PURGE}" == true ]]; then
   echo "    the WhatsApp pairing is gone — the phone still lists the linked device, remove it there"
 else
   step "kept"
-  echo "    ${DATA_DIR} (settings and WhatsApp credentials)"
+  echo "    ${DATA_DIR} (settings, WhatsApp credentials, waiting notes and activity totals)"
   echo "    ${ETC_DIR}/environment (bridge token)"
   echo "    pass --purge to remove these too"
 fi

@@ -216,7 +216,7 @@ as root from `bloopbox-net.service`, polls `nmcli` every 5s and publishes one sm
 
 ```
 /run/bloopbox-net/net-state.json   root writes, everyone reads   (the agent)
-/run/bloopbox/net-request.json     daemon writes, root reads     (not yet built — the AP work)
+/run/bloopbox/net-request.json     daemon writes, root reads     (the AP work, and power)
 ```
 
 Two directories, one writer each. That is deliberate: the agent must never end up owning
@@ -233,6 +233,18 @@ The daemon asks for things back through `/run/bloopbox/net-request.json` — one
 `{"action":"ap-up"}` or `{"action":"ap-down"}`, consumed and deleted by the agent. The action is
 matched against a fixed list before anything runs and no part of the file is ever evaluated as
 shell; that allowlist is the whole security model of the boundary.
+
+**The list is wider than networking.** `reboot` and `poweroff` arrive here too, from the admin
+panel's *Device health* card via `src/system/power.ts`, because this agent is the only process in
+the product running as root and a box with no power button still has to be able to shut down
+cleanly. They run `systemctl reboot` / `systemctl poweroff` — never `--force`, because the ordinary
+path is what stops the daemons with a SIGTERM, and that is what flushes the activity counters and
+finalises anything mid-write. Both are backgrounded behind a two-second pause so the poll finishes
+and the admin panel's HTTP response reaches the browser before its network disappears.
+
+The no-`nmcli` branch consumes requests as well, and not incidentally: powering off needs no
+NetworkManager, and a box that cannot be shut down from the panel is exactly the box somebody
+unplugs mid-write.
 
 `ap-up` creates (or rewrites) the `bloopbox-ap` NetworkManager profile — `mode ap`, band bg, no
 passphrase, `ipv4.method shared` — and brings it up. Shared mode is why `dnsmasq-base` is a

@@ -17,6 +17,7 @@ import {
   DeviceController,
   MIN_USABLE_AUDIO_MS,
   type OutboundRequest,
+  type StatsRecorder,
 } from '../core/deviceController.ts';
 import { DeviceStatus } from '../core/deviceState.ts';
 import { MockHal } from '../hal/mockDriver.ts';
@@ -36,6 +37,13 @@ let controller: DeviceController;
 let sent: OutboundRequest[];
 let marked: { index: number; messageIds: string[] }[];
 let sendResult: 'ok' | 'fail';
+/**
+ * What the controller told the counters, in order.
+ *
+ * A recording stub rather than a real `StatsStore`: what is worth pinning here is *which*
+ * events count, not how they are written to a card. The store has its own suite.
+ */
+let counted: { kind: 'sent' | 'received' | 'played'; index: number; value: number | null }[];
 
 async function buildConfig(): Promise<DeviceConfig> {
   const template = configSchema.parse(
@@ -75,7 +83,14 @@ beforeEach(async () => {
 
   sent = [];
   marked = [];
+  counted = [];
   sendResult = 'ok';
+  const stats: StatsRecorder = {
+    recordSent: (index, durationMs) => counted.push({ kind: 'sent', index, value: durationMs }),
+    recordReceived: (index, durationMs) =>
+      counted.push({ kind: 'received', index, value: durationMs }),
+    recordPlayed: (index, count) => counted.push({ kind: 'played', index, value: count }),
+  };
   controller = new DeviceController({
     hal,
     config,
@@ -87,6 +102,7 @@ beforeEach(async () => {
     markRead: (index, messageIds) => {
       marked.push({ index, messageIds: [...messageIds] });
     },
+    stats,
   });
   controller.setStatus(DeviceStatus.Ready);
 });
@@ -805,5 +821,130 @@ describe('read-only mode', () => {
     expect(hal.activeRecordings.size).toBe(0);
     expect(sent).toHaveLength(0);
     await rebuilt.stop();
+  });
+});
+
+/**
+ * What the activity totals in the admin panel are counting.
+ *
+ * The rules that matter are all about *not* counting: a send that failed, a note the boot scan
+ * merely put back, and a redelivery WhatsApp sent twice. Each of the three would inflate a
+ * number a parent reads as "this button works", which is the one thing the panel is for.
+ */
+describe('activity counting', () => {
+  it('counts a delivered message, with the audio it carried', async () => {
+    hal.fixedDurationMs = 3000;
+
+    await press(0, RECORD_THRESHOLD_MS + 1500);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
+
+    expect(counted).toEqual([{ kind: 'sent', index: 0, value: 3000 }]);
+  });
+
+  it('does not count a send the bridge refused', async () => {
+    /*
+     * The child already heard the "oops". A total that grew anyway would tell a parent the
+     * button works, which is precisely the case they are looking at the panel to rule out.
+     */
+    hal.fixedDurationMs = 3000;
+    sendResult = 'fail';
+
+    await press(0, RECORD_THRESHOLD_MS + 1500);
+    await waitFor(() => hal.cueSequence().includes(AudioCue.Oops), 'the failure cue');
+
+    expect(counted).toEqual([]);
+  });
+
+  it('counts a note when it arrives, and carries its duration', () => {
+    controller.handleIncoming(1, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+
+    expect(counted).toEqual([{ kind: 'received', index: 1, value: 1400 }]);
+  });
+
+  it('passes an unknown duration through as unknown rather than as zero', () => {
+    controller.handleIncoming(1, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: null,
+    });
+
+    expect(counted).toEqual([{ kind: 'received', index: 1, value: null }]);
+  });
+
+  /*
+   * The reason the count sits in `handleIncoming` and not in `restoreUnread`. The boot scan
+   * calls the latter for every unheard note on the card, so counting there would add the whole
+   * backlog to the totals on every restart — and this device restarts on every settings save.
+   */
+  it('does not count a note the boot scan is merely putting back', () => {
+    controller.restoreUnread(2, {
+      messageId: 'm2',
+      path: '/tmp/m2.ogg',
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+
+    expect(counted).toEqual([]);
+  });
+
+  it('counts a redelivered note once', () => {
+    const note = {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    };
+
+    controller.handleIncoming(1, note);
+    controller.handleIncoming(1, note);
+
+    expect(counted.filter((entry) => entry.kind === 'received')).toHaveLength(1);
+  });
+
+  it('counts what the child listened to as the queue drains', async () => {
+    for (const messageId of ['m1', 'm2']) {
+      controller.handleIncoming(1, {
+        messageId,
+        path: `/tmp/${messageId}.ogg`,
+        receivedAt: Date.now(),
+        durationMs: 1000,
+      });
+    }
+
+    await press(1, 300);
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => counted.some((entry) => entry.kind === 'played'), 'the playback count');
+
+    expect(counted.filter((entry) => entry.kind === 'played')).toEqual([
+      { kind: 'played', index: 1, value: 2 },
+    ]);
+  });
+
+  it('still counts a playback when read receipts are switched off', async () => {
+    /*
+     * Whether the sender is told is a parent's privacy decision (`whatsapp.markPlayedAsRead`).
+     * What this box counts for its own panel is not, and the two used to be one branch.
+     */
+    await config.update({ whatsapp: { markPlayedAsRead: false } });
+
+    controller.handleIncoming(1, {
+      messageId: 'm1',
+      path: '/tmp/m1.ogg',
+      receivedAt: Date.now(),
+      durationMs: 1000,
+    });
+
+    await press(1, 300);
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => counted.some((entry) => entry.kind === 'played'), 'the playback count');
+
+    expect(marked).toEqual([]);
+    expect(counted).toContainEqual({ kind: 'played', index: 1, value: 1 });
   });
 });

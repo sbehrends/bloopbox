@@ -202,6 +202,15 @@ describe('the endpoints that are open by design', () => {
       { path: '/api/whatsapp/unlink', method: 'POST' },
       { path: '/api/factory-reset', method: 'POST' },
       { path: '/api/wifi/join', method: 'POST' },
+      /*
+       * The activity totals name the family's contacts, and the health reading names the
+       * network this box sits on and can power the device off. Neither belongs to anything
+       * that can merely reach port 3000.
+       */
+      { path: '/api/stats', method: 'GET' },
+      { path: '/api/stats/reset', method: 'POST' },
+      { path: '/api/system', method: 'GET' },
+      { path: '/api/system/power', method: 'POST' },
     ];
     const results = await Promise.all(
       guarded.map(async ({ path, method }) => {

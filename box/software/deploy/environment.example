@@ -16,6 +16,17 @@ BRIDGE_TOKEN=@BRIDGE_TOKEN@
 CONFIG_PATH=@DATA_DIR@/config.json
 WA_AUTH_DIR=@DATA_DIR@/auth_info
 
+# What each button has sent and received, shown at the top of the settings page. Beside the
+# config and deliberately not inside it: a counter in config.json would restart the daemon on
+# every button press, and a stats file that will not parse is allowed to cost the totals and
+# nothing else. Written coalesced and atomically, like the config.
+#
+# Named here rather than left to its default only because the default is the literal
+# /data/stats.json, which is wrong on a box installed with --data-dir somewhere else. An
+# upgrade keeps this file, so a box installed before this line existed falls back to that
+# default — correct for every standard install, which is why it is not worth more than this.
+STATS_PATH=@DATA_DIR@/stats.json
+
 # Outbound captures and every derived file, in RAM. /run is a tmpfs and systemd creates this
 # directory for both units (RuntimeDirectory=bloopbox), so nothing the child records survives
 # a power cut or reaches the SD card. Do not point this at a path on disk.

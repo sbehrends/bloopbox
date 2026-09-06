@@ -27,6 +27,23 @@ export type OutboundRequest = {
   readonly durationMs: number;
 };
 
+/**
+ * Where the running totals go, as three synchronous calls this controller makes and nothing more.
+ *
+ * A structural type rather than an import of `StatsStore`, because `src/core/` may not do I/O and
+ * must not acquire a dependency that does. The store satisfies this shape; a test passes an
+ * array-pushing stub. Every method must return immediately and must never throw — these are
+ * called on the interaction path, where a child is waiting for a lamp.
+ */
+export type StatsRecorder = {
+  /** A voice note this box actually delivered. */
+  recordSent(index: ButtonIndex, durationMs: number): void;
+  /** A voice note that arrived and was queued. `durationMs` is null when WhatsApp gave none. */
+  recordReceived(index: ButtonIndex, durationMs: number | null): void;
+  /** Notes the child listened to, as a queue drains. */
+  recordPlayed(index: ButtonIndex, count: number): void;
+};
+
 export type DeviceControllerOptions = {
   readonly hal: Hal;
   readonly config: ConfigManager;
@@ -34,6 +51,8 @@ export type DeviceControllerOptions = {
   readonly send: (request: OutboundRequest) => Promise<void>;
   /** Tells the bridge a queue was played, so it can mark the messages read. */
   readonly markRead?: (index: ButtonIndex, messageIds: readonly string[]) => void;
+  /** Counts what the box sent, received and played. Absent means nothing is counted. */
+  readonly stats?: StatsRecorder;
 };
 
 /** How often the quiet-hours schedule is re-evaluated when no transition is imminent. */
@@ -64,6 +83,7 @@ export class DeviceController {
   readonly #animator: LedAnimator;
   readonly #send: (request: OutboundRequest) => Promise<void>;
   readonly #markRead: ((index: ButtonIndex, ids: readonly string[]) => void) | undefined;
+  readonly #stats: StatsRecorder | undefined;
 
   /**
    * In-flight captures, keyed by button.
@@ -89,6 +109,7 @@ export class DeviceController {
     this.#config = options.config;
     this.#send = options.send;
     this.#markRead = options.markRead;
+    this.#stats = options.stats;
 
     this.queue = new AudioQueueManager({
       hal: options.hal,
@@ -190,6 +211,14 @@ export class DeviceController {
   handleIncoming(index: ButtonIndex, note: QueuedNote): void {
     // A redelivery, or one the boot scan already restored: nothing new to announce.
     if (!this.restoreUnread(index, note)) return;
+
+    /*
+     * Counted here rather than in `restoreUnread`, which is the whole reason the two are
+     * separate methods: the boot scan calls that one directly to put yesterday's unheard notes
+     * back, and a total that grew by three every time the box restarted would be worthless.
+     * This path is only ever a note that has genuinely just arrived.
+     */
+    this.#stats?.recordReceived(index, note.durationMs);
 
     // A courtesy, and silenced at night.
     if (shouldPlayCue(AudioCue.Notify, this.state.silentMode)) {
@@ -339,6 +368,9 @@ export class DeviceController {
       if (this.#config.current.whatsapp.markPlayedAsRead) {
         this.#markRead?.(index, messageIds);
       }
+      // Local and unconditional, unlike the receipt above: what the child heard is this box's
+      // own business, and a parent who turned receipts off has not asked to stop counting.
+      this.#stats?.recordPlayed(index, messageIds.length);
       void this.#deletePlayed(messageIds, index);
     });
 
@@ -434,6 +466,9 @@ export class DeviceController {
     try {
       await this.#send({ index, path, durationMs });
       this.state.reportMessageSent(index);
+      // Only a send WhatsApp accepted. A failed one already told the child "oops"; counting it
+      // would make the panel disagree with what the box actually did.
+      this.#stats?.recordSent(index, durationMs);
     } catch {
       // Delivery failed. The file stays for the purge to collect.
       if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {

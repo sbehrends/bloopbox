@@ -35,6 +35,7 @@ the system.
 │              ┌──────────────────────────► │ deploy/net-agent.sh     │         │
 │              ▼ reads                     │ user: root              │         │
 │      /run/bloopbox/net-request.json      │ • nmcli, AP up/down     │         │
+│                                          │ • reboot / poweroff     │         │
 │                                          └─────────────────────────┘         │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -58,8 +59,19 @@ for both sides: adding an event means editing that file first.
 they cannot talk to NetworkManager and should not be able to. A third unit, `bloopbox-net.service`,
 runs [`deploy/net-agent.sh`](../box/software/deploy/net-agent.sh) as root, polls `nmcli` every 5 s and publishes
 one small JSON document. Requests go back the other way through a second file carrying a strictly
-enum-validated action (`ap-up` | `ap-down` | `join {ssid, psk}` | `forget`), never evaluated as
-shell.
+enum-validated action (`ap-up` | `ap-down` | `join {ssid, psk}` | `forget` | `reboot` | `poweroff`),
+never evaluated as shell.
+
+**The last two are not networking, and that is on purpose.** The box has no power button, and
+pulling the plug is what lost an unread note (`PRODUCT.md` §8) — so shutting down cleanly has to be
+possible from the admin panel, and this agent is the only process in the product running as root.
+Adding a second request file beside the first would not add a boundary: **the allowlist in
+`consume_request` is the boundary**, it always was, and it is now guarding an action that can power
+the machine off. `src/system/power.ts` writes them, deliberately apart from `src/net/netState.ts` so
+the module names stay honest about what each one is for.
+
+`systemctl reboot` / `systemctl poweroff`, never `--force`: the ordinary path is what sends the
+daemons a SIGTERM, and that is what flushes the activity counters and finalises anything mid-write.
 
 | File                              | Written by | Read by |
 | --------------------------------- | ---------- | ------- |
@@ -298,6 +310,38 @@ safety net.
 Writes are **atomic** — temp file → `fsync` → `rename`. A half-written config during power loss
 would brick the device.
 
+### Activity totals are a separate file, for a reason that is not tidiness
+
+`/data/stats.json`, written by [`src/stats/statsStore.ts`](../box/software/src/stats/statsStore.ts). Sitting
+beside `config.json` and never inside it, because the two properties above make a counter
+impossible there:
+
+- **Saving config restarts the daemon.** A counter kept in it would reboot the box every time a
+  child pressed a button.
+- **An unparseable config drops the device into onboarding**, costing a parent their contacts. An
+  unparseable stats file must cost the totals and nothing else, so every field carries a Zod
+  `.catch()` — the same two-tier treatment `netState.ts` uses, and for the same reason.
+
+Writes are atomic like the config's, and **coalesced**: a change schedules one write two seconds
+later, so a burst of arriving notes is one erase cycle on the card rather than ten. That delay is
+exactly why `flush()` exists and why every path that ends the process calls it — a config save, a
+SIGTERM, and the reboot and shutdown requests before they are handed to the root agent.
+
+**`src/core/` still does no I/O.** `DeviceController` takes a `StatsRecorder` — three synchronous
+methods, structurally typed so nothing in `core/` imports the store — exactly as it already takes
+`send` and `markRead`.
+
+What counts, and what deliberately does not:
+
+| Event | Counted | Why |
+| ----- | ------- | --- |
+| A send WhatsApp accepted | yes, with its duration | |
+| A send that failed | **no** | The child already heard the "oops". A total that grew anyway would say the button works |
+| A note arriving (`handleIncoming`) | yes | |
+| A note the boot scan puts back (`restoreUnread`) | **no** | Every unheard note is restored on every restart, and this device restarts on every settings save |
+| A redelivered note | once | The queue decides, not the arrival — `restoreUnread` returns false the second time |
+| A queue draining | yes, by message count | Independent of `whatsapp.markPlayedAsRead`: whether the *sender* is told is a privacy decision, what this box counts for its own panel is not |
+
 ### Snapshot at boot; saving restarts the daemon
 
 `DeviceController` reads configuration when it is constructed and never re-reads it. Writing
@@ -407,6 +451,15 @@ risk**, because the guard cannot tell that state from mid-onboarding, and refusi
 make the device recoverable only by pulling the SD card. Both halves are pinned by
 [`src/tests/adminAuth.test.ts`](../box/software/src/tests/adminAuth.test.ts); the watch item in `PENDING.md` has
 the full reasoning.
+
+`GET /api/stats`, `POST /api/stats/reset`, `GET /api/system` and `POST /api/system/power` are all
+admin-gated, and each for a concrete reason rather than by default: the totals name the family's
+contacts, the health reading names the network the box sits on, and the last one can turn the device
+off. `POST /api/system/power` validates the action against the same two names the root agent
+enforces — the agent's allowlist is still the boundary, but a request that reaches the file at all
+is one this daemon endorsed. Where no agent is listening the route answers **503 with a sentence
+saying so**, not a 500: on a development machine nothing has gone wrong, and "this box cannot power
+itself off" is actionable where a generic failure is not.
 
 `GET /api/wifi/scan` uses a looser gate than either: open while the device is unconfigured **or**
 while the hotspot is up, admin-gated otherwise. `POST /api/wifi/join` keeps the admin gate even
@@ -642,7 +695,10 @@ are testing configuration at all.
 | `FFMPEG_PATH`                                | `ffmpeg`                   | `ffprobe` is derived from it                              |
 | `LOG_LEVEL`                                  | `debug` in dev, else `info` | pino; `pino-pretty` in dev. On the device `bloopbox-debug on` flips it |
 | `NET_STATE_PATH`                             | `/run/bloopbox-net/net-state.json` | What the root net agent publishes; absent in dev  |
-| `NET_REQUEST_PATH`                           | `/run/bloopbox/net-request.json`   | What the daemon asks the agent for                |
+| `NET_REQUEST_PATH`                           | `/run/bloopbox/net-request.json`   | What the daemon asks the agent for — network actions **and** reboot/poweroff |
+| `STATS_PATH`                                 | `/data/stats.json`         | Activity totals. Beside the config, never inside it       |
+| `THERMAL_ZONE_PATH`                          | `/sys/class/thermal/thermal_zone0/temp` | SoC temperature for the health card. Absent off Linux → reported as a dash |
+| `DEVICE_MODEL_PATH`                          | `/sys/firmware/devicetree/base/model` | The board's own name, for the health card           |
 | `LED_ACTIVE_HIGH`                            | `true`                     | Pi only, unverified — the ULN2003 inverts, so try both     |
 | `BUTTON_ACTIVE_LOW`                          | `true`                     | Pi only, unverified — pull-ups mean a press reads low      |
 | `ALSA_CAPTURE_DEVICE` / `ALSA_PLAYBACK_DEVICE` | `default`                | Pi only, unverified                                       |

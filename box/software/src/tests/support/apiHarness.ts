@@ -12,6 +12,9 @@ import type { WhatsAppConnectionState } from '../../ipc/events.ts';
 import type { NetState } from '../../net/netState.ts';
 import { hashAdminPassword } from '../../server/auth.ts';
 import { createApiRouter, createAudioRouter, type RoutesContext } from '../../server/routes.ts';
+import { StatsStore } from '../../stats/statsStore.ts';
+import type { PowerAction } from '../../system/power.ts';
+import { CpuUsageTracker, readSystemInfo } from '../../system/systemInfo.ts';
 
 /**
  * A real Express app on a real port, assembled the way `hardware-server.ts` assembles it.
@@ -43,6 +46,8 @@ export type Harness = {
   readonly config: ConfigManager;
   readonly controller: DeviceController;
   readonly hal: MockHal;
+  /** The real store, on a temp path, so a test can record and then read the route back. */
+  readonly stats: StatsStore;
   /** Where recordings are served from, for the audio router's path tests. */
   readonly recordingDirectory: string;
 
@@ -61,6 +66,9 @@ export type Harness = {
   readonly unlinks: { count: number };
   readonly beginLinkings: { count: number };
   readonly forgets: { count: number };
+  /** Power requests the routes made, and whether the stub agent accepts them. */
+  readonly powerRequests: PowerAction[];
+  powerAccepted: boolean;
 
   /** Basic auth header value for a password. */
   basic: (password: string) => string;
@@ -105,8 +113,19 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
 
   const hal = new MockHal();
   await hal.init();
-  const controller = new DeviceController({ hal, config, send: () => Promise.resolve() });
+  /*
+   * The real StatsStore rather than a stub: the routes join it to the config, and the join is
+   * the part worth testing. `flushDelayMs: 0` keeps every write immediate so a test never waits.
+   */
+  const stats = new StatsStore({ path: join(workDir, 'stats.json'), flushDelayMs: 0 });
+  const controller = new DeviceController({
+    hal,
+    config,
+    send: () => Promise.resolve(),
+    stats,
+  });
   controller.setStatus(DeviceStatus.Ready);
+  const cpu = new CpuUsageTracker();
 
   const state = {
     whatsapp: { state: 'connected', qr: null } as {
@@ -119,12 +138,14 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     forgetSucceeds: true,
     groups: [] as { id: string; subject: string }[],
     pairing: {} as { code?: string; error?: string },
+    powerAccepted: true,
   };
   const joins: { ssid: string; psk: string }[] = [];
   const restarts: string[] = [];
   const unlinks = { count: 0 };
   const beginLinkings = { count: 0 };
   const forgets = { count: 0 };
+  const powerRequests: PowerAction[] = [];
 
   const context: RoutesContext = {
     config,
@@ -155,6 +176,20 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     requestRestart: (reason) => {
       restarts.push(reason);
     },
+    stats: () => stats.snapshot(),
+    resetStats: () => stats.reset(),
+    systemInfo: () =>
+      readSystemInfo({
+        cpu,
+        // The temp directory, which definitely exists — the point is the shape of the reply,
+        // not what a laptop's disk happens to be doing.
+        storage: [{ label: 'Work', path: workDir }],
+      }),
+    // Never actually powers anything off, for the same reason requestRestart does not restart.
+    requestPower: (action) => {
+      powerRequests.push(action);
+      return Promise.resolve(state.powerAccepted);
+    },
   };
 
   const app = express();
@@ -177,6 +212,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     config,
     controller,
     hal,
+    stats,
     recordingDirectory,
     get whatsapp() {
       return state.whatsapp;
@@ -214,6 +250,13 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     set pairing(value) {
       state.pairing = value;
     },
+    get powerAccepted() {
+      return state.powerAccepted;
+    },
+    set powerAccepted(value) {
+      state.powerAccepted = value;
+    },
+    powerRequests,
     joins,
     restarts,
     unlinks,
@@ -221,6 +264,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     forgets,
     basic: (password) => `Basic ${Buffer.from(`admin:${password}`).toString('base64')}`,
     close: async () => {
+      stats.stop();
       await controller.stop();
       await new Promise<void>((closed, failed) => {
         server.close((error) => {

@@ -38,6 +38,9 @@ import {
   type NetAction,
   type NetState,
 } from '../net/netState.ts';
+import { StatsStore } from '../stats/statsStore.ts';
+import { requestPowerAction, type PowerAction } from '../system/power.ts';
+import { CpuUsageTracker, readSystemInfo, type StorageTarget } from '../system/systemInfo.ts';
 import { portalRedirectTarget, shouldRedirectToPortal } from '../server/captivePortal.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
@@ -83,6 +86,29 @@ const NOTES_DIRECTORY = notesDirectory();
 const STATIC_ROOT = resolve(import.meta.dirname, '../../dist/public');
 
 /**
+ * The volumes the diagnostics card reports on, named for what they hold rather than where they
+ * are mounted — "/run" means nothing to a parent, and "in RAM, wiped by a power cut" is the
+ * fact that matters about it.
+ *
+ * The notes directory is listed separately from the recordings one because on the device they
+ * are on different media entirely, which is the whole point of the split
+ * (`audio/directories.ts`). Off-device they routinely resolve to the same filesystem and the
+ * two rows agree, which is harmless.
+ */
+const STORAGE_TARGETS: readonly StorageTarget[] = [
+  { label: 'Card — settings and waiting messages', path: NOTES_DIRECTORY },
+  { label: 'Memory disk — messages being sent', path: RECORDING_DIRECTORY },
+];
+
+/**
+ * CPU busy time between one diagnostics reading and the next.
+ *
+ * Constructed here, once, so the first reading the panel asks for has a window to measure
+ * against rather than reporting the average since boot.
+ */
+const cpuUsage = new CpuUsageTracker();
+
+/**
  * Grace period between answering a config write and exiting, so the HTTP response and the
  * Socket.io notice reach the browser before the socket closes.
  */
@@ -107,6 +133,14 @@ async function main(): Promise<void> {
   if (loaded.source === 'defaults') {
     log.warn({ reason: loaded.fallbackReason }, 'running on default config — onboarding required');
   }
+
+  /*
+   * Running totals, on the card beside config.json but deliberately not *in* it — a counter in
+   * the config would restart the daemon every time a child pressed a button. Loaded before the
+   * controller so the first send of this boot adds to the history rather than starting it.
+   */
+  const stats = new StatsStore();
+  await stats.load();
 
   const absentCues = missingCues();
   if (absentCues.length > 0) {
@@ -188,6 +222,7 @@ async function main(): Promise<void> {
     markRead: (index, messageIds) => {
       link.current?.markRead(index, messageIds);
     },
+    stats,
   });
 
   let booting = true;
@@ -302,6 +337,21 @@ async function main(): Promise<void> {
     requestJoin: async (credentials: { ssid: string; psk: string }) =>
       requestNetAction('join', { credentials }),
     requestForgetNetwork: async () => requestNetAction('forget'),
+    stats: () => stats.snapshot(),
+    resetStats: async () => {
+      await stats.reset();
+    },
+    systemInfo: async () => readSystemInfo({ cpu: cpuUsage, storage: STORAGE_TARGETS }),
+    requestPower: async (action: PowerAction) => {
+      /*
+       * Flushed before the machine is asked to go away, not after: the store coalesces writes
+       * for a couple of seconds, and a deliberate shutdown is precisely the moment those last
+       * few seconds must already be on the card. systemd's SIGTERM would reach the shutdown
+       * path below anyway, but only if the agent gets that far.
+       */
+      await stats.flush();
+      return requestPowerAction(action);
+    },
   };
 
   /*
@@ -596,6 +646,9 @@ async function main(): Promise<void> {
       portalServer?.close();
       purger.stop();
       notesPurger.stop();
+      // Before anything slow: this is the only moment the last few counted presses reach the
+      // card, and both a config save and a `poweroff` arrive here.
+      await stats.flush();
       await purger.whenIdle();
       await notesPurger.whenIdle();
       await controller.stop();

@@ -55,6 +55,61 @@ type ConfigView = {
   mode: { readOnly: boolean };
 };
 
+/**
+ * One button's running totals, as `GET /api/stats` sends them: the store's counters with the
+ * contact's name already joined on, because only the device knows whose button index 0 is.
+ */
+type ContactStatsView = {
+  key: ButtonKey;
+  index: number;
+  name: string;
+  enabled: boolean;
+  sentCount: number;
+  sentMs: number;
+  receivedCount: number;
+  receivedMs: number;
+  receivedTimedCount: number;
+  playedCount: number;
+  lastSentAt: number | null;
+  lastReceivedAt: number | null;
+};
+
+type StatsView = { since: number; contacts: readonly ContactStatsView[] };
+
+type StorageView = {
+  label: string;
+  path: string;
+  totalBytes: number;
+  freeBytes: number;
+  usedPercent: number;
+};
+
+type SystemView = {
+  readAtMs: number;
+  uptimeSeconds: number;
+  processUptimeSeconds: number;
+  temperatureC: number | null;
+  cpu: { usagePercent: number | null; loadAverage: readonly number[]; cores: number };
+  memory: { totalBytes: number; availableBytes: number; usedPercent: number; source: string };
+  storage: readonly StorageView[];
+  host: {
+    hostname: string;
+    platform: string;
+    release: string;
+    arch: string;
+    nodeVersion: string;
+    model: string | null;
+  };
+  wifi: {
+    ssid: string | null;
+    signal: number | null;
+    online: boolean;
+    apActive: boolean;
+    ageSeconds: number;
+    lastError: string | null;
+  } | null;
+};
+
 type StatusView = {
   state: string;
   silentMode: boolean;
@@ -1022,6 +1077,463 @@ function renderWhatsApp(
   return section;
 }
 
+/* ------------------------------------------------------------------ *
+ * Activity — what each button has actually carried
+ * ------------------------------------------------------------------ */
+
+/** How often the totals redraw while the page is open. */
+const STATS_REFRESH_MS = 15_000;
+
+/**
+ * A duration a parent reads at a glance, not a number of milliseconds.
+ *
+ * Voice notes here run from about a second to half a minute, and totals run to hours over a
+ * few months — so the unit has to change with the magnitude or one end of that range is
+ * unreadable. Seconds are never shown alongside hours for the same reason.
+ */
+function formatDuration(totalMs: number): string {
+  const seconds = Math.round(totalMs / 1000);
+  if (seconds < 60) return `${String(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${String(minutes)}m ${String(seconds % 60)}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${String(hours)}h ${String(minutes % 60)}m`;
+}
+
+/** Binary units, because that is what a card's free space is quoted in everywhere else. */
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const decimals = value < 10 && unit > 0 ? 1 : 0;
+  return `${value.toFixed(decimals)} ${units[unit] ?? 'B'}`;
+}
+
+/** An uptime in the largest two units that carry information. */
+function formatUptime(totalSeconds: number): string {
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (days > 0) return `${String(days)}d ${String(hours)}h`;
+  if (hours > 0) return `${String(hours)}h ${String(minutes)}m`;
+  return `${String(minutes)}m`;
+}
+
+/** A date in the browser's locale. The device's clock may be somebody else's — see the schema. */
+function formatWhen(epochMs: number | null): string {
+  if (epochMs === null || !Number.isFinite(epochMs)) return 'never';
+  return new Date(epochMs).toLocaleString();
+}
+
+function isStatsView(value: unknown): value is StatsView {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'since' in value &&
+    'contacts' in value &&
+    Array.isArray((value as { contacts: unknown }).contacts)
+  );
+}
+
+async function fetchStats(): Promise<StatsView | null> {
+  try {
+    const payload = await getJson('/api/stats');
+    return isStatsView(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One `label: value` pair, for the totals grid and the health readout alike. */
+function readout(label: string, value: string): HTMLElement {
+  const row = element('div', 'readout');
+  row.append(element('span', 'readout-label', label), element('span', 'readout-value', value));
+  return row;
+}
+
+/**
+ * How much each button has carried, at the top of the page.
+ *
+ * First rather than last because it is the only thing here that answers a question rather than
+ * asking one: everything below is a setting a parent has to decide, and this is the box
+ * reporting back. It is also the only place the device says whether a button *works* — three
+ * sends and no receives on Grandma's button is a diagnosis, and nothing else on this page
+ * would show it.
+ *
+ * Sent counts deliveries WhatsApp accepted, not presses. A held button that failed to send
+ * played the "oops" and is deliberately absent here, so the number agrees with what the child
+ * was told.
+ */
+function renderStats(initial: StatsView): HTMLElement {
+  const section = card('Activity');
+  const rows = element('div', 'stats-rows');
+  const since = element('p', 'field-hint');
+  const totals = element('p', 'field-hint');
+
+  section.append(
+    element(
+      'p',
+      'field-hint',
+      'What each button has actually carried. "Sent" counts messages WhatsApp accepted, so a ' +
+        'button the child holds but that never delivers stays at zero — which is the point.',
+    ),
+    rows,
+    totals,
+    since,
+  );
+
+  const draw = (stats: StatsView): void => {
+    rows.replaceChildren();
+
+    let sentCount = 0;
+    let receivedCount = 0;
+
+    for (const contact of stats.contacts) {
+      sentCount += contact.sentCount;
+      receivedCount += contact.receivedCount;
+
+      const row = element('div', 'contact stats-row');
+      // Same colour coding as the contact rows below, so the two read as the same three buttons.
+      row.style.setProperty(
+        '--channel',
+        `var(${CHANNEL_TOKENS[contact.index] ?? '--border-strong'})`,
+      );
+
+      const heading = contact.name.trim().length > 0 ? contact.name : 'Not assigned';
+      row.append(
+        element(
+          'h3',
+          undefined,
+          `${BUTTON_LABELS[contact.key]} — ${heading}${contact.enabled ? '' : ' (off)'}`,
+        ),
+      );
+
+      const grid = element('div', 'stats-grid');
+      grid.append(
+        readout(
+          'Sent',
+          contact.sentCount === 0
+            ? 'nothing yet'
+            : `${String(contact.sentCount)} · ${formatDuration(contact.sentMs)}`,
+        ),
+        readout(
+          'Received',
+          contact.receivedCount === 0
+            ? 'nothing yet'
+            : /*
+               * The duration is qualified when WhatsApp did not state one for every note, rather
+               * than quietly counting an unknown as zero — an "8 messages · 12s" with no
+               * explanation reads as a fault in the box.
+               */
+              `${String(contact.receivedCount)} · ${formatDuration(contact.receivedMs)}${
+                contact.receivedTimedCount < contact.receivedCount
+                  ? ` (${String(contact.receivedCount - contact.receivedTimedCount)} untimed)`
+                  : ''
+              }`,
+        ),
+        readout(
+          'Listened to',
+          `${String(contact.playedCount)} of ${String(contact.receivedCount)}`,
+        ),
+        readout('Last sent', formatWhen(contact.lastSentAt)),
+        readout('Last received', formatWhen(contact.lastReceivedAt)),
+      );
+      row.append(grid);
+      rows.append(row);
+    }
+
+    totals.textContent = `${String(sentCount)} sent and ${String(receivedCount)} received in total.`;
+    since.textContent = `Counting since ${formatWhen(stats.since)}. Kept on the box, so a restart does not lose it.`;
+  };
+
+  draw(initial);
+
+  const refresh = async (): Promise<void> => {
+    const next = await fetchStats();
+    if (next) draw(next);
+  };
+
+  section.append(
+    dangerConfirm({
+      quiet: true,
+      label: 'Reset the counters',
+      question: 'Set every total back to zero? The history cannot be recovered.',
+      confirmLabel: 'Reset',
+      busyLabel: 'Resetting…',
+      run: async () => {
+        const response = await fetch('/api/stats/reset', { method: 'POST' });
+        if (!response.ok) throw new Error('the box would not reset the counters');
+        await refresh();
+      },
+    }),
+  );
+
+  // Live enough to watch a button being tested, cheap enough to leave running: two small JSON
+  // reads a minute against a device that is otherwise idle.
+  window.setInterval(() => {
+    void refresh();
+  }, STATS_REFRESH_MS);
+
+  return section;
+}
+
+/* ------------------------------------------------------------------ *
+ * Device health — what the Raspberry Pi says about itself
+ * ------------------------------------------------------------------ */
+
+/** How often the readings redraw. Only ticks while the card is open. */
+const HEALTH_REFRESH_MS = 5000;
+
+function isSystemView(value: unknown): value is SystemView {
+  return (
+    typeof value === 'object' && value !== null && 'uptimeSeconds' in value && 'memory' in value
+  );
+}
+
+async function fetchSystem(): Promise<SystemView | null> {
+  try {
+    const payload = await getJson('/api/system');
+    return isSystemView(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A signal percentage said in words, because 62 means nothing without a scale. */
+function describeSignal(signal: number | null): string {
+  if (signal === null) return 'not associated';
+  const quality =
+    signal >= 70 ? 'strong' : signal >= 45 ? 'usable' : signal >= 25 ? 'weak' : 'very weak';
+  return `${String(signal)}% — ${quality}`;
+}
+
+/**
+ * The diagnostics card: temperature, uptime, load, memory, card space and signal.
+ *
+ * All of this is already in `bloopbox-doctor`, which needs SSH — the tool a parent does not
+ * have and will not get. The interesting readings on this board are the ones that explain a
+ * device behaving oddly rather than failing outright: a hot SoC throttles, a full card stops
+ * notes being written at all, and a weak signal is most of the "it stopped receiving" reports.
+ *
+ * Collapsed by default and only polling while open, because none of it matters until somebody
+ * is asking a question about it.
+ */
+function renderHealth(): HTMLElement {
+  const section = collapsibleCard('Device health');
+  const body = element('div', 'health');
+  const stamp = element('p', 'field-hint', 'Reading…');
+  section.append(body, stamp);
+
+  const draw = (info: SystemView): void => {
+    body.replaceChildren();
+
+    const vitals = element('div', 'stats-grid');
+    vitals.append(
+      readout(
+        'Temperature',
+        info.temperatureC === null
+          ? 'not reported'
+          : `${info.temperatureC.toFixed(1)} °C${info.temperatureC >= 80 ? ' — hot' : ''}`,
+      ),
+      readout('Powered on for', formatUptime(info.uptimeSeconds)),
+      // The two differ after a settings save, which restarts only the daemon. That gap is worth
+      // showing: a box whose service uptime keeps resetting is a box that is crash-looping.
+      readout('Software running for', formatUptime(info.processUptimeSeconds)),
+      readout(
+        'Processor',
+        `${info.cpu.usagePercent === null ? '—' : `${info.cpu.usagePercent.toFixed(0)}% busy`} · load ${info.cpu.loadAverage
+          .map((value) => value.toFixed(2))
+          .join(' ')} over ${String(info.cpu.cores)} core${info.cpu.cores === 1 ? '' : 's'}`,
+      ),
+      readout(
+        'Memory',
+        `${info.memory.usedPercent.toFixed(0)}% used · ${formatBytes(info.memory.availableBytes)} free of ${formatBytes(info.memory.totalBytes)}`,
+      ),
+    );
+    body.append(vitals);
+
+    /*
+     * The device answers from `/proc/meminfo`, which counts reclaimable cache as free. Anything
+     * else — a development machine — answers from `os.freemem()`, which does not, and so reports
+     * a perfectly healthy machine at 99% used. Saying which reading this is beats letting a
+     * developer chase a memory leak that is not there.
+     */
+    if (info.memory.source !== 'meminfo') {
+      body.append(
+        element(
+          'p',
+          'field-hint',
+          'This machine only reports memory that is completely unused, so the figure above ' +
+            'reads far higher than it should. A real box counts reclaimable cache as free.',
+        ),
+      );
+    }
+
+    if (info.wifi === null) {
+      body.append(
+        element(
+          'p',
+          'field-hint',
+          'No network agent is running here, so there is nothing to report about the Wi-Fi. ' +
+            'That is normal off a real device.',
+        ),
+      );
+    } else {
+      const wifi = element('div', 'stats-grid');
+      wifi.append(
+        readout('Network', info.wifi.ssid ?? (info.wifi.apActive ? 'setup hotspot' : 'none')),
+        readout('Signal', describeSignal(info.wifi.signal)),
+        readout(
+          'State',
+          info.wifi.online ? 'online' : info.wifi.apActive ? 'offering setup' : 'offline',
+        ),
+      );
+      body.append(element('h3', undefined, 'Wi-Fi'), wifi);
+      if (info.wifi.lastError !== null) {
+        body.append(element('p', 'field-hint is-bad', info.wifi.lastError));
+      }
+    }
+
+    if (info.storage.length > 0) {
+      body.append(element('h3', undefined, 'Storage'));
+      const storage = element('div', 'stats-grid');
+      for (const volume of info.storage) {
+        storage.append(
+          readout(
+            volume.label,
+            `${formatBytes(volume.freeBytes)} free of ${formatBytes(volume.totalBytes)} · ${volume.usedPercent.toFixed(0)}% used`,
+          ),
+        );
+      }
+      body.append(storage);
+    }
+
+    body.append(
+      element('h3', undefined, 'This box'),
+      element(
+        'p',
+        'field-hint mono-line',
+        [
+          info.host.model ?? `${info.host.platform} ${info.host.arch}`,
+          info.host.hostname,
+          `kernel ${info.host.release}`,
+          `node ${info.host.nodeVersion}`,
+        ].join(' · '),
+      ),
+    );
+
+    stamp.textContent = `Read at ${new Date(info.readAtMs).toLocaleTimeString()}.`;
+  };
+
+  const refresh = async (): Promise<void> => {
+    const info = await fetchSystem();
+    if (info) {
+      draw(info);
+      return;
+    }
+    body.replaceChildren();
+    stamp.textContent = 'The box did not answer — it may be restarting.';
+  };
+
+  /*
+   * Polls only while the card is open. `<details>` fires `toggle` for both directions, so this
+   * is the whole of the lifecycle: nothing runs behind a closed card, and nothing is left
+   * running when it closes.
+   */
+  let timer: number | null = null;
+  section.addEventListener('toggle', () => {
+    if (section.open) {
+      void refresh();
+      timer ??= window.setInterval(() => {
+        void refresh();
+      }, HEALTH_REFRESH_MS);
+      return;
+    }
+    if (timer !== null) {
+      window.clearInterval(timer);
+      timer = null;
+    }
+  });
+
+  section.append(renderPower());
+  return section;
+}
+
+/**
+ * Reboot and shut down.
+ *
+ * The box has no power button, and pulling the plug is exactly what lost an unread note once
+ * already (`audio/directories.ts`). "Shut down, then unplug" is the safe way to move it between
+ * rooms, and this is the only place to ask for it — the daemon itself is unprivileged, so the
+ * request goes to the root agent the same way a Wi-Fi join does.
+ *
+ * Both sit behind the same two-tap confirm as the factory reset, and neither reports success:
+ * the machine going away *is* the outcome, and a page still claiming "working…" is the honest
+ * picture of what the browser knows.
+ */
+function renderPower(): HTMLElement {
+  const block = element('div', 'wa-section');
+  block.append(
+    element('h3', undefined, 'Power'),
+    element(
+      'p',
+      'field-hint',
+      'The box has no power button. Shutting down first is the safe way to unplug it — a note ' +
+        'that arrived seconds ago is still being written to the card.',
+    ),
+  );
+
+  const power = (action: 'reboot' | 'poweroff'): Promise<void> =>
+    (async (): Promise<void> => {
+      let response: Response;
+      try {
+        response = await fetch('/api/system/power', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action }),
+        });
+      } catch {
+        // The connection dropping is what success looks like from here, so this is not an error.
+        return;
+      }
+      if (response.ok) return;
+      const detail: unknown = await response.json().catch(() => null);
+      throw new Error(describeApiError(detail) ?? 'the box would not accept that');
+    })();
+
+  block.append(
+    dangerConfirm({
+      label: 'Restart the box',
+      question: 'Restart now? It will be back in about a minute.',
+      confirmLabel: 'Restart',
+      busyLabel: 'Restarting…',
+      run: () => power('reboot'),
+    }),
+    dangerConfirm({
+      label: 'Shut the box down',
+      question:
+        'Shut down now? It can only be turned back on by unplugging it and plugging it in again.',
+      confirmLabel: 'Shut down',
+      busyLabel: 'Shutting down…',
+      run: () => power('poweroff'),
+      terminal: () => [
+        element('p', undefined, 'Shutting down.'),
+        element(
+          'p',
+          'field-hint',
+          'Give it half a minute, then unplug it. To turn it back on, plug it back in.',
+        ),
+      ],
+    }),
+  );
+
+  return block;
+}
+
 type SaveFn = (patch: unknown) => Promise<void>;
 
 /** The panel's flavour of the shared action button: a failure lands on the status line. */
@@ -1089,10 +1601,19 @@ function dangerConfirm(options: {
   readonly run: () => Promise<void>;
   /** Replaces the control entirely when the action leaves nothing further to press. */
   readonly terminal?: () => readonly HTMLElement[];
+  /**
+   * Renders the *first* tap as a plain control rather than a red one.
+   *
+   * For something irreversible but not grave — resetting the activity counters. Sitting in the
+   * same red as "Erase everything" would say the two are comparable, and they are not: one
+   * loses a tally, the other loses a parent's contacts and the WhatsApp link. The confirming
+   * tap stays red either way, because that one is still the tap that has to be meant.
+   */
+  readonly quiet?: boolean;
 }): HTMLElement {
   const zone = element('div', 'danger-zone');
 
-  const start = element('button', 'danger', options.label);
+  const start = element('button', options.quiet === true ? undefined : 'danger', options.label);
   start.type = 'button';
 
   const confirmRow = element('div', 'danger-confirm');
@@ -1250,7 +1771,7 @@ function sectionDivider(title: string): HTMLElement {
  * layer CSS-only the way the rest of the design system is. Page-local because the admin panel
  * is the only page with settings worth hiding.
  */
-function collapsibleCard(title: string): HTMLElement {
+function collapsibleCard(title: string): HTMLDetailsElement {
   const details = element('details', 'card card-collapsible');
   const summary = element('summary');
   summary.append(element('h2', undefined, title));
@@ -1320,6 +1841,14 @@ async function main(): Promise<void> {
 
   const onSave: SaveFn = (patch) => putConfig(patch);
 
+  /*
+   * Fetched before the page is laid out, not after: the card is the first thing on it, and
+   * appending it late would push everything else down under a parent's cursor. Null whenever
+   * the guard refused or the route is unreachable, in which case the section is simply absent —
+   * counters are the one thing here nobody needs a placeholder for.
+   */
+  const stats = config ? await fetchStats() : null;
+
   // Needs-attention until proven otherwise: an unreachable bridge or a malformed reply is
   // treated the same as "not linked", the safer default when the real state is unknown.
   const whatsappState = status ? await fetchWhatsAppState() : null;
@@ -1327,6 +1856,9 @@ async function main(): Promise<void> {
     whatsappState === null || WHATSAPP_NEEDS_ATTENTION.has(whatsappState);
 
   const whatsappSection = status ? renderWhatsApp(status, config, onSave) : null;
+
+  // Above everything, in both layouts. It reports rather than asks, which is why it goes first.
+  if (stats) sections.append(renderStats(stats));
 
   if (config && whatsappNeedsAttention) {
     // Nothing else is useful yet — contacts can't be assigned without a linked account, Wi-Fi
@@ -1338,6 +1870,7 @@ async function main(): Promise<void> {
       sectionDivider('Advanced'),
       renderAudio(config, onSave),
       renderButtonTimings(config, onSave),
+      renderHealth(),
       renderFactoryReset(),
     );
   } else if (config) {
@@ -1353,6 +1886,7 @@ async function main(): Promise<void> {
       sectionDivider('Advanced'),
       renderAudio(config, onSave),
       renderButtonTimings(config, onSave),
+      renderHealth(),
       renderFactoryReset(),
     );
   } else if (whatsappSection) {

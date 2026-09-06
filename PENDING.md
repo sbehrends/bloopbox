@@ -66,6 +66,25 @@ Added 2026-09-06 with `config.mode.readOnly`. Two gaps, both deliberate for now:
   developer testing read-only has only the checkbox to go on. Adding it is one field on the IPC
   contract.
 
+### The capture chain clips, and its analog gain buys no SNR
+
+Measured on the device 2026-09-06 — full write-up in [`docs/audio-quality.md`](docs/audio-quality.md).
+Reported as noise and an echoey quality on outgoing messages; the measurement says the input is
+**clipping**, which is what that usually sounds like.
+
+- Ambient room tone, nobody speaking, peaks at **−0.38 dBFS** at the shipped gain. No headroom.
+- SNR is flat at ~14–16 dB across a 24 dB range of analog gain, so turning the preamp up buys
+  nothing and spends all the headroom. The device measured had `micGainPercent: 100`.
+- The noise is **low-frequency**: 20–100 Hz is 12 dB above 300–1000 Hz. A high-pass at 100–120 Hz
+  removes the largest component at no cost to a voice.
+- Encoding already costs ~2.8 s for a 10 s note **before the whoosh plays**, and cleaning the signal
+  makes Opus *faster*, not slower — 1627 ms vs 2770 ms with denoise in the chain.
+
+Ordered fixes are in the doc. The first needs no code at all (`micGainPercent` is already a config
+field), but choosing its value needs a listening test with a real child's voice, which no sweep can
+substitute for. The 400–800 Hz lift is deliberately **not** actioned: the sweep went out through the
+HAT's own speaker, so the curve cannot separate speaker from enclosure.
+
 ### Loading after config save
 
 When a change is made in the Admin, the server restarts. Add a loading in the admin page that blocks the page. Ping the server until is back responsive.

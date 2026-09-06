@@ -114,6 +114,7 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
 | `docs/PRODUCT.md`          | What the device does. Behaviour, the LED matrix, the config schema. **Do not renumber its sections** — 39 source files cite them |
 | `docs/architecture.md`     | How the software is put together, and the decisions behind it             |
 | `docs/hardware.md`         | Parts, wiring, GPIO pins, ALSA. Authoritative over `box/hardware/`       |
+| `docs/audio-quality.md`    | Measured capture/playback quality: gain staging, noise, filter choices   |
 | `docs/deployment.md`       | Releases, the installer, the SD image, systemd, CI                       |
 | `docs/hardware-bringup.md` | The gated plan for the first real device, and the debugging kit           |
 | `docs/BRAND.md`            | Visual direction and the design system's locked decisions                |

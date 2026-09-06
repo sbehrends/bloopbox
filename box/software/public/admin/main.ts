@@ -319,25 +319,53 @@ function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
    * On the WM8960 the amplifier stages shipped at -20 dB and no boost, which no amount of
    * turning the first one up could reach — see docs/hardware.md.
    */
+  /*
+   * Every recommended value below is measured on a real device — docs/audio-quality.md has the
+   * tables. The panel repeats the conclusions rather than the numbers: a parent needs to know
+   * which way to turn a dial and what the symptom of overdoing it is, not the dB.
+   */
   section.append(
-    field('Speaker volume (%)', volume, 'Digital volume, before the amplifier.'),
+    element(
+      'p',
+      'field-hint',
+      'Which dial to turn: if messages the box PLAYS are too quiet, raise the amplifier volume ' +
+        'and the two boosts — that is where the loudness is. If messages the box SENDS sound ' +
+        'bad, that is microphone gain, and lowering it usually helps more than raising it.',
+    ),
+    field(
+      'Speaker volume (%)',
+      volume,
+      'Digital volume, before the amplifier. Recommended 80-100. This is the smallest of the ' +
+        'three playback stages — if it is already at 100 and the box is still quiet, the ' +
+        'loudness you are missing is in the two below.',
+    ),
     field(
       'Amplifier volume (%)',
       ampVolume,
-      'The analogue output stage. Most of the loudness lives here — the WM8960 HAT powers up 20 dB down.',
+      'The analogue output stage, and where most of the loudness lives — the WM8960 HAT powers ' +
+        'up 20 dB down. Recommended 100: measured on a real box, 50 to 100 gained 18 dB with no ' +
+        'measurable rise in distortion.',
     ),
-    field('Amplifier boost — DC (0-5)', boostDc),
+    field(
+      'Amplifier boost — DC (0-5)',
+      boostDc,
+      'Recommended 5. Worth about 5 dB over 0, and distortion did not measurably worsen up to 5.',
+    ),
     field(
       'Amplifier boost — AC (0-5)',
       boostAc,
-      'Class-D boost, normally set equal to DC. Louder, but too high distorts on a small speaker.',
+      'Class-D boost, normally set equal to DC. Recommended 5. Turn both down together if the ' +
+        'box buzzes or rattles on loud messages — that is the enclosure, and these are the stage ' +
+        'that trades headroom for loudness.',
     ),
     field(
       'Microphone gain (%)',
       gain,
-      'Not a "louder is better" setting: measured on the device, the signal-to-noise ratio barely ' +
-        'moves across this whole range, so all it really decides is headroom. At 100 a normal ' +
-        'speaking voice clips. Level is made up afterwards by the filter below.',
+      'Recommended 60-70. The one dial where higher is not better: measured on a real box, the ' +
+        'signal-to-noise ratio barely moves across the whole range, so all it really decides is ' +
+        'headroom. At 100 an ordinary speaking voice clips, which sounds harsh and crackly ' +
+        'rather than loud. If the person receiving says messages are too quiet, this is not the ' +
+        'fix — the level is set after recording, by the clean-up below.',
     ),
     checkboxField('Clean up the microphone (high-pass, denoise, normalise)', enhance),
     checkboxField('Match the loudness of arriving messages', normalise),
@@ -347,7 +375,12 @@ function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
       'Both are on by default and can be switched off to compare. Cleaning up the microphone also ' +
         'makes sending slightly quicker, because the encoder has less noise to work through.',
     ),
-    field('Maximum recording length (s)', maxSeconds),
+    field(
+      'Maximum recording length (s)',
+      maxSeconds,
+      'Recommended 30. A held button stops recording here, so it also bounds how much space one ' +
+        'stuck button can use.',
+    ),
     testSpeakerButton(),
     saveButton('Save audio', () =>
       onSave({

@@ -231,6 +231,36 @@ wrong. 65 leaves about 10 dB of headroom against a MacBook speaker at a normal l
 mouth is not a MacBook speaker — the value wants confirming by ear, which is what the switches and
 the number field are for.
 
+## Finding 6 — the playback chain has ~14 dB nobody is using, and it is not trading distortion for it
+
+Measured the same way: a full-scale 1 kHz tone out of the HAT, recorded back at a fixed low
+capture gain so the microphone could not clip and fake the result. "Distortion" is the second
+harmonic relative to the fundamental.
+
+| Setting | output | 2nd harmonic below fundamental |
+| ------- | ------ | ------------------------------ |
+| amp 50, boost 0 | −62.3 dB | −16.2 dB |
+| amp 70, boost 0 | −52.8 dB | −15.2 dB |
+| amp 85, boost 0 | −47.7 dB | −14.9 dB |
+| amp 100, boost 0 | −43.6 dB | −14.8 dB |
+| amp 70, boost 5 | −47.6 dB | −14.9 dB |
+| **amp 100, boost 5** | **−38.6 dB** | −14.7 dB |
+
+- `ampVolumePercent` 50 → 100 is worth **+18.6 dB**.
+- The boosts are worth a further **+5 dB**, at either amp setting.
+- **The distortion ratio is flat within 1.5 dB across all of it.** It does not degrade as the
+  chain gets louder, so the loudness is available rather than borrowed.
+
+The box measured was set to `ampVolumePercent` 70 with **both boosts at 0** — about **14 dB below**
+what the same hardware produces at 100/5. That is very likely the whole of the standing
+"playback is still underwhelming" complaint in `PENDING.md`.
+
+Two caveats. The absolute distortion figure (~−15 dB, which would be a poor number for a hi-fi) is
+a *round trip* through the box's own microphone and cannot be attributed to the speaker; what is
+reliable here is that it does not change with level. And a constant-amplitude tone is not a speech
+transient, so this says the amplifier is not clipping, not that a particular enclosure will not
+rattle — which is why the panel tells a parent to listen for buzzing rather than quoting a number.
+
 ## The reasoning behind each, in order of value
 
 1. **Stop clipping the input.** Lower `micGainPercent` from 100. It is already a config field and

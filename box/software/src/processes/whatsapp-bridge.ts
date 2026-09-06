@@ -8,6 +8,7 @@
  * The two are deliberately separate processes: WhatsApp is an unofficial API on a release
  * candidate, and a crash here must not take the buttons and lights with it.
  */
+import { notesDirectory } from '../audio/directories.ts';
 import { rm } from 'node:fs/promises';
 import { io, type Socket } from 'socket.io-client';
 import { probeDurationMs } from '../audio/ffmpeg.ts';
@@ -22,7 +23,7 @@ const log = childLogger('whatsapp');
 /** Where Baileys keeps its credentials. Must be on the writable volume, and is gitignored. */
 const AUTH_DIRECTORY = process.env['WA_AUTH_DIR'] ?? '/data/auth_info';
 /** Inbound voice notes land here, alongside outgoing recordings. Should be tmpfs. */
-const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/bloopbox';
+const NOTES_DIRECTORY = notesDirectory();
 /** The hardware server's Socket.io endpoint. */
 const HARDWARE_URL = process.env['HARDWARE_URL'] ?? 'http://localhost:3000';
 
@@ -158,7 +159,7 @@ async function main(): Promise<void> {
 
     const { target } = decision;
     try {
-      const { path, byteLength } = await note.download(RECORDING_DIRECTORY, target.index);
+      const { path, byteLength } = await note.download(NOTES_DIRECTORY, target.index);
       const durationMs = note.seconds !== null ? note.seconds * 1000 : await probeDurationMs(path);
 
       rememberRead(note.messageId, note.raw.key);

@@ -287,7 +287,7 @@ as the recovery route when even the hotspot cannot be reached.
 Radio behaviour cannot be tested in a container, so milestones 2 and 3 have landed as a single
 verification gap (below).
 
-### Unread notes are recovered at boot — but only within 8 h, and not across a power cut
+### Unread notes are recovered at boot — within 8 h, and now across a power cut too
 
 **Built** on 2026-08-01, in `src/audio/recovery.ts`. No read-state store was needed: playback
 deletes a note's file, so *present on disk* already means *unread*, and the recordings directory is
@@ -303,10 +303,13 @@ would teach a parent to distrust the sound.
 
 What remains open, in the order it will bite:
 
-1. _A power cycle still wipes everything._ `RECORDING_DIR` is `/run/bloopbox`, a tmpfs, and
-   someone unplugging the box is the most likely restart in a child's room. Only daemon restarts —
-   config saves, crashes, updates — are covered. Surviving a power cut means writing a child's
-   voice notes to the SD card: a different decision, with a privacy cost and a wear cost.
+1. ~~_A power cycle still wipes everything._~~ **Fixed 2026-09-06**, after it happened on the real
+   device: a note arrived, the lamp blinked, the power went out, and it was gone. Inbound notes now
+   live in `NOTES_DIR` (`/data/notes`) while outbound captures and derived WAVs stay in
+   `RECORDING_DIR` (`/run/bloopbox`), so a power cut costs nothing the child recorded and nothing
+   regenerable. The privacy cost was accepted deliberately — `/data` already holds the WhatsApp
+   session, notes are deleted on play and swept at 48 h, and the child's own voice never reaches
+   the card. `src/audio/directories.ts` has the reasoning.
 2. _A recovered note still cannot be marked read upstream_, because the bridge's `pendingReads` is
    memory too (below). It plays, and the sender still never sees a receipt. These two want solving
    together.

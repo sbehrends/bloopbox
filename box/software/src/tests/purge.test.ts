@@ -1,3 +1,4 @@
+import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -242,5 +243,38 @@ describe('AudioPurger scheduling', () => {
     expect(purger.running).toBe(true);
     purger.stop();
     expect(purger.running).toBe(false);
+  });
+});
+
+/**
+ * Where audio lives (`audio/directories.ts`).
+ *
+ * The reason these are asserted at all: on 2026-09-06 a note arrived, the lamp blinked, the
+ * power went out, and the note was gone — `RECORDING_DIR` was a tmpfs and playback deleting a
+ * file is what makes "present on disk" mean "unread", so the audio and the record of it went
+ * together. The split below is the fix, and the second test is the one that keeps it working.
+ */
+describe('audio directories', () => {
+  it('keeps captures in RAM and notes on the card', () => {
+    // The child's own voice never reaches removable storage; an arriving note survives a
+    // power cut. Those are two different promises and they need two directories.
+    expect(recordingDirectory({})).toBe('/run/bloopbox');
+    expect(notesDirectory({})).toBe('/data/notes');
+    expect(notesDirectory({})).not.toBe(recordingDirectory({}));
+  });
+
+  it('does not resolve notes through RECORDING_DIR', () => {
+    /*
+     * The trap this exists for. `/etc/bloopbox/environment` sets RECORDING_DIR, and an upgrade
+     * *keeps that file* — so a "sensible" fallback from NOTES_DIR to RECORDING_DIR would send
+     * every already-installed box back to the tmpfs, which is precisely the set of boxes the
+     * fix was written for. It would also stay green in a harness that sets both.
+     */
+    expect(notesDirectory({ RECORDING_DIR: '/run/bloopbox' })).toBe('/data/notes');
+  });
+
+  it('lets each be overridden on its own', () => {
+    expect(recordingDirectory({ RECORDING_DIR: '/tmp/caps' })).toBe('/tmp/caps');
+    expect(notesDirectory({ NOTES_DIR: '/tmp/notes' })).toBe('/tmp/notes');
   });
 });

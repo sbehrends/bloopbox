@@ -59,7 +59,8 @@ that bite in development:
 | ---------------- | ------------------- | ------------------------------------------------ |
 | `SIMULATOR_MODE` | unset → `gpio`      | Selects the HAL. `HAL_DRIVER=mock` wins over it   |
 | `CONFIG_PATH`    | `/data/config.json` | Point at `./data/config.json` locally             |
-| `RECORDING_DIR`  | `/tmp/bloopbox`     | `/run/bloopbox` on the device (tmpfs)             |
+| `RECORDING_DIR`  | `/run/bloopbox`     | Outbound captures + derived WAVs. tmpfs, by design |
+| `NOTES_DIR`      | `/data/notes`       | **Inbound notes, on the card.** Dev must set it — `/data` is not there |
 | `BRIDGE_TOKEN`   | `''`                | Shared secret both processes must agree on        |
 | `PORTAL_PORT`    | `80` (dev: `8080`)  | Captive-portal listener; `0` disables it          |
 
@@ -297,7 +298,8 @@ the firmware (`gpio=17,27,22=ip,pu`, written into `/boot/firmware/config.txt` by
   `configManager.js` the defaults at `../../config.default.json`, both relative to `dist/` — that
   layout is load-bearing, not tidiness.
 - **`RECORDING_DIR` is `/run/bloopbox` on the device**, not `/tmp`: `/run` is already a tmpfs, so
-  `RuntimeDirectory=` in both units gives audio-in-RAM with no mount unit.
+  `RuntimeDirectory=` in both units gives audio-in-RAM with no mount unit. `NOTES_DIR` is
+  `/data/notes` and needs no unit change — `ReadWritePaths=@DATA_DIR@` is already in both.
 - `npm run release:smoke` after touching anything under `deploy/` or `packaging/`.
 - `BUILDX_EXTRA_ARGS` is the hook CI uses to add `--cache-from/--cache-to type=gha` to the buildx
   invocation. Unset locally, so a local build is unchanged.
@@ -355,9 +357,15 @@ work around it locally. Full reasoning for each is in
 
 ## Safety constraints (these protect a real device in a child's room)
 
-- Audio recordings live in **tmpfs only** — `/run/bloopbox` on the device. Unread audio is purged
-  after **48 h** whether heard or not; playback deletes a note immediately, which is what makes
-  *present on disk* mean *unread*.
+- **The two directions do not share a directory** (`src/audio/directories.ts`). Outbound captures
+  and every derived file stay in tmpfs (`RECORDING_DIR`, `/run/bloopbox`) — nothing the child
+  records ever reaches the card. Inbound notes are on the card (`NOTES_DIR`, `/data/notes`) so an
+  unheard note survives someone unplugging the box, which used to lose it outright. Unread audio is
+  purged after **48 h** whether heard or not; playback deletes a note immediately, which is what
+  makes *present on disk* mean *unread* — and is why losing the directory lost the unread flag too.
+- **`notesDirectory()` must never fall back to `RECORDING_DIR`.** `/etc/bloopbox/environment` sets
+  that variable and an upgrade *keeps the file*, so a fallback silently puts every already-installed
+  box back in RAM while the tests stay green. Pinned by `purge.test.ts`.
 - `/data/config.json` writes are **atomic** (tmp file → `fsync` → `rename`). A half-written config
   during power loss would brick the device.
 - Invalid or missing config falls back to `config.default.json` **in RAM** and boots into

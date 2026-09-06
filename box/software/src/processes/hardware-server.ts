@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
+import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
 import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
@@ -71,7 +72,12 @@ const PORT = Number(process.env['PORT'] ?? 3000);
  */
 const PORTAL_PORT = Number(process.env['PORTAL_PORT'] ?? 80);
 /** Audio lives in tmpfs on the device; override for dev. */
-const RECORDING_DIRECTORY = process.env['RECORDING_DIR'] ?? '/tmp/bloopbox';
+const RECORDING_DIRECTORY = recordingDirectory();
+/**
+ * Inbound notes, on the card rather than in RAM — see `audio/directories.ts`. Kept apart from
+ * the captures above so a power cut costs nothing the child recorded and nothing derived.
+ */
+const NOTES_DIRECTORY = notesDirectory();
 /** Built UI assets. Absent in dev, where Vite serves them on :5174. */
 const STATIC_ROOT = resolve(import.meta.dirname, '../../dist/public');
 
@@ -310,7 +316,7 @@ async function main(): Promise<void> {
   });
 
   app.use('/api', createApiRouter(routesContext));
-  app.use('/audio', createAudioRouter(RECORDING_DIRECTORY));
+  app.use('/audio', createAudioRouter([RECORDING_DIRECTORY, NOTES_DIRECTORY]));
   app.use('/sounds', express.static(SOUNDS_DIRECTORY, { maxAge: '1h' }));
 
   if (existsSync(STATIC_ROOT)) {
@@ -352,7 +358,7 @@ async function main(): Promise<void> {
              * Synthesised rather than copied from a cue so it is long and loud enough to
              * actually hear, with a per-button pitch.
              */
-            const path = resolve(RECORDING_DIRECTORY, `${messageId}.wav`);
+            const path = resolve(NOTES_DIRECTORY, `${messageId}.wav`);
             await generateTestNote(path, index);
             controller.handleIncoming(index, {
               messageId,
@@ -406,6 +412,20 @@ async function main(): Promise<void> {
     keep: controller.protectedFiles(),
     onResult: (result) => {
       log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'audio purged');
+    },
+  });
+
+  /*
+   * The same sweep over the notes on the card. Not optional housekeeping now that they outlive
+   * a reboot: the tmpfs used to bound itself by being wiped, and nothing bounds `/data` except
+   * this. The 48 h TTL is what keeps a child's voice notes from accumulating on removable
+   * storage indefinitely, so it is as much a privacy control here as a disk-space one.
+   */
+  const notesPurger = new AudioPurger({
+    directory: NOTES_DIRECTORY,
+    keep: controller.protectedFiles(),
+    onResult: (result) => {
+      log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'notes purged');
     },
   });
 
@@ -488,7 +508,7 @@ async function main(): Promise<void> {
    * `protectedFiles()` when the first sweep runs. Awaited rather than fired off, so the boot
    * window closes on a device whose unread lights already tell the truth.
    */
-  const recovered = await recoverUnplayedNotes({ directory: RECORDING_DIRECTORY });
+  const recovered = await recoverUnplayedNotes({ directory: NOTES_DIRECTORY });
   for (const { index, note } of recovered.notes) controller.restoreUnread(index, note);
   if (recovered.notes.length > 0 || recovered.expired > 0 || recovered.unattributable > 0) {
     log.info(
@@ -503,6 +523,7 @@ async function main(): Promise<void> {
   }
 
   purger.start();
+  if (NOTES_DIRECTORY !== RECORDING_DIRECTORY) notesPurger.start();
   await netWatcher.start();
 
   // Push status to any tab whenever the device changes.
@@ -570,7 +591,9 @@ async function main(): Promise<void> {
       netWatcher.stop();
       portalServer?.close();
       purger.stop();
+      notesPurger.stop();
       await purger.whenIdle();
+      await notesPurger.whenIdle();
       await controller.stop();
       // Leaves every LED off, per the HAL contract.
       await hal.dispose();

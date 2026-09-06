@@ -515,10 +515,23 @@ Rules that keep it honest:
 | `soundFiles.ts`     | Where the generated cue WAVs live                                           |
 | `testNote.ts`       | Synthesised tones for the simulator's injectors                             |
 
-Recordings live in a **tmpfs** — `/run/bloopbox` on the device, via `RuntimeDirectory=` in both
-units. `/run` is already a tmpfs, so audio lives in RAM with no mount unit and no fstab entry, and
-cannot survive a power cut or fill the card. `RuntimeDirectoryPreserve=yes` keeps it across the
-restart-on-save, and both units declare the same directory because they hand each other file paths.
+**The two directions live in different places, and `src/audio/directories.ts` is the only module
+that decides where.** Both daemons resolve the paths through it rather than each reading
+`process.env`, because a mismatch is silent and total: the bridge writes an arriving note to one
+path while the server scans another, nothing plays, nothing recovers, and no error appears anywhere.
+
+*Outbound captures and every derived file* live in a **tmpfs** — `/run/bloopbox`, via
+`RuntimeDirectory=` in both units, so no mount unit and no fstab entry. Nothing the child records is
+ever at rest, and decoded `play-*.wav` files — regenerable and several times the size of their
+source — never accumulate on the card. `RuntimeDirectoryPreserve=yes` keeps this across the
+restart-on-save, and both units declare it because they hand each other file paths.
+
+*Inbound notes* live on the card at **`/data/notes`**, so an unheard note survives being unplugged.
+It needed no unit change: `ReadWritePaths=@DATA_DIR@` was already in both. `notesDirectory()`
+deliberately has **no fallback to `RECORDING_DIR`** — `/etc/bloopbox/environment` sets that
+variable and an upgrade keeps the file, so a fallback would resolve every already-installed box
+straight back to the tmpfs, which is exactly the population the change was written for, and the
+tests would stay green because a harness sets both.
 
 Unread audio is purged after **48 hours** whether it has been heard or not. Playback deletes a
 note's file immediately, so *present on disk* means *unread* and the directory is the ledger —
@@ -619,7 +632,8 @@ are testing configuration at all.
 | -------------------------------------------- | -------------------------- | -------------------------------------------------------- |
 | `SIMULATOR_MODE=true`                        | unset → `gpio`             | Selects the HAL. `HAL_DRIVER=mock` wins over it           |
 | `CONFIG_PATH`                                | `/data/config.json`        | Point at `./data/config.json` locally                     |
-| `RECORDING_DIR`                              | `/tmp/bloopbox`            | `/run/bloopbox` on the device (tmpfs)                     |
+| `RECORDING_DIR`                              | `/run/bloopbox`            | Outbound captures and derived WAVs. tmpfs, deliberately   |
+| `NOTES_DIR`                                  | `/data/notes`              | Inbound notes, on the card so they survive a power cut. **No fallback to `RECORDING_DIR`** — see above |
 | `WA_AUTH_DIR`                                | `/data/auth_info`          | Baileys credentials                                       |
 | `BRIDGE_TOKEN`                               | `''`                       | Shared secret both processes must agree on                |
 | `HARDWARE_URL`                               | `http://localhost:3000`    | Where the bridge dials                                    |

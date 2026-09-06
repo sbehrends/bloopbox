@@ -160,7 +160,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
   const app = express();
   app.use(express.json({ limit: '128kb' }));
   app.use('/api', createApiRouter(context));
-  app.use('/audio', createAudioRouter(recordingDirectory));
+  app.use('/audio', createAudioRouter([recordingDirectory]));
 
   const server: Server = createServer(app);
   await new Promise<void>((resolveListening) => {

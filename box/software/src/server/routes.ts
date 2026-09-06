@@ -465,22 +465,53 @@ export function createApiRouter(context: RoutesContext): Router {
  * Filenames are taken from the request, so `basename` plus a prefix check keeps a crafted
  * path from escaping the recordings directory.
  */
-export function createAudioRouter(recordingDirectory: string): Router {
+/**
+ * Serves audio to the browser simulator, from every directory audio can live in.
+ *
+ * Takes a list because outbound captures and inbound notes no longer share one: captures stay
+ * in the tmpfs and notes live on the card (`audio/directories.ts`). The simulator asks for a
+ * bare filename and does not know, or need to know, which of the two answered.
+ *
+ * `basename` first and a prefix check per root, exactly as before — the containment guard is
+ * per candidate directory, so adding a root cannot widen what a crafted name can reach.
+ */
+export function createAudioRouter(directories: readonly string[]): Router {
   const router = Router();
-  const root = resolve(recordingDirectory);
+  // De-duplicated: off-device the two are routinely configured to the same path, and a repeat
+  // root would just mean sendFile losing the same race with itself twice.
+  const roots = [...new Set(directories.map((directory) => resolve(directory)))];
 
   router.get('/:name', (req, res) => {
     const name = basename(req.params.name);
-    const path = resolve(root, name);
+    // Resolved and checked against its own root, so containment cannot depend on two arrays
+    // staying index-aligned.
+    const candidates = roots.flatMap((root) => {
+      const path = resolve(root, name);
+      return path.startsWith(`${root}/`) ? [path] : [];
+    });
 
-    if (!path.startsWith(`${root}/`)) {
+    const [first, ...rest] = candidates;
+    if (first === undefined) {
       res.status(400).json({ error: 'invalid path' });
       return;
     }
 
-    res.sendFile(path, (error: unknown) => {
-      if (error && !res.headersSent) res.status(404).json({ error: 'not found' });
-    });
+    /*
+     * First root that has it wins; only the last failure may answer 404, or an early miss
+     * would report "not found" for a file the next directory holds.
+     */
+    const trySend = (path: string, remaining: readonly string[]): void => {
+      res.sendFile(path, (error: unknown) => {
+        if (!error || res.headersSent) return;
+        const [next, ...after] = remaining;
+        if (next === undefined) {
+          res.status(404).json({ error: 'not found' });
+          return;
+        }
+        trySend(next, after);
+      });
+    };
+    trySend(first, rest);
   });
 
   return router;

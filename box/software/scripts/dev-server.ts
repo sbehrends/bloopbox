@@ -37,6 +37,13 @@ function start(): void {
        * dev boot, which is how people learn to ignore warnings.
        */
       PORTAL_PORT: process.env['PORTAL_PORT'] ?? '8080',
+      /*
+       * Inbound notes live on the card at `/data/notes` on the device, which does not exist on
+       * a laptop. `notesDirectory()` deliberately has no fallback to RECORDING_DIR — that
+       * fallback would resolve every already-installed box back to the tmpfs, since their
+       * kept environment file sets it — so development has to name the path itself.
+       */
+      NOTES_DIR: process.env['NOTES_DIR'] ?? resolve(process.cwd(), 'data/notes'),
     },
   });
 

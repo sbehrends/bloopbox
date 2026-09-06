@@ -573,17 +573,29 @@ else.
 
 | Measure | Status |
 | ------- | ------ |
-| **RAM disk for audio (`tmpfs`)** | **Built.** Recordings, ffmpeg conversion and playback buffers live in `/run/bloopbox`, via `RuntimeDirectory=` in both units. `/run` is already a tmpfs, so audio never touches the card, cannot survive a power cut and cannot fill the SD card |
+| **RAM disk for outbound audio (`tmpfs`)** | **Built.** Captures, ffmpeg conversion and decoded playback buffers live in `/run/bloopbox`, via `RuntimeDirectory=` in both units. `/run` is already a tmpfs, so **nothing the child records** ever touches the card or can fill it |
+| **Inbound notes on the card** | **Built 2026-09-06.** Arriving notes go to `/data/notes` so an unheard one survives a power cut — the most likely restart in a child's room. Bounded by the same 48 h purge, and deleted the moment they are played. See §1 |
 | **Automatic purge (TTL)** | **Built.** Audio is deleted 48 h after creation whether it has been heard or not, swept hourly. Playback deletes a note immediately |
 | **Atomic config writes** | **Built.** Temp file → `fsync` → `rename`. A half-written config during power loss would brick the device |
 | **Fallback on invalid config** | **Built.** A missing or corrupt `/data/config.json` falls back to `config.default.json` **in RAM** and boots into onboarding. It never crashes the daemon |
 | **Hardware watchdog** | **Built.** BCM watchdog plus its systemd half, 15 s, so a wedged device reboots itself |
 | **Read-only root filesystem (`overlayfs`)** | **Specified, not built.** `/data` currently lives *on* the root filesystem, so enabling the overlay would send every setting and the WhatsApp credentials into a RAM overlay, to vanish on reboot — a worse failure, and a silent one. It needs `/data` on its own partition first. See `PENDING.md` |
 
-Recordings are additionally **rebuilt into the unread queue after a daemon restart**, within an
-8-hour window, by scanning the recordings directory. A *power cycle* still loses them, because the
-directory is a tmpfs — surviving that would mean writing a child's voice to the SD card, which is a
-different decision with a privacy cost and a wear cost.
+Notes are **rebuilt into the unread queue at boot**, within an 8-hour window, by scanning the notes
+directory. Since 2026-09-06 that directory is on the card, so this now survives a **power cycle**
+too, not only a daemon restart.
+
+It did not always. A note arrived, the lamp blinked, the power went out, and the note was gone —
+because playback *deletes* a note's file, which makes "present on disk" the unread flag itself.
+There is no second read-state store, so a directory in RAM lost the audio and the record that it had
+ever existed, together. WhatsApp will not re-deliver a message it has already handed over, so the
+note was unrecoverable.
+
+The privacy cost was weighed, not waved through. `/data` already holds `auth_info`, the linked
+WhatsApp session — anyone who can take the card can already speak as this account, which is worse
+than reading one voice note. Against that, a note is deleted the instant it is played, swept at 48 h
+regardless, and **the child's own recordings still never leave RAM**. The promise that changed is
+"no audio is ever at rest". The promise kept is "nothing the child records is ever at rest".
 
 ---
 

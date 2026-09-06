@@ -16,10 +16,20 @@ BRIDGE_TOKEN=@BRIDGE_TOKEN@
 CONFIG_PATH=@DATA_DIR@/config.json
 WA_AUTH_DIR=@DATA_DIR@/auth_info
 
-# Voice notes, in RAM. /run is a tmpfs and systemd creates this directory for both units
-# (RuntimeDirectory=bloopbox), so recordings can never survive a power cut or fill
-# the SD card. Do not point this at a path on disk.
+# Outbound captures and every derived file, in RAM. /run is a tmpfs and systemd creates this
+# directory for both units (RuntimeDirectory=bloopbox), so nothing the child records survives
+# a power cut or reaches the SD card. Do not point this at a path on disk.
 RECORDING_DIR=/run/bloopbox
+
+# Inbound voice notes, on the card, so an arriving note is still waiting after someone unplugs
+# the box — the most likely restart in a child's room. Playing a note deletes it and the purge
+# sweeps the rest at 48 h, so this is bounded in both directions.
+#
+# Leaving this unset is fine: the default is this same path. That is deliberate, because an
+# upgrade keeps the existing copy of this file, and a box installed before the split has no
+# NOTES_DIR line to inherit. Do not "fix" that with a fallback to RECORDING_DIR — it would put
+# every such box straight back in RAM.
+NOTES_DIR=/data/notes
 
 NODE_ENV=production
 # debug is the dev default and is far too chatty for an SD card.

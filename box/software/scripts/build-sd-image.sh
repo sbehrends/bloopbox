@@ -277,7 +277,7 @@ chroot "${MOUNT_POINT}" /bin/bash -euo pipefail -c "
 "
 
 step "naming the device ${NEW_HOSTNAME}"
-# Before the install, so the "open http://<host>.local:3000/admin/" line install.sh prints
+# Before the install, so the "open http://<host>.local/" line install.sh prints
 # names this device rather than whatever is running the build.
 echo "${NEW_HOSTNAME}" > "${MOUNT_POINT}/etc/hostname"
 # Keep /etc/hosts consistent or sudo complains about resolving the host on every call.
@@ -391,7 +391,7 @@ Built $(date -u +%Y-%m-%dT%H:%M:%SZ) on ${PI_OS_IMAGE}
 This card is ready to run. Put it in the Pi and power up.
 
   Wi-Fi        edit bloopbox-wifi.txt on this partition before first boot
-  Admin panel  http://${NEW_HOSTNAME}.local:3000/admin/
+  Settings     http://${NEW_HOSTNAME}.local/
   ssh          ${LOGIN_USER}@${NEW_HOSTNAME}.local
   Health       sudo bloopbox-doctor
   Logs         journalctl -u bloopbox-hardware -u bloopbox-whatsapp -f

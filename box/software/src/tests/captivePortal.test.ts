@@ -49,6 +49,17 @@ describe('while the hotspot is up', () => {
     expect(results).toEqual(paths.map((path) => [path, false]));
   });
 
+  it('keeps the root for onboarding, even though the panel owns it on a network', () => {
+    /*
+     * `/` is the settings panel once the box is on a real network (hardware-server.ts). That
+     * must not reach back into onboarding: while the hotspot is up the root is still a probe
+     * target, so it has to redirect here and never fall through to the panel. This is the one
+     * assertion standing between "typed the box name, got settings" and "joined the setup
+     * hotspot, got settings instead of the portal".
+     */
+    expect(shouldRedirectToPortal(get('/'), true)).toBe(true);
+  });
+
   it('never redirects a POST', () => {
     // A redirected POST loses its body, and the join is a POST.
     expect(shouldRedirectToPortal({ path: '/anything', method: 'POST' }, true)).toBe(false);

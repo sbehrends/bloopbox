@@ -314,6 +314,25 @@ async function main(): Promise<void> {
   app.use('/sounds', express.static(SOUNDS_DIRECTORY, { maxAge: '1h' }));
 
   if (existsSync(STATIC_ROOT)) {
+    /*
+     * `/` is the settings panel.
+     *
+     * There is no index.html at the static root, so this used to be a plain 404: a parent who
+     * typed the box's name got nothing, and the address that actually worked was
+     * `<host>:3000/admin/` — a port and a path nobody would guess and everybody had to be told.
+     *
+     * Served rather than redirected, so the address bar keeps saying `http://bloopbox.local`.
+     * Vite emits absolute asset paths (`/assets/…`), so the very same file works at either
+     * path; `/admin/` keeps answering for the links and bookmarks already out there.
+     *
+     * This deliberately sits *after* the captive-portal middleware. While the setup hotspot is
+     * up, `/` is not a passthrough prefix, so a phone's probe is still redirected to the portal
+     * and never reaches this line — onboarding keeps the root, and the panel only claims it
+     * once the box is on a real network.
+     */
+    app.get('/', (_req, res) => {
+      res.sendFile(resolve(STATIC_ROOT, 'admin/index.html'));
+    });
     app.use(express.static(STATIC_ROOT));
   } else {
     log.warn('built UI not found — run `npm run dev:web` for the Vite dev server on :5174');

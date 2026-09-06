@@ -160,6 +160,11 @@ accepted risk**, because the guard cannot tell that state from mid-onboarding an
 would make the device recoverable only by pulling the SD card. Both halves are pinned by
 `src/tests/adminAuth.test.ts`; the watch item in `PENDING.md` has the reasoning.
 
+**`/` is the settings panel and `:80` is the same app, not a second one.** The root route is
+`sendFile` of `dist/public/admin/index.html` and sits *after* the captive-portal middleware, so the
+hotspot still owns `/` during onboarding — that ordering is the safety property, and
+`captivePortal.test.ts` pins it. `/admin/` still answers.
+
 The app also listens on **:80** (`PORTAL_PORT`) because a phone's captive-portal probe asks nowhere
 else; off-device that bind fails with `EACCES` and is logged and ignored. The bridge authenticates
 separately with `BRIDGE_TOKEN` on the `x-bridge-token` header, compared in constant time.

@@ -130,8 +130,12 @@ settings password there instead.
 ### The admin panel
 
 ```
-http://bloopbox.local:3000/admin/
+http://bloopbox.local
 ```
+
+That is the whole address — no port, no path. `/admin/` still answers, for links and bookmarks
+already written down, and `:3000` still answers alongside `:80` for a box where the privileged
+bind did not happen.
 
 Sign in with the settings password (any username). Seven sections:
 

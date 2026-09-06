@@ -506,6 +506,25 @@ ungated is not a leak, but it is a page a parent could stumble into. Options if 
 drop the entry from `vite.config.ts` for release builds, or move it behind `requireAdmin`. Left
 shipping on purpose: a style guide that is not built alongside what it documents rots.
 
+### The `cmd | grep -q` tripwire was live in the release smoke test
+
+Found 2026-09-06 while adding a `GET /` check beside the existing `GET /admin/` one, by copying
+the line above it. `scripts/smoke-test-release.sh` runs under `set -euo pipefail`, and both
+checks were `curl … | grep -qi "<html"` — the exact pattern the tier-1 and tier-2 tripwires warn
+against, and the one the doctor check twenty lines earlier has a comment explaining it avoided.
+
+It never failed, and that is the interesting part: `grep -q` exits at its first match, but the
+admin page is a few KB and fits the 64 KB pipe buffer, so `curl` finishes writing and exits
+before the read end closes. There is no SIGPIPE, so `pipefail` has nothing to report. The check
+passes because of a size relationship between the page and a kernel buffer — not because it is
+correct. Grow the page past the buffer and it becomes an intermittent false failure in CI, of the
+kind that takes a day to attribute.
+
+Both are now captured into a variable and matched with `case`, like the doctor check. Worth
+knowing more generally: the tripwire's "this bit three separate checks during bring-up" wording
+suggests a loud failure, but the dangerous version is this one — silent, passing, and waiting on
+a payload size.
+
 ## Verification gaps
 
 These are things built but not proven. Not bugs — just claims that have not been tested.

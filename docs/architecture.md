@@ -420,6 +420,22 @@ The app also listens on **:80** (`PORTAL_PORT`, via `AmbientCapabilities=CAP_NET
 because a phone's captive-portal probe asks nowhere else. Off-device that bind fails with `EACCES`
 and is logged and ignored.
 
+It is the **same Express app on both ports**, not a second cut-down server — so everything the box
+serves has always been reachable on `:80`, and the address a parent is given is simply
+`http://bloopbox.local`. `:3000` stays because it is the primary listener, it is what the
+development proxy and the smoke test use, and it is the fallback on a box where the privileged bind
+did not happen.
+
+**`/` is the settings panel**, served (not redirected) from `dist/public/admin/index.html`; Vite
+emits absolute asset paths, so one file works at both `/` and `/admin/`, and the older path keeps
+answering. It used to be a plain 404 — there is no index.html at the static root — which is why the
+only address that worked was `<host>:3000/admin/`, a port and a path nobody guesses.
+
+The root route sits **after** the captive-portal middleware, and that order is the whole safety
+property: `/` is not a passthrough prefix, so while the hotspot is up a probe for the root is still
+302'd to the portal and never reaches the panel. Onboarding keeps the root; the panel only claims it
+on a real network. `captivePortal.test.ts` asserts that directly.
+
 The captive-portal catch-all 302s anything it does not own to the portal **while the hotspot is up
 and never otherwise**, deliberately failing Android's `generate_204` and Apple's
 `hotspot-detect.html` — answering those correctly is exactly what suppresses the sign-in popup.

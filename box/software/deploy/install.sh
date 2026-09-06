@@ -471,7 +471,7 @@ cat <<EOF
 
 Installed.
 
-  admin panel   http://${HOSTNAME_NOW}.local:3000/admin/
+  settings      http://${HOSTNAME_NOW}.local/          (or :3000/ if port 80 is taken)
   health check  sudo bloopbox-doctor
   audio test    sudo bloopbox-audio-test         (plays a cue, records you, plays it back)
   diagnostics   sudo bloopbox-diagnostics        (a redacted bundle to send somewhere)
@@ -480,7 +480,7 @@ Installed.
   logs          journalctl -u bloopbox-hardware -u bloopbox-whatsapp -u bloopbox-net -f
   config        ${DATA_DIR}/config.json   (saving from the admin panel restarts the daemon)
 
-First run: open the admin panel, set a password, link WhatsApp, assign the three buttons.
+First run: open the settings page, set a password, link WhatsApp, assign the three buttons.
 EOF
 
 # Split deliberately: the HAT is the standard audio hardware now, and it says nothing about how

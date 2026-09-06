@@ -100,9 +100,23 @@ docker run --rm \
 
     # The built admin panel has to be served from the same origin on the device; if the
     # dist/public copy landed in the wrong place the daemon silently falls back to no UI.
-    curl -fsS --max-time 5 http://127.0.0.1:3000/admin/ | grep -qi "<html" \
-      || { echo "FAIL: the admin panel is not being served"; cat /tmp/server.log; exit 1; }
-    echo "GET /admin/ -> ok"
+    # Captured, not piped into grep -q: an early-exiting grep SIGPIPEs curl and pipefail then
+    # reports a passing check as failed. It survives today only because the page fits the pipe
+    # buffer, which is a property of the page, not of the check.
+    ADMIN_HTML="$( curl -fsS --max-time 5 http://127.0.0.1:3000/admin/ || true )"
+    case "${ADMIN_HTML}" in
+      *"<html"*|*"<HTML"*) echo "GET /admin/ -> ok" ;;
+      *) echo "FAIL: the admin panel is not being served"; cat /tmp/server.log; exit 1 ;;
+    esac
+
+    # And the same panel at the root, which is the address a parent is actually given. This
+    # is the end-to-end half of the root route: the unit test proves the hotspot still keeps
+    # `/`, and only a running server proves the panel is what answers it otherwise.
+    ROOT_HTML="$( curl -fsS --max-time 5 http://127.0.0.1:3000/ || true )"
+    case "${ROOT_HTML}" in
+      *"<html"*|*"<HTML"*) echo "GET / -> ok" ;;
+      *) echo "FAIL: the panel is not served at /"; cat /tmp/server.log; exit 1 ;;
+    esac
 
     # A generated cue, served from dist/audio/sounds.
     curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:3000/sounds/pop.wav \

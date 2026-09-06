@@ -100,6 +100,8 @@ export class DeviceController {
       timings: this.#config.current.buttons,
       maxRecordingSeconds: this.#audio().maxRecordingSeconds,
       hasUnread: (index) => this.state.hasUnread(index),
+      // Receive-only: no hold ever opens a microphone. Snapshot like every other setting.
+      readOnly: this.#config.current.mode.readOnly,
     });
 
     this.#animator = new LedAnimator(options.hal, this.state.snapshot());
@@ -280,6 +282,18 @@ export class DeviceController {
      */
     this.#interpreter.on('captureResumed', ({ index }) => {
       this.state.setRecording(index);
+    });
+
+    /*
+     * A read-only box refusing a hold. The "oops" rather than a cue of its own: to a child
+     * this is the same fact the double-beep already carries — *that did not send* — and a
+     * second negative sound would be one more thing to learn for no extra information.
+     * It is silenced during quiet hours exactly like the rest of them.
+     */
+    this.#interpreter.on('recordBlocked', () => {
+      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
+        void this.#safeCue(AudioCue.Oops);
+      }
     });
 
     this.#interpreter.on('captureCommit', ({ index }) => {

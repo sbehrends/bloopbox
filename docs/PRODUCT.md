@@ -96,6 +96,33 @@ Bounds:
 
 A played note's file is deleted immediately, which is what makes *present on disk* mean *unread*.
 
+### Read-only mode
+
+`mode.readOnly` switches the sending half off and leaves receiving untouched. Notes still arrive,
+the lamp still blinks, tapping still plays them — only the hold-to-send gesture is gone. It is for
+the box on a grandparent's sideboard, and for a child who should be able to hear everyone without
+being able to reach them; the point is that the gesture is *structurally* unavailable, not that
+somebody remembers not to use it.
+
+A hold is **refused out loud, not ignored**. At `recordThresholdMs` — exactly where the "pop" would
+have played — the low **"oops"** double-beep sounds instead and the microphone never opens. A box
+that answered a hold with silence would look broken, and a small child's response to a box that
+looks broken is to press harder.
+
+The refusal is the whole answer to that press: releasing afterwards does nothing at all, and in
+particular does **not** fall through to playing the waiting queue. Rewarding the gesture that was
+just refused with the sound the child wanted is how a rule stops being a rule.
+
+It is the existing "oops" rather than a cue of its own. To a child this is the same fact the
+double-beep already carries — *that did not send* — and a second negative sound is one more thing to
+learn for no extra information. Being the "oops" it is also **suppressed in silent mode**, so during
+quiet hours a hold produces no sound at all and the lamp under the finger is the only feedback
+(§7).
+
+Read receipts are a separate decision. Whether playing a note reports back upstream is
+`whatsapp.markPlayedAsRead` — a judgement about privacy, not about what the buttons do — so a
+read-only box still sends them if that is switched on.
+
 ### Silent mode
 
 Holding **Button 1 + Button 3** together for `silentComboMs` (3 s) toggles silent mode, confirmed by
@@ -266,6 +293,9 @@ single source of truth — there is no hand-written parallel interface.
   },
   "whatsapp": {
     "markPlayedAsRead": true
+  },
+  "mode": {
+    "readOnly": false
   }
 }
 ```
@@ -282,9 +312,9 @@ Cross-field rules, enforced against the **merged** config on every save:
   (§1, sending, step 6)
 - an enabled contact must have a target
 
-`buttons` and `whatsapp` were added after devices already had a `config.json`, so both use Zod's
-`.prefault({})` and an absent or partial section fills in from field defaults rather than failing
-validation and wiping the parent's contacts.
+`buttons`, `whatsapp` and `mode` were each added after devices already had a `config.json`, so all
+three use Zod's `.prefault({})` and an absent or partial section fills in from field defaults rather
+than failing validation and wiping the parent's contacts.
 
 `PUT /api/config` accepts **any subset of any section, to any depth**.
 
@@ -454,7 +484,7 @@ Two things this table cannot express on its own:
 | `boot.wav`    | Designed startup sound (825 ms)       | Recorded  | The device has come up                         |
 | `pop.wav`     | High, ultra-short (90 ms)             | Tones     | A press has passed `recordThresholdMs`. **Plays before the microphone opens** |
 | `whoosh.wav`  | Upward sweep                          | Tones     | A recording has been committed — the only sound a send makes |
-| `oops.wav`    | Low double-beep                       | Tones     | A tap that sends nothing, or a failed send      |
+| `oops.wav`    | Low double-beep                       | Tones     | A tap that sends nothing, a failed send, or a hold on a read-only box (§1) |
 | `chime.wav`   | Short soft chime                      | Tones     | Separator between queued notes during playback |
 | `notify.wav`  | Designed arrival sound (318 ms)       | Recorded  | A voice note arrived                           |
 
@@ -533,7 +563,9 @@ with an error naming a field the parent had not touched. A ceiling only earns a 
 is harder to change than the thing it caps.
 
 One consequence worth knowing: `oops` is suppressed too, so **during quiet hours a failed send
-produces no sound at all**, and the LED error pattern is the only indication.
+produces no sound at all**, and the LED error pattern is the only indication. The same applies to a
+read-only box refusing a hold (§1): at night the child gets the lamp under their finger and nothing
+else.
 
 ---
 

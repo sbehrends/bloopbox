@@ -413,6 +413,57 @@ describe('read receipts', () => {
   });
 });
 
+describe('read-only mode', () => {
+  it('ships two-way', async () => {
+    // The flag exists to be turned on deliberately; a box that arrives unable to send would
+    // look broken to the parent who just wired up three contacts.
+    const config = await validConfig();
+    expect(config.mode.readOnly).toBe(false);
+  });
+
+  it('fills the section in for a config written before it existed', async () => {
+    const legacy: Record<string, unknown> = { ...(await validConfig()) };
+    delete legacy['mode'];
+
+    const result = configSchema.safeParse(legacy);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.mode.readOnly).toBe(false);
+    // The parent's own settings must survive the migration, not reset to defaults.
+    expect(result.data?.contacts.button1.name).toBe('Mom');
+  });
+
+  /*
+   * The `mergeConfig` half of the four places a section has to be wired. Asserted on the
+   * *stored* value rather than on the API's answer, because the failure this catches is a
+   * save that validates, replies 200, restarts the daemon and silently discards the change —
+   * exactly how `whatsapp.markPlayedAsRead` shipped broken.
+   */
+  it('survives a partial save, and leaves the rest of the config alone', async () => {
+    const config = manager();
+    await config.load();
+    await config.save(await validConfig());
+
+    await config.update({ mode: { readOnly: true } });
+
+    expect(config.current.mode.readOnly).toBe(true);
+    expect(config.current.contacts.button1.name).toBe('Mom');
+
+    const stored = configSchema.parse(JSON.parse(await readFile(configPath, 'utf8')) as unknown);
+    expect(stored.mode.readOnly).toBe(true);
+  });
+
+  it('can be turned back off', async () => {
+    const config = manager();
+    await config.load();
+    await config.save({ ...(await validConfig()), mode: { readOnly: true } });
+
+    await config.update({ mode: { readOnly: false } });
+
+    expect(config.current.mode.readOnly).toBe(false);
+  });
+});
+
 describe('quiet-hours timezone', () => {
   it('fills the field in for a config written before it existed', async () => {
     const legacy = await validConfig();

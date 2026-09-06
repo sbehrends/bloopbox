@@ -49,5 +49,8 @@
   },
   "whatsapp": {
     "markPlayedAsRead": true
+  },
+  "mode": {
+    "readOnly": false
   }
 }

@@ -362,6 +362,35 @@ const whatsappShape = z.object({
 
 const whatsappSchema = whatsappShape.prefault({});
 
+/**
+ * What the box is allowed to do, as opposed to how it does it.
+ *
+ * `prefault({})` for the same reason as the two sections above: an installed device already
+ * has a config.json written before this section existed, and a required section would fail
+ * validation and drop that device back into onboarding without its contacts.
+ */
+const modeShape = z.object({
+  /**
+   * Receive-only: notes still arrive and still play, and nothing is ever sent.
+   *
+   * The box a grandparent keeps on their sideboard, or a child who is not ready to be heard
+   * by everyone on the other end of three buttons — the point is that the gesture that sends
+   * is *structurally* unavailable, not that a parent remembers to ask nobody to use it.
+   *
+   * Hold is not silently ignored, which would leave a child pressing harder at a box that
+   * looks broken. It is refused out loud: the "oops" plays where the "pop" would have, and
+   * the microphone never opens. `tap to play` is untouched, so the half of the device that
+   * still works is exactly the half a read-only box is for.
+   *
+   * Read receipts are *not* covered by this. Whether playing a note reports back upstream is
+   * `whatsapp.markPlayedAsRead`, a separate decision a parent makes about privacy rather than
+   * about what the buttons do.
+   */
+  readOnly: z.boolean().default(false),
+});
+
+const modeSchema = modeShape.prefault({});
+
 export const configSchema = z.object({
   version: z.literal(1),
   system: systemSchema,
@@ -375,6 +404,7 @@ export const configSchema = z.object({
   quietHours: quietHoursSchema,
   buttons: buttonTimingsSchema,
   whatsapp: whatsappSchema,
+  mode: modeSchema,
 });
 
 export type DeviceConfig = z.infer<typeof configSchema>;
@@ -383,6 +413,7 @@ export type AudioConfig = z.infer<typeof audioSchema>;
 export type QuietHoursConfig = z.infer<typeof quietHoursSchema>;
 export type ButtonTimings = z.infer<typeof buttonTimingsSchema>;
 export type WhatsAppConfig = z.infer<typeof whatsappSchema>;
+export type ModeConfig = z.infer<typeof modeSchema>;
 
 /** The shipped timings, derived from the schema so they cannot drift out of step. */
 export const DEFAULT_BUTTON_TIMINGS: ButtonTimings = buttonTimingsSchema.parse(undefined);
@@ -419,6 +450,7 @@ export const configUpdateSchema = z
     quietHours: quietHoursSchema.partial(),
     buttons: buttonTimingsShape.partial(),
     whatsapp: whatsappShape.partial(),
+    mode: modeShape.partial(),
   })
   .partial();
 

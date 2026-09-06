@@ -50,6 +50,7 @@ type ConfigView = {
     silentComboMs: number;
   };
   whatsapp: { markPlayedAsRead: boolean };
+  mode: { readOnly: boolean };
 };
 
 type StatusView = {
@@ -426,6 +427,33 @@ function renderQuietHours(config: ConfigView, onSave: SaveFn): HTMLElement {
         },
       }),
     ),
+  );
+
+  return section;
+}
+
+/**
+ * Read-only mode: the box receives and plays, and can never send.
+ *
+ * Sits with contacts rather than under Advanced because it is not a tuning knob — it changes
+ * what half the device does, and a parent who wants it wants it on the first visit.
+ */
+function renderSending(config: ConfigView, onSave: SaveFn): HTMLElement {
+  const section = card('Sending');
+
+  const readOnly = checkbox(config.mode.readOnly);
+
+  section.append(
+    element(
+      'p',
+      'field-hint',
+      'Read-only leaves receiving untouched: notes still arrive, the lamp still blinks, and ' +
+        'tapping still plays them. Only the hold-to-send half is switched off — holding a ' +
+        'button answers with the "oops" beep instead of opening the microphone, so a child ' +
+        'hears that it did not send rather than pressing harder at a box that looks broken.',
+    ),
+    checkboxField('Read-only — receive and play, never send', readOnly),
+    saveButton('Save sending mode', () => onSave({ mode: { readOnly: readOnly.checked } })),
   );
 
   return section;
@@ -1261,7 +1289,11 @@ async function main(): Promise<void> {
     );
   } else if (config) {
     const groups = await fetchGroups();
-    sections.append(renderContacts(config, groups, onSave), renderQuietHours(config, onSave));
+    sections.append(
+      renderContacts(config, groups, onSave),
+      renderSending(config, onSave),
+      renderQuietHours(config, onSave),
+    );
     if (whatsappSection) sections.append(whatsappSection);
     sections.append(
       renderWifi(config, onSave),

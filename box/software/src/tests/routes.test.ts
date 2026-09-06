@@ -136,6 +136,21 @@ describe('PUT /config', () => {
     expect(api.restarts).toEqual(['configuration saved']);
   });
 
+  it('carries a read-only patch all the way to the stored config', async () => {
+    /*
+     * The failure this exists for: a section missing from `configUpdateSchema` is *stripped*
+     * by safeParse, so the save validates, answers 200, restarts the daemon and discards the
+     * change — which is exactly how `whatsapp.markPlayedAsRead` shipped broken. Asserted on
+     * the config the daemon would boot with, never on the response.
+     */
+    api = await startApi({ configured: false });
+    const response = await send(api, 'PUT', '/api/config', { mode: { readOnly: true } });
+
+    expect(response.status).toBe(200);
+    expect(api.config.current.mode.readOnly).toBe(true);
+    expect(api.restarts).toEqual(['configuration saved']);
+  });
+
   it('rejects an invalid patch with the field that was wrong', async () => {
     // The panel prints these straight through, so they are the only explanation a parent gets.
     api = await startApi({ configured: false });

@@ -109,7 +109,7 @@ Everything in `src/core/` is I/O-free. It consumes events and timings, and its o
 
 | Module                | Owns                                                                       |
 | --------------------- | -------------------------------------------------------------------------- |
-| `buttonInterpreter`   | Raw button edges → intents: tap, record, carry on, the silent chord         |
+| `buttonInterpreter`   | Raw button edges → intents: tap, record, carry on, refuse, the silent chord |
 | `ledAnimator`         | Device state → LED frames, on a 50 ms tick                                  |
 | `deviceState`         | The observable state, in one place, with change notification                |
 | `networkSupervisor`   | When the setup hotspot goes up and when it steps aside                      |
@@ -346,6 +346,26 @@ change**. `whatsapp.markPlayedAsRead` shipped that way for ten minutes; the test
 asserted on behaviour rather than on the response, which is why it caught it.
 
 Cover every migration with a test — see [`src/tests/config.test.ts`](../box/software/src/tests/config.test.ts).
+`mode.readOnly` was the next section added after that, on 2026-09-06, and is covered at both ends:
+the merge is asserted against the file on disk, and `routes.test.ts` asserts a `PUT` of it reaches
+`config.current` — the half that catches a section missing from `configUpdateSchema`, where
+`safeParse` silently strips the patch before `mergeConfig` ever sees it.
+
+### Read-only mode refuses in the interpreter, not in the controller
+
+`config.mode.readOnly` is read once at boot and handed to `ButtonInterpreter`, which stops emitting
+`captureConfirmed` entirely: at `recordThresholdMs` it emits `recordBlocked` instead, and
+`deviceController` answers that with the "oops". None of the capture events — confirmed, resumed,
+commit, cancel — fire at all on a read-only box, so nothing downstream has to know the mode exists
+or defend against a capture that should not have been opened.
+
+Refusing in the controller instead would have meant opening the interpreter's capture path and then
+declining it, which leaves the "is there a microphone open" question answered differently in two
+places. It is also why the refusal lands at the threshold rather than at release: that is where the
+decision is made, and it is where the child is waiting for the bip.
+
+The behaviour and the reasoning about *what the child hears* are in
+[`PRODUCT.md`](PRODUCT.md) §1, "Read-only mode".
 
 ### A button targets a person **or** a group
 

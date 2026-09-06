@@ -699,3 +699,111 @@ describe('config is snapshot, not watched', () => {
     await rebuilt.stop();
   });
 });
+
+/**
+ * Read-only mode (PRODUCT.md §1, "Read-only mode").
+ *
+ * The interpreter's own tests pin the intents; these pin what a person in the room gets —
+ * a sound where the bip would have been, a microphone that never opens, and a receiving
+ * half that carries on exactly as before.
+ */
+describe('read-only mode', () => {
+  /**
+   * Stands in for the restart a config save triggers, since config is snapshot at boot.
+   *
+   * On a **fresh** HAL, not the shared one: `stop()` resets the interpreter but leaves the
+   * old controller's `buttonDown` listeners attached, so a press on the shared mock would be
+   * answered by the two-way controller as well and the cue log would carry both replies.
+   */
+  async function readOnlyController(quietHours = false): Promise<DeviceController> {
+    await controller.stop();
+    await config.update({
+      mode: { readOnly: true },
+      ...(quietHours
+        ? {
+            quietHours: {
+              enabled: true,
+              startTime: '20:00',
+              endTime: '07:00',
+              timezone: 'UTC',
+            },
+          }
+        : {}),
+    });
+    if (quietHours) vi.setSystemTime(new Date(Date.UTC(2026, 5, 15, 22, 30, 0)));
+
+    hal = new MockHal();
+    await hal.init();
+
+    const rebuilt = new DeviceController({
+      hal,
+      config,
+      send: (request) => {
+        sent.push(request);
+        return Promise.resolve();
+      },
+    });
+    rebuilt.setStatus(DeviceStatus.Ready);
+    await rebuilt.start();
+    return rebuilt;
+  }
+
+  it('answers a hold with the oops and never opens the microphone', async () => {
+    const rebuilt = await readOnlyController();
+
+    hal.pressButton(0);
+    // Well past the point where a two-way box would have bipped and started capturing.
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 1000);
+
+    // The refusal lands while the button is still down — the child hears it as they hold.
+    expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
+    expect(hal.activeRecordings.size).toBe(0);
+
+    hal.releaseButton(0);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+    await flush();
+
+    // Releasing adds nothing: no bip, no whoosh, no second oops, and nothing sent.
+    expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
+    expect(sent).toHaveLength(0);
+    await rebuilt.stop();
+  });
+
+  it('still plays a waiting note on a tap', async () => {
+    const rebuilt = await readOnlyController();
+
+    rebuilt.handleIncoming(1, {
+      messageId: 'm-ro',
+      path: join(workDir, 'm-ro.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+
+    hal.pressButton(1);
+    await vi.advanceTimersByTimeAsync(100);
+    hal.releaseButton(1);
+    await waitFor(() => hal.playSequence().length > 0, 'the queued note to play');
+
+    expect(hal.playSequence()).toEqual([join(workDir, 'm-ro.ogg')]);
+    expect(hal.cueSequence()).not.toContain(AudioCue.Oops);
+    await rebuilt.stop();
+  });
+
+  it('says nothing at all during quiet hours', async () => {
+    // The refusal is a courtesy sound like every other one, so the schedule silences it —
+    // which means a hold at 22:30 produces no feedback beyond the lamp under the finger.
+    const rebuilt = await readOnlyController(true);
+    expect(rebuilt.state.silentMode).toBe(true);
+
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 1000);
+    hal.releaseButton(0);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+    await flush();
+
+    expect(hal.cueSequence()).toEqual([]);
+    expect(hal.activeRecordings.size).toBe(0);
+    expect(sent).toHaveLength(0);
+    await rebuilt.stop();
+  });
+});

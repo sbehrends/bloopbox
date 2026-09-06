@@ -37,6 +37,11 @@ describe('config.default.json', () => {
     expect(micGainPercent).toBeGreaterThan(0);
   });
 
+  it('ships able to send', () => {
+    // Read-only is opt-in: a fresh box does both halves until a parent says otherwise.
+    expect(defaultConfig.mode.readOnly).toBe(false);
+  });
+
   it('bounds recording length so a stuck button cannot fill the RAM disk', () => {
     expect(defaultConfig.audio.maxRecordingSeconds).toBeGreaterThan(0);
     expect(defaultConfig.audio.maxRecordingSeconds).toBeLessThanOrEqual(120);

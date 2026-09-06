@@ -35,6 +35,7 @@ function setup(
     unread?: ButtonIndex[];
     maxRecordingSeconds?: number;
     timings?: Partial<ButtonTimings>;
+    readOnly?: boolean;
   } = {},
 ) {
   const unread = new Set(options.unread ?? []);
@@ -42,11 +43,13 @@ function setup(
     timings: { ...DEFAULT_BUTTON_TIMINGS, ...options.timings },
     maxRecordingSeconds: options.maxRecordingSeconds ?? 30,
     hasUnread: (index) => unread.has(index),
+    readOnly: options.readOnly ?? false,
   });
 
   const log: Recorded[] = [];
   const track = [
     'captureConfirmed',
+    'recordBlocked',
     'captureResumed',
     'captureCommit',
     'captureCancel',
@@ -610,5 +613,143 @@ describe('robustness', () => {
 
     interpreter.handleButtonUp(1);
     expect(interpreter.isPressed(1)).toBe(false);
+  });
+});
+
+/**
+ * Read-only mode (PRODUCT.md §1, "Read-only mode").
+ *
+ * The claim under test is a pair: nothing a child does can open the microphone, and the half
+ * of the device that still works is untouched. Everything here is written from the second
+ * half as much as the first — a read-only box that also stopped playing would be broken, not
+ * read-only.
+ */
+describe('read-only mode', () => {
+  it('refuses the hold at the record threshold instead of opening a capture', () => {
+    const { interpreter, names } = setup({ readOnly: true });
+
+    interpreter.handleButtonDown(0);
+    // Just short of the threshold: the box has said nothing yet either way.
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS - 1);
+    expect(names()).not.toContain('recordBlocked');
+
+    // The moment the bip would have played is the moment the refusal lands.
+    vi.advanceTimersByTime(1);
+    expect(names()).toContain('recordBlocked');
+    expect(names()).not.toContain('captureConfirmed');
+  });
+
+  it('refuses once and stays quiet through the release', () => {
+    const { interpreter, names, log } = setup({ readOnly: true });
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(MESSAGE_MS * 2);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(RESUME_GRACE_MS * 2);
+
+    expect(counts(log, 'recordBlocked')).toBe(1);
+    // No capture was ever opened, so there is nothing to commit and nothing to cancel.
+    expect(names()).not.toContain('captureCommit');
+    expect(names()).not.toContain('captureCancel');
+    // And the refusal is the whole answer: releasing does not also play or beep.
+    expect(names()).not.toContain('playQueue');
+    expect(names()).not.toContain('cancelBeep');
+  });
+
+  it('does not play the queue when a refused hold is released', () => {
+    // The case the fall-through would have got wrong: a hold on a button with notes waiting
+    // would answer "did not send" and then reward the gesture by playing them anyway.
+    const { interpreter, names } = setup({ readOnly: true, unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(MESSAGE_MS * 2);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).toContain('recordBlocked');
+    expect(names()).not.toContain('playQueue');
+  });
+
+  it('still plays a waiting queue on a tap', () => {
+    const { interpreter, names } = setup({ readOnly: true, unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).toContain('playQueue');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('still beeps at a tap with nothing waiting', () => {
+    const { interpreter, names } = setup({ readOnly: true });
+
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(2);
+
+    expect(names()).toContain('cancelBeep');
+  });
+
+  it('still ignores a brush shorter than the debounce window', () => {
+    const { interpreter, names } = setup({ readOnly: true });
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(DEBOUNCE_MS - 1);
+    interpreter.handleButtonUp(0);
+
+    // Only the lamp acknowledging the touch. No sound of any kind, refusal included.
+    expect(names()).toEqual(['pressVisualOn', 'pressVisualOff']);
+  });
+
+  it('still toggles silent mode on the outer chord, cancelling no capture', () => {
+    const { interpreter, names } = setup({ readOnly: true });
+
+    interpreter.handleButtonDown(0);
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(SILENT_COMBO_MS);
+
+    expect(names()).toContain('toggleSilent');
+    // The chord swallows both presses, but in read-only there was never a capture to cancel.
+    expect(names()).not.toContain('captureCancel');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('never opens a carry-on window', () => {
+    const { interpreter, names } = setup({ readOnly: true });
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(MESSAGE_MS * 2);
+    interpreter.handleButtonUp(0);
+
+    // Nothing is waiting to be continued, because nothing was ever being recorded.
+    expect(interpreter.hasPendingCommit(0)).toBe(false);
+
+    // Pressing again is a fresh press, not a resume.
+    interpreter.handleButtonDown(0);
+    expect(names()).not.toContain('captureResumed');
+  });
+
+  it('never reaches the max-recording ceiling', () => {
+    const { interpreter, names } = setup({ readOnly: true, maxRecordingSeconds: 1 });
+
+    interpreter.handleButtonDown(0);
+    // Far past the ceiling: the auto-commit timer is only armed by a real capture.
+    vi.advanceTimersByTime(10_000);
+
+    expect(names()).not.toContain('captureCommit');
+  });
+
+  it('leaves a two-way box alone', () => {
+    // The same hold, with the flag off — the guard is the flag, not a change of behaviour.
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(MESSAGE_MS * 2);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(RESUME_GRACE_MS * 2);
+
+    expect(names()).toContain('captureConfirmed');
+    expect(names()).toContain('captureCommit');
+    expect(names()).not.toContain('recordBlocked');
   });
 });

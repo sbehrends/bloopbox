@@ -51,6 +51,21 @@ with an admin **Test speaker** button. The table is in `docs/hardware.md`. So th
 about source material that is quiet before it reaches the amplifier, which no amount of gain fixes
 without lifting the hiss with it.
 
+### Read-only mode is invisible everywhere except the admin card that sets it
+
+Added 2026-09-06 with `config.mode.readOnly`. Two gaps, both deliberate for now:
+
+- **No feedback at all during quiet hours.** The refusal is the "oops", and the "oops" is silenced
+  in silent mode — so at night a hold on a read-only box produces nothing but the lamp under the
+  finger. That is consistent with a failed send behaving the same way (`docs/PRODUCT.md` §7), but
+  it is the one moment a child is most likely to keep trying. A short LED refusal overlay, ranked
+  beside `sentFlash`, would answer it without sound; it would also be new LED vocabulary in §6 and
+  a new row in the priority ladder, so it is not free.
+- **Nothing reports the mode but the config.** `DeviceStatusPayload` does not carry it, so the
+  simulator readout and the admin status line say nothing about a box that cannot send, and a
+  developer testing read-only has only the checkbox to go on. Adding it is one field on the IPC
+  contract.
+
 ### Loading after config save
 
 When a change is made in the Admin, the server restarts. Add a loading in the admin page that blocks the page. Ping the server until is back responsive.

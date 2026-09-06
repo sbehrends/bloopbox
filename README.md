@@ -37,7 +37,7 @@ A monorepo. The box is what exists; the rest is scaffolding for what comes next.
 box/
 ├── software/     the two daemons, the four browser UIs, packaging, deploy  ← the project today
 └── hardware/     enclosure models and PCB. Empty; docs/hardware.md is the reference
-website/          the marketing site: one statically exported Next.js page
+website/          the site: a statically exported Next.js home page and build manual
 docs/             all documentation, for every package
 ```
 
@@ -50,13 +50,21 @@ own directory** — `box/software/` for the device, `website/` for the site. See
 | Component  | Part                                    |
 | ---------- | --------------------------------------- |
 | Brain      | Raspberry Pi Zero 2 W                   |
-| Buttons    | 3× 60 mm illuminated arcade buttons     |
+| Buttons    | 3× 30 mm illuminated arcade buttons     |
 | LED driver | ULN2003 (3.3 V GPIO → 5 V LEDs)         |
-| Audio      | USB speakerphone, or USB soundcard + mic |
+| Audio      | Waveshare WM8960 audio HAT              |
 | Power      | 5 V 2.5 A micro-USB                     |
 | Storage    | 8 GB+ microSD card                      |
 
 Wiring, GPIO pins and the enclosure layout are in [`docs/hardware.md`](./docs/hardware.md).
+
+**The audio HAT is the one part that changes the install command.** It needs
+`--audio-hat wm8960`, and there is no sound card at all until the reboot that follows — see
+[Install](#install) below. A USB speakerphone works in its place in principle, and the code still
+supports it, but nothing about that path has been measured on hardware; the HAT has.
+
+A HAT's female header buries the Pi's pins, so lamps need a **2×20 stacking header** to expose
+GPIO 22/23/24/25/27 again.
 
 The OS target is **Raspberry Pi OS Trixie, 64-bit**, and that is a constraint rather than a
 preference: the GPIO addon compiles against the libgpiod v2 API, which Bookworm does not have.
@@ -70,12 +78,17 @@ The easiest route is a card that needs no install step at all. On a Linux machin
 ```bash
 cd box/software
 npm install
-sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
+sudo ./scripts/build-sd-image.sh --audio-hat wm8960 \
+  --wifi-ssid Home --wifi-psk secret --wifi-country DE
 ```
 
 Flash the resulting `release/bloopbox-*-sd.img.xz` with Raspberry Pi Imager (**Use custom**) or
 `dd`, put the card in, and power up. The Wi-Fi flags are optional — without them the device raises
 its own setup hotspot on first boot (below).
+
+**Match the flags to the board you actually built.** `--audio-hat wm8960` writes the codec's
+overlay and its ALSA settings; add `--no-leds` for a board with no lamps wired. Both are baked into
+the image, so an image for one board is not an image for another.
 
 If the Pi is already running Raspberry Pi OS Trixie and reachable over ssh, install a release
 tarball instead:
@@ -84,11 +97,24 @@ tarball instead:
 cd box/software
 npm run release                                    # arm64 tarball, built in Docker
 scp release/bloopbox-*-linux-arm64.tar.gz pi@bloopbox.local:
-ssh pi@bloopbox.local 'tar xzf bloopbox-*.tar.gz && sudo ./bloopbox-*/install.sh && sudo reboot'
+ssh pi@bloopbox.local 'tar xzf bloopbox-*.tar.gz \
+  && sudo ./bloopbox-*/install.sh --audio-hat wm8960 && sudo reboot'
 ```
 
 The Pi compiles nothing — the tarball carries its own `node` binary and a `node_modules` built for
 arm64. Re-running `install.sh` is an upgrade and leaves settings and the WhatsApp pairing alone.
+
+> **The reboot is not optional, and it is not just for the audio.** `--audio-hat wm8960` adds the
+> codec's device-tree overlay, and `install.sh` adds the button pull-ups (`gpio=17,27,22=ip,pu`) —
+> both are firmware settings applied before userspace starts. Until that reboot there is **no sound
+> card**, and the buttons read garbage. That is the usual explanation for a fresh install where
+> "nothing works".
+
+Once it is back up, confirm the sound card exists before anything else:
+
+```bash
+sudo bloopbox-audio-test
+```
 
 Then check it over ssh:
 
@@ -138,12 +164,25 @@ Sign in with the settings password (any username). Seven sections:
 | Section        | What it does                                                            |
 | -------------- | ----------------------------------------------------------------------- |
 | Contacts       | Who each of the three buttons talks to, and whether it is enabled       |
-| Audio          | Speaker volume, mic gain, maximum recording length                      |
-| Quiet hours    | A nightly window where the device stops making cue noises               |
-| Read receipts  | Whether playing a message marks it read for the sender                  |
+| Audio          | Speaker volume, the amplifier stages, mic gain, maximum recording length |
+| Quiet hours    | A nightly window where the device stops making cue noises, and its timezone |
 | Button timings | Tap-vs-hold thresholds, debounce, the carry-on window, the silent chord |
 | Wi-Fi          | Which network the device joins                                          |
-| WhatsApp       | Pairing, unlinking, and the group picker                                |
+| WhatsApp       | Pairing, unlinking, the group picker, and read receipts                 |
+| Factory reset  | Wipes settings and the WhatsApp pairing, back to a fresh box            |
+
+**Audio** and **Button timings** are collapsed by default — the settings inside them are the ones a
+parent sets once. Audio carries four output controls, not one: `speakerVolumePercent` is the day-to-day
+knob, and below it `ampVolumePercent` plus the two class-D boosts drive the amplifier stages. On the
+WM8960 those lower stages power up **26 dB down**, so a box that sounds weak at full volume is
+almost always this rather than a broken speaker. **Test speaker** plays the boot cue so the result
+can be heard; the settings are read at boot, so a change is only audible after the save restarts the
+daemon.
+
+**Read receipts** lives inside the WhatsApp section: whether the child playing a message turns the
+sender's two ticks blue. On by default, because on a screenless device it is the only way the person
+who recorded it learns it was heard — and off for parents who would rather not broadcast when a
+small child is at the box.
 
 **Saving anything restarts the device.** Configuration is read once at boot rather than watched,
 so a save exits the daemon cleanly and systemd brings it straight back with the new values. The
@@ -189,23 +228,35 @@ Save, wait for the restart, and the lights go dark — which means ready.
 
 | What the child does                | What happens                                                     |
 | ---------------------------------- | ---------------------------------------------------------------- |
-| Holds a button                     | The light goes solid, a "pop" plays, and recording is under way   |
+| Holds a button                     | The light goes solid at once, then a "pop" invites them to speak  |
 | Lets go                            | A "whoosh", three quick flashes, and the note is on its way       |
 | Lets go by accident, presses again | The **same** message carries on — see below                      |
 | Taps a blinking button             | Plays everything waiting from that person, oldest first           |
 | Taps a dark button                 | A low "oops" double-beep. Nothing was sent                        |
 | Brushes a button                   | Nothing at all                                                   |
 
+**The bip is an invitation, not a receipt.** The microphone opens only once the pop has finished
+playing, because the speaker sits centimetres from the microphone and a bip that plays over an open
+mic ends up recorded into the head of every message. The cost is that whatever is said before the
+bip is lost — which is exactly why the bip is prompt.
+
 The boundaries between those are all configurable under **Button timings**, because the right feel
 depends on the child and on the switches. Shipped defaults:
 
 | Setting             | Default | Means                                                            |
 | ------------------- | ------- | ---------------------------------------------------------------- |
-| `debounceMs`        | 150 ms  | Shorter than this is a brush, and is ignored entirely            |
-| `recordThresholdMs` | 500 ms  | At or beyond this, a press is a recording rather than a tap      |
-| `minRecordingMs`    | 500 ms  | A message with less actual audio than this is thrown away        |
+| `debounceMs`        | 60 ms   | Shorter than this is a brush, and is ignored entirely            |
+| `recordThresholdMs` | 150 ms  | How long the child waits for the bip before the microphone opens |
+| `minRecordingMs`    | 500 ms  | The least audio a take must carry to be a message rather than a tap |
 | `resumeGraceMs`     | 400 ms  | How long a released recording stays open, waiting to carry on    |
 | `silentComboMs`     | 3000 ms | How long buttons 1 + 3 must be held together to toggle silence   |
+
+**Nothing here is the tap/hold boundary on its own.** That boundary is `recordThresholdMs +
+minRecordingMs` — **650 ms** with the shipped defaults — so a press under it plays the waiting
+queue and one over it sends. `recordThresholdMs` sits *inside* the tap window: crossing it opens
+the microphone, but a take that never reaches `minRecordingMs` is still treated as a tap and
+thrown away. That split is what lets the bip be prompt without making every short press a
+message. See [`docs/architecture.md`](./docs/architecture.md) for the full ladder.
 
 **The carry-on window is the one worth knowing about.** A toddler's grip slips. Releasing the
 button does not send the message immediately — it stays open for `resumeGraceMs`, and pressing the
@@ -316,7 +367,7 @@ simulator's event injector, the tests, every script, and where things live.
 | ---------------------------------------------------------- | ---------------------------------------------------------------- |
 | [`box/software/README.md`](./box/software/README.md)       | Development: the gate, the simulator, the tests, every script     |
 | [`box/hardware/README.md`](./box/hardware/README.md)       | What belongs in the hardware folder, and the enclosure's constraints |
-| [`website/README.md`](./website/README.md)                 | The marketing site: commands, layout, and the rule keeping it decoupled |
+| [`website/README.md`](./website/README.md)                 | The site: the home page, the build manual, and the rule keeping it decoupled |
 | [`docs/PRODUCT.md`](./docs/PRODUCT.md)                     | The behavioural specification. `§` citations in the source point here |
 | [`docs/architecture.md`](./docs/architecture.md)           | How the software is put together, and the decisions behind it    |
 | [`docs/hardware.md`](./docs/hardware.md)                   | Bill of materials, wiring, GPIO pins, the enclosure              |

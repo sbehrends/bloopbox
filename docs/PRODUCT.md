@@ -124,11 +124,11 @@ Full bill of materials, wiring, GPIO assignments and the ALSA notes are in
 │   ┌─────────────────────────────────────────────────────────┐          │
 │   │                  Raspberry Pi Zero 2 W                  │          │
 │   └───────┬────────────────────┬────────────────────┬───────┘          │
-│           │                    │ GPIO               │ USB              │
+│           │                    │ GPIO               │ I²S + I²C        │
 │           │                    ▼                    ▼                  │
 │           │             ┌─────────────┐      ┌─────────────┐           │
-│           │             │   ULN2003   │      │ USB Audio   │           │
-│           │             │   Drivers   │      │ Combo / Mic │           │
+│           │             │   ULN2003   │      │ WM8960 HAT  │           │
+│           │             │   Drivers   │      │ mic + spkr  │           │
 │           │             └──────┬──────┘      └─────────────┘           │
 │           │                    │ 5 V lamp power                        │
 │           └───────────────────►│                                       │
@@ -139,16 +139,18 @@ Full bill of materials, wiring, GPIO assignments and the ALSA notes are in
 | Component      | Selected spec                          | Purpose                                                        |
 | -------------- | -------------------------------------- | -------------------------------------------------------------- |
 | **Brain**      | Raspberry Pi Zero 2 W                  | Runs Linux and three units: two Node daemons plus a root network agent |
-| **Buttons**    | 3× 60 mm illuminated arcade buttons    | Button 1 left, 2 centre, 3 right                                |
+| **Buttons**    | 3× 30 mm illuminated arcade buttons    | Button 1 left, 2 centre, 3 right                                |
 | **LED driver** | ULN2003 driver board / chip            | Amplifies 3.3 V GPIO to drive the 5 V arcade lamps              |
-| **Audio I/O**  | USB mini speakerphone OR USB soundcard | One USB connection for microphone and speaker                   |
+| **Audio I/O**  | Waveshare WM8960 audio HAT             | Codec, mics and speaker amp on one board, over I²S              |
 | **Power**      | 5 V 2.5 A micro-USB                    | Steady wall power — no power button, no battery                  |
 
 Buttons are on BCM `GPIO17 / 27 / 22` with **firmware** pull-ups; LED drive lines are on
-`GPIO23 / 24 / 25`. The OS target is **Raspberry Pi OS Trixie 64-bit**, forced by the GPIO addon's
-libgpiod v2 requirement.
+`GPIO23 / 24 / 25`. The HAT occupies `GPIO2 / 3` (I²C) and `18–21` (I²S), which collides with
+neither. The OS target is **Raspberry Pi OS Trixie 64-bit**, forced by the GPIO addon's libgpiod v2
+requirement.
 
-**None of the GPIO or ALSA paths have run on real hardware.** See `hardware.md`.
+**The ALSA path is measured on a real HAT; no GPIO path has ever run on a real chip.** See
+`hardware.md` for both the measurements and the line between them.
 
 ---
 

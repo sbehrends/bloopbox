@@ -22,7 +22,7 @@ const BUTTON_COUNT = 3;
 const BUTTON_INDICES: readonly ButtonIndex[] = [0, 1, 2];
 const BUTTON_LABELS = ['Button 1 · Left', 'Button 2 · Centre', 'Button 3 · Right'] as const;
 
-/** Matches the physical layout: 60mm arcade buttons in a row. */
+/** Matches the physical layout: 30mm arcade buttons in a row. */
 const BUTTON_RADIUS = 68;
 
 const TAU = Math.PI * 2;

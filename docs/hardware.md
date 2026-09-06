@@ -3,10 +3,13 @@
 The physical device: what it is made of, how it is wired, and which of that has actually been
 proven.
 
-> **Nothing on this page has run on real hardware.** `src/hal/gpioDriver.ts` was written from
-> opengpio's published API and the ULN2003 datasheet. Pin numbers, LED polarity and ALSA device
-> names are all unverified. [`hardware-bringup.md`](./hardware-bringup.md) is the order to prove
-> them in; the driver carries a `TODO(hardware)` banner saying the same thing.
+> **The audio is measured; the GPIO is not.** Everything about the WM8960 HAT below — its mixer
+> control names, the 26 dB of amplifier stages, the three microphone settings — was measured on a
+> real board on 2026-08-10 and 2026-08-17, and each figure says so. Everything about **buttons and
+> lamps** was written from opengpio's published API and the ULN2003 datasheet and has never run on a
+> real chip: pin numbers and LED polarity are both unverified, and `gpioDriver.ts` carries a
+> `TODO(hardware)` banner saying so. [`hardware-bringup.md`](./hardware-bringup.md) is the order to
+> prove the rest in. The section at the foot of this page is the current line between the two.
 
 ---
 
@@ -15,12 +18,22 @@ proven.
 | Component      | Selected part                            | Why this one                                                        |
 | -------------- | ---------------------------------------- | ------------------------------------------------------------------- |
 | **Brain**      | Raspberry Pi Zero 2 W                    | Quad-core, Wi-Fi on board, small enough to seal into a toy enclosure |
-| **Buttons**    | 3× 60 mm illuminated arcade buttons      | Big enough for a 2-year-old's whole hand, and the lamp is the UI     |
+| **Buttons**    | 3× 30 mm illuminated arcade buttons      | The standard arcade action-button size: a toddler hits one without aiming, and the lamp is the UI |
 | **LED driver** | ULN2003 driver board or chip             | Amplifies 3.3 V GPIO to drive the 5 V arcade lamps brightly and safely |
-| **Audio I/O**  | USB mini speakerphone, or USB soundcard + mic | One USB connection for both microphone and speaker                |
+| **Audio I/O**  | [Waveshare WM8960 audio HAT](https://www.waveshare.com/wiki/WM8960_Audio_HAT) | Codec, two mics and a speaker amp on one board, over I²S. The only audio path measured on real hardware |
+| **Header**     | 2×20 stacking header                     | The HAT buries the Pi's pins; the lamps need 22/23/24/25/27 back      |
 | **Power**      | 5 V 2.5 A micro-USB supply               | Steady wall power. No power button, no battery                       |
 | **Storage**    | 8 GB+ microSD card                       | 4 GB is too tight once the bundled runtime and ffmpeg are on it      |
-| **Enclosure**  | Wood or 3D print                         | Three 60 mm cut-outs, speaker grille, mic hole, cable strain relief   |
+| **Enclosure**  | Wood or 3D print                         | Three 30 mm cut-outs, speaker grille, mic hole, cable strain relief   |
+
+**The audio HAT is the one part that changes the install command** — `--audio-hat wm8960`, and no
+sound card exists until the reboot after it. See [the reference board](#the-reference-board-a-wm8960-hat-three-buttons-and-three-lamps)
+below for what it occupies and the five things worth knowing before wiring one.
+
+A **USB mini speakerphone** (or USB soundcard + mic) remains supported in the code as a one-cable
+alternative, and the ALSA env overrides exist precisely so it can be swapped in. It is not the
+selected part: nothing about that path has been run against a real sound card, and the mixer-control
+name — the trap described below — has never been measured for any USB adapter.
 
 There is deliberately **no screen and no power button.** The device is always on, and its entire
 output vocabulary is three lamps.
@@ -44,10 +57,10 @@ output vocabulary is three lamps.
 │   │              Raspberry Pi Zero 2 W               │      │         │
 │   │   GPIO 17 / 27 / 22  in     23 / 24 / 25  out    │      │         │
 │   └──────┬──────────────────────────┬────────────────┘      │         │
-│          │ GPIO out                 │ USB                   │         │
+│          │ GPIO out                 │ I²S + I²C             │         │
 │          ▼                          ▼                       │         │
 │   ┌─────────────┐            ┌─────────────┐                │         │
-│   │   ULN2003   │            │ USB audio   │                │         │
+│   │   ULN2003   │            │ WM8960 HAT  │                │         │
 │   │   (sinks)   │            │ mic + spkr  │                │         │
 │   └──────┬──────┘            └─────────────┘                │         │
 │          │ 5 V lamp return                                  │         │
@@ -155,16 +168,20 @@ Run `amixer scontrols` on the device and set `ALSA_MIXER_CONTROL` to what it act
 
 ## The reference board: a WM8960 HAT, three buttons and three lamps
 
-**Audio is a [Waveshare WM8960 HAT](https://www.waveshare.com/wiki/WM8960_Audio_HAT) from here on**
-(decided 2026-08-17), not the USB speakerphone in the bill of materials above. Everything else
-matches the full device: all three buttons and all three lamps are wired.
+The board everything above was measured on. It carries the **WM8960 HAT** the bill of materials
+selects (decided 2026-08-17), and everything else matches the full device: all three buttons and
+all three lamps are wired. The one part that differs is the brain.
 
 | | Bill of materials | Reference board |
 | --- | --- | --- |
-| Brain | Pi Zero 2 W | Pi 3B+ — same BCM numbering, verified on 2026-08-10 |
-| Audio | USB speakerphone | **WM8960 HAT** over I²S, with its own mics |
+| Brain | Pi Zero 2 W | **Pi 3B+** — same BCM numbering, verified on 2026-08-10 |
+| Audio | WM8960 HAT | same — over I²S, with its own mics |
 | Buttons | 3 arcade, GPIO 17 / 27 / 22 | same — and GPIO17 is also the HAT's own button |
 | LEDs | 3 lamps via ULN2003, GPIO 23 / 24 / 25 | same |
+
+So every measurement on this page holds for the shipped part list, with the Pi 3B+ standing in for
+the Zero 2 W. The two share BCM pin numbering, which is what makes the substitution safe; where it
+is *not* safe is the onboard LEDs, for the reasons at the end of this section.
 
 **The HAT's button is on GPIO17, which is already button 1.** That is luck, not design, and it is
 why the HAT needs no wiring to work: the HAT's own button and an external button 1 both switch

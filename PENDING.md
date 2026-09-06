@@ -506,6 +506,35 @@ ungated is not a leak, but it is a page a parent could stumble into. Options if 
 drop the entry from `vite.config.ts` for release builds, or move it behind `requireAdmin`. Left
 shipping on purpose: a style guide that is not built alongside what it documents rots.
 
+### `bloopbox-doctor` fails two checks that are actually fine — it cannot read a `Name=Value` switch
+
+Found 2026-09-06 on the live device, running doctor straight after an upgrade. It reports:
+
+```
+✗ routing: Left Input Boost Mixer LINPUT1=3 not a switch on this card
+✗ routing: Right Input Boost Mixer RINPUT1=3 not a switch on this card
+```
+
+Both are false. Measured on the box at the same moment: `Left Input Boost Mixer LINPUT1` reads
+`3 [100%] [29.00dB]` and `Capture` reads `63 [100%] [30.00dB] [on]` — exactly the values
+`docs/hardware.md` specifies. The microphone chain is set up correctly.
+
+The check at `deploy/doctor.sh:163-172` walks `ALSA_ENABLE_SWITCHES` and passes each entry
+straight to `amixer sget`. Since entries became `Name` **or** `Name=Value`, the two boost entries
+arrive as `Left Input Boost Mixer LINPUT1=3`, which resolves to no control at all — so
+`switch_state` is empty and the `*)` branch calls it "not a switch on this card".
+
+Two defects, and fixing only the first still leaves it failing:
+
+1. The `=Value` suffix is never split off before the `amixer sget`.
+2. A `Name=Value` entry is a **level, not a switch**. Even queried by its bare name it prints
+   `[29.00dB]` and no `[on]`/`[off]` token, so the `case` can never match. It needs to assert the
+   *value* for these, and on/off only for the bare-name entries.
+
+Worth fixing rather than living with: doctor is the only health signal a screenless box has, and
+two permanent false failures are how you learn to skim past a real one. The same reasoning retired
+the `pedantic` lint category.
+
 ### The `cmd | grep -q` tripwire was live in the release smoke test
 
 Found 2026-09-06 while adding a `GET /` check beside the existing `GET /admin/` one, by copying

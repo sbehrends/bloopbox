@@ -4,7 +4,13 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { Device, Output, Watch } from 'opengpio';
 import type { AudioCue } from '../audio/cues.ts';
-import { toPlayableWav, toVoiceNote } from '../audio/ffmpeg.ts';
+import {
+  CAPTURE_FILTER_CHAIN,
+  PLAYBACK_DECODING,
+  PLAYBACK_FILTER_CHAIN,
+  toPlayableWav,
+  toVoiceNote,
+} from '../audio/ffmpeg.ts';
 import { cuePath } from '../audio/soundFiles.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import type {
@@ -140,6 +146,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   readonly #recordingDirectory: string;
   readonly #amp: AmpSettings | null;
+  readonly #captureFilter: string | null;
+  readonly #playbackFilter: string | null;
   #volumePercent: number;
   #micGainPercent: number;
   #available = false;
@@ -165,6 +173,11 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     this.#volumePercent = options.volumePercent;
     this.#micGainPercent = options.micGainPercent;
     this.#amp = options.amp ?? null;
+    // `undefined` means "not specified" and takes the shipped chain; `null` means "no filter".
+    this.#captureFilter =
+      options.captureFilter === undefined ? CAPTURE_FILTER_CHAIN : options.captureFilter;
+    this.#playbackFilter =
+      options.playbackFilter === undefined ? PLAYBACK_FILTER_CHAIN : options.playbackFilter;
   }
 
   get available(): boolean {
@@ -296,7 +309,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     const outputPath = join(this.#recordingDirectory, `${handle.id}.ogg`);
 
     try {
-      await toVoiceNote(wavPath, outputPath);
+      await toVoiceNote(wavPath, outputPath, this.#captureFilter);
       const { size } = await stat(outputPath);
       return { path: outputPath, durationMs: Date.now() - handle.startedAt, byteLength: size };
     } finally {
@@ -371,7 +384,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     const decodedPath = this.#decodedPath(path);
     const epoch = this.#playbackEpoch;
     try {
-      await toPlayableWav(path, decodedPath);
+      await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter);
       /*
        * A `stopPlayback()` that lands mid-decode has no process to kill, so it is honoured
        * here instead. Without this, a button pressed to interrupt the queue would start the
@@ -526,7 +539,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
     const decodedPath = this.#decodedPath(path);
     try {
-      await toPlayableWav(path, decodedPath);
+      await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter);
       this.#decoded.set(path, decodedPath);
     } catch {
       // `play()` falls back to decoding on demand, exactly as it did before.

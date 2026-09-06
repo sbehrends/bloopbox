@@ -40,9 +40,17 @@ const decoded = vi.fn<(input: string, output: string) => Promise<void>>(
   },
 );
 
+/*
+ * The constants are re-exported by the mock, not just the functions: `gpioDriver` imports
+ * PLAYBACK_DECODING and both filter chains from this module, and a mock that omits them makes
+ * every one of them `undefined` at call time rather than failing at import.
+ */
 vi.mock('../audio/ffmpeg.ts', () => ({
   toPlayableWav: (input: string, output: string) => decoded(input, output),
   toVoiceNote: () => Promise.resolve(),
+  PLAYBACK_DECODING: { sampleRate: 16_000, channels: 1 },
+  CAPTURE_FILTER_CHAIN: 'highpass=f=110',
+  PLAYBACK_FILTER_CHAIN: 'loudnorm=I=-16:TP=-1.5:LRA=11',
 }));
 
 let directory: string;

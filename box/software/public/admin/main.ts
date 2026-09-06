@@ -39,6 +39,8 @@ type ConfigView = {
     ampBoostDc: number;
     ampBoostAc: number;
     micGainPercent: number;
+    enhanceCapture: boolean;
+    normalisePlayback: boolean;
     maxRecordingSeconds: number;
   };
   quietHours: { enabled: boolean; startTime: string; endTime: string; timezone: string };
@@ -308,6 +310,8 @@ function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
   const boostDc = numberInput(config.audio.ampBoostDc, 0, 5);
   const boostAc = numberInput(config.audio.ampBoostAc, 0, 5);
   const gain = numberInput(config.audio.micGainPercent, 0, 100);
+  const enhance = checkbox(config.audio.enhanceCapture);
+  const normalise = checkbox(config.audio.normalisePlayback);
   const maxSeconds = numberInput(config.audio.maxRecordingSeconds, 1, 120);
 
   /*
@@ -328,7 +332,21 @@ function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
       boostAc,
       'Class-D boost, normally set equal to DC. Louder, but too high distorts on a small speaker.',
     ),
-    field('Microphone gain (%)', gain),
+    field(
+      'Microphone gain (%)',
+      gain,
+      'Not a "louder is better" setting: measured on the device, the signal-to-noise ratio barely ' +
+        'moves across this whole range, so all it really decides is headroom. At 100 a normal ' +
+        'speaking voice clips. Level is made up afterwards by the filter below.',
+    ),
+    checkboxField('Clean up the microphone (high-pass, denoise, normalise)', enhance),
+    checkboxField('Match the loudness of arriving messages', normalise),
+    element(
+      'p',
+      'field-hint',
+      'Both are on by default and can be switched off to compare. Cleaning up the microphone also ' +
+        'makes sending slightly quicker, because the encoder has less noise to work through.',
+    ),
     field('Maximum recording length (s)', maxSeconds),
     testSpeakerButton(),
     saveButton('Save audio', () =>
@@ -339,6 +357,8 @@ function renderAudio(config: ConfigView, onSave: SaveFn): HTMLElement {
           ampBoostDc: boostDc.valueAsNumber,
           ampBoostAc: boostAc.valueAsNumber,
           micGainPercent: gain.valueAsNumber,
+          enhanceCapture: enhance.checked,
+          normalisePlayback: normalise.checked,
           maxRecordingSeconds: maxSeconds.valueAsNumber,
         },
       }),

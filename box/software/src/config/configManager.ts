@@ -279,6 +279,8 @@ export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfi
       ampBoostDc: pick(patch.audio?.ampBoostDc, base.audio.ampBoostDc),
       ampBoostAc: pick(patch.audio?.ampBoostAc, base.audio.ampBoostAc),
       micGainPercent: pick(patch.audio?.micGainPercent, base.audio.micGainPercent),
+      enhanceCapture: pick(patch.audio?.enhanceCapture, base.audio.enhanceCapture),
+      normalisePlayback: pick(patch.audio?.normalisePlayback, base.audio.normalisePlayback),
       maxRecordingSeconds: pick(patch.audio?.maxRecordingSeconds, base.audio.maxRecordingSeconds),
     },
     quietHours: {

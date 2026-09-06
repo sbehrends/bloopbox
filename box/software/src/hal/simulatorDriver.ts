@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AudioCue } from '../audio/cues.ts';
-import { toVoiceNote } from '../audio/ffmpeg.ts';
+import { CAPTURE_FILTER_CHAIN, toVoiceNote } from '../audio/ffmpeg.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import { createRequestId } from '../ipc/events.ts';
 import type { Hal, HalEvents, HalOptions, RecordingHandle, RecordingResult } from './types.ts';
@@ -53,6 +53,7 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
 
   readonly #transport: SimulatorTransport;
   readonly #recordingDirectory: string;
+  readonly #captureFilter: string | null;
   #volumePercent: number;
   #counter = 0;
   #ledStates: [boolean, boolean, boolean] = [false, false, false];
@@ -73,6 +74,8 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
     super();
     this.#transport = transport;
     this.#recordingDirectory = options.recordingDirectory;
+    this.#captureFilter =
+      options.captureFilter === undefined ? CAPTURE_FILTER_CHAIN : options.captureFilter;
     this.#volumePercent = options.volumePercent;
   }
 
@@ -246,7 +249,7 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
       }
       await writeFile(rawPath, raw);
       // MediaRecorder gives WebM/Opus in Chrome; WhatsApp needs Ogg/Opus.
-      await toVoiceNote(rawPath, outputPath);
+      await toVoiceNote(rawPath, outputPath, this.#captureFilter);
       const { size } = await stat(outputPath);
 
       pending.resolve({

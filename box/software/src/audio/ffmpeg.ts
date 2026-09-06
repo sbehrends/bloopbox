@@ -27,6 +27,48 @@ export const VOICE_ENCODING = {
   application: 'voip',
 } as const;
 
+/**
+ * What the microphone chain does to a take before it is encoded.
+ *
+ * Every term is here because it was measured on the device — see `docs/audio-quality.md`.
+ * In order:
+ *
+ * - `highpass=110` — the noise floor is **low-frequency**, not hiss: 20–100 Hz measured 12 dB
+ *   above 300–1000 Hz. A child's voice fundamental sits at 250–400 Hz, so this took 3.7 dB off
+ *   the noise and 0.3 dB off the voice. The cheapest win in the chain.
+ * - `afftdn` — a further 12 dB off the noise with no measurable cost to the voice. It also makes
+ *   the *encode faster* (1627 ms against 2770 ms for a 10 s take), because Opus stops spending
+ *   effort on noise. `nf` is the assumed noise floor and has not been optimised against a real
+ *   room; −30 was measured, not tuned.
+ * - `speechnorm` — recovers the ~12 dB of level given up by running the preamp lower, *after* the
+ *   noise has gone rather than before it. `p=0.7` (≈ −3 dBFS) rather than the default 0.95: at the
+ *   default this measured −0.4 dBFS, too close to the rail to survive an Opus round trip.
+ *
+ * The order matters. Normalising before denoising would lift the noise floor by exactly the gain
+ * applied and give the denoiser a moving target.
+ *
+ * **This cannot rescue a clipped input.** It presumes `audio.micGainPercent` leaves headroom;
+ * at the old default the input clipped on room tone alone, and no filter undoes that.
+ */
+export const CAPTURE_FILTER_CHAIN =
+  'highpass=f=110,afftdn=nf=-30,speechnorm=e=6.25:r=0.0001:l=1:p=0.7';
+
+/**
+ * What an arriving note gets on decode.
+ *
+ * One relative records at arm's length in a quiet room and the next holds the phone to their
+ * mouth on a train, and the child has no volume control — only a button. Measured across a quiet
+ * and a loud sender, the spread between them was **18.1 dB** untreated and **0.03 dB** through
+ * this: EBU R128 integrated loudness is the one measure that actually equalises two speakers.
+ *
+ * `loudnorm` is the most expensive filter tried here (~+1 s on a note), and it is affordable for
+ * exactly one reason: decoding happens at **arrival**, from `prepare()`, where nobody is waiting.
+ * It would not be affordable on the tap.
+ *
+ * `TP=-1.5` keeps a true-peak margin so the WAV `aplay` receives cannot clip on playback.
+ */
+export const PLAYBACK_FILTER_CHAIN = 'loudnorm=I=-16:TP=-1.5:LRA=11';
+
 let cachedProbe: Promise<FfmpegProbe> | null = null;
 
 export type FfmpegProbe = {
@@ -129,7 +171,11 @@ export async function runFfmpeg(args: readonly string[], input?: Readable): Prom
  * Transcodes any input the browser or microphone produced into WhatsApp-ready
  * Ogg/Opus. Used for both WebM/Opus from MediaRecorder and raw WAV from `arecord`.
  */
-export async function toVoiceNote(inputPath: string, outputPath: string): Promise<void> {
+export async function toVoiceNote(
+  inputPath: string,
+  outputPath: string,
+  filter: string | null = CAPTURE_FILTER_CHAIN,
+): Promise<void> {
   await runFfmpeg([
     '-hide_banner',
     '-loglevel',
@@ -138,6 +184,7 @@ export async function toVoiceNote(inputPath: string, outputPath: string): Promis
     '-i',
     inputPath,
     '-vn',
+    ...(filter ? ['-af', filter] : []),
     /*
      * Baileys documents `-avoid_negative_ts make_zero` plus a single channel as necessary for
      * voice notes to play on every device. Without it some clients show the bubble but refuse
@@ -181,6 +228,7 @@ export async function toPlayableWav(
   inputPath: string,
   outputPath: string,
   format: { readonly sampleRate: number; readonly channels: number } | null = PLAYBACK_DECODING,
+  filter: string | null = PLAYBACK_FILTER_CHAIN,
 ): Promise<void> {
   await runFfmpeg([
     '-hide_banner',
@@ -190,6 +238,7 @@ export async function toPlayableWav(
     '-i',
     inputPath,
     '-vn',
+    ...(filter ? ['-af', filter] : []),
     ...(format ? ['-ar', String(format.sampleRate), '-ac', String(format.channels)] : []),
     '-f',
     'wav',

@@ -205,6 +205,10 @@ describe('PUT /config', () => {
       ampBoostDc: 5,
       ampBoostAc: 5,
       micGainPercent: 50,
+      // Booleans added after this test was written, and defaulted rather than required, so an
+      // audio patch from a panel that predates them cannot silently switch the filters off.
+      enhanceCapture: true,
+      normalisePlayback: true,
       maxRecordingSeconds: 30,
     });
   });

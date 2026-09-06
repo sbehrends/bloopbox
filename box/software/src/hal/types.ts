@@ -134,6 +134,15 @@ export type HalOptions = {
   readonly recordingDirectory: string;
   /** Microphone gain, 0-100. */
   readonly micGainPercent: number;
+  /**
+   * ffmpeg filter chain applied to a take before encoding, or null for a raw transcode.
+   *
+   * The *resolved* chain rather than the config flag, so the HAL never learns the shape of the
+   * config and a test can hand it any chain — including none.
+   */
+  readonly captureFilter?: string | null | undefined;
+  /** Filter chain applied when decoding an arriving note, or null for a raw decode. */
+  readonly playbackFilter?: string | null | undefined;
   /** Initial output volume, 0-100. */
   readonly volumePercent: number;
   /** Amplifier stages below the DAC. Absent means "leave them alone". */

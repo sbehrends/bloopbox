@@ -260,7 +260,36 @@ const audioSchema = z.object({
   ampBoostDc: z.number().int().min(0).max(5).default(5),
   /** Class-D AC boost — `ALSA_AMP_AC_MIXER_CONTROL`, `Speaker AC`. Normally equal to DC. */
   ampBoostAc: z.number().int().min(0).max(5).default(5),
+  /**
+   * Microphone preamp level, applied as `amixer -M sset <capture> <n>% cap`.
+   *
+   * **Not a "louder is better" knob.** Measured on the device 2026-09-06: SNR is flat within
+   * ~2 dB across a 24 dB range of this control, because the preamp amplifies the noise by
+   * exactly what it amplifies the voice. All the setting really decides is how much headroom is
+   * left, and at 100 a real voice at a normal level clipped at 0 dBFS — as did room tone with
+   * nobody speaking. Level is recovered afterwards by `speechnorm` in `CAPTURE_FILTER_CHAIN`,
+   * which does it *after* the noise has been filtered out instead of before.
+   *
+   * 65 leaves roughly 10 dB of headroom for a child who leans in or shouts. See
+   * `docs/audio-quality.md` for the measured mapping to dB.
+   */
   micGainPercent: z.number().int().min(0).max(100),
+  /**
+   * Filter the microphone before encoding — high-pass, denoise, then normalise.
+   *
+   * A switch rather than a tunable chain: the chain is a measured result, not a preference, and
+   * a free-text filter string in a config a parent can edit is a way to make the box silently
+   * stop recording. Off restores the raw transcode, which is what makes an A/B possible on a
+   * real device without a rebuild.
+   */
+  enhanceCapture: z.boolean().default(true),
+  /**
+   * Normalise arriving notes to a common loudness on decode.
+   *
+   * Off is the old behaviour, where a quiet sender and a loud one arrived 18 dB apart and the
+   * child had no way to compensate.
+   */
+  normalisePlayback: z.boolean().default(true),
   /** Bounds a stuck button so it cannot fill the RAM disk. */
   maxRecordingSeconds: z.number().int().min(1).max(120),
 });

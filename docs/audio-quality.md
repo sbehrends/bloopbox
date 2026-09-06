@@ -208,7 +208,30 @@ which behaves differently while someone is speaking — the 12 dB is not a perce
 rail to survive an Opus round trip cleanly; it should be given an explicit lower target
 (`p=0.7`, about −3 dBFS) rather than shipped as measured here.
 
-## What to change, in order of value
+## What was implemented
+
+Everything below became `CAPTURE_FILTER_CHAIN` and `PLAYBACK_FILTER_CHAIN` in
+[`src/audio/ffmpeg.ts`](../box/software/src/audio/ffmpeg.ts) on 2026-09-06:
+
+| | Chain |
+| --- | ----- |
+| outgoing | `highpass=f=110,afftdn=nf=-30,speechnorm=e=6.25:r=0.0001:l=1:p=0.7` |
+| incoming | `loudnorm=I=-16:TP=-1.5:LRA=11` |
+
+with `audio.micGainPercent` defaulting to **65** instead of 80, and two switches —
+`audio.enhanceCapture` and `audio.normalisePlayback` — in the admin panel's Audio card so the
+whole thing can be A/B'd on a real device without a rebuild.
+
+The chains are constants rather than config strings on purpose: each term is a measured result,
+not a preference, and a free-text ffmpeg filter in a config a parent can edit is a way to make the
+box silently stop recording.
+
+`micGainPercent` is the one number **not** settled by measurement, only bounded by it. 100 is
+wrong. 65 leaves about 10 dB of headroom against a MacBook speaker at a normal level, and a child's
+mouth is not a MacBook speaker — the value wants confirming by ear, which is what the switches and
+the number field are for.
+
+## The reasoning behind each, in order of value
 
 1. **Stop clipping the input.** Lower `micGainPercent` from 100. It is already a config field and
    needs no code — the daemon applies it as `amixer -M sset Capture <n>% cap`. Measured mapping:

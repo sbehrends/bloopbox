@@ -275,7 +275,9 @@ single source of truth — there is no hand-written parallel interface.
     "ampVolumePercent": 100,
     "ampBoostDc": 5,
     "ampBoostAc": 5,
-    "micGainPercent": 80,
+    "micGainPercent": 65,
+    "enhanceCapture": true,
+    "normalisePlayback": true,
     "maxRecordingSeconds": 30
   },
   "quietHours": {

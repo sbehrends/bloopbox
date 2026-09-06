@@ -1,4 +1,5 @@
 import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
+import { CAPTURE_FILTER_CHAIN, PLAYBACK_FILTER_CHAIN } from '../audio/ffmpeg.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -276,5 +277,46 @@ describe('audio directories', () => {
   it('lets each be overridden on its own', () => {
     expect(recordingDirectory({ RECORDING_DIR: '/tmp/caps' })).toBe('/tmp/caps');
     expect(notesDirectory({ NOTES_DIR: '/tmp/notes' })).toBe('/tmp/notes');
+  });
+});
+
+/**
+ * The two filter chains (`docs/audio-quality.md`).
+ *
+ * Pinned as strings because every term in them is a measured result rather than a preference,
+ * and because the failure they guard against is silent: a chain that ffmpeg rejects fails the
+ * whole encode, which on the device is a message that never sends.
+ */
+describe('audio filter chains', () => {
+  it('filters the microphone before it normalises it', () => {
+    // Order is the point. Normalising first would lift the noise floor by exactly the gain
+    // applied and hand the denoiser a moving target.
+    const stages = CAPTURE_FILTER_CHAIN.split(',').map((stage) => stage.split('=')[0]);
+    expect(stages).toEqual(['highpass', 'afftdn', 'speechnorm']);
+  });
+
+  it('leaves the capture peak short of the rail', () => {
+    /*
+     * speechnorm's default peak target is 0.95, which measured -0.4 dBFS — too close to the
+     * rail to survive an Opus round trip. This is the one parameter in the chain that was
+     * changed from what was measured, so it is the one worth pinning.
+     */
+    expect(CAPTURE_FILTER_CHAIN).toContain('p=0.7');
+  });
+
+  it('normalises playback to an integrated loudness with true-peak headroom', () => {
+    // I= is what equalises a quiet sender against a loud one (18.1 dB apart -> 0.03 dB).
+    // TP= is what stops the decoded WAV clipping on the way out through aplay.
+    expect(PLAYBACK_FILTER_CHAIN).toContain('loudnorm');
+    expect(PLAYBACK_FILTER_CHAIN).toContain('I=-16');
+    expect(PLAYBACK_FILTER_CHAIN).toContain('TP=-1.5');
+  });
+
+  it('keeps the expensive filter off the capture path', () => {
+    /*
+     * loudnorm is affordable on arrival, where nobody is waiting, and nowhere else: encoding
+     * runs inside stopRecording and the child waits it out before the whoosh.
+     */
+    expect(CAPTURE_FILTER_CHAIN).not.toContain('loudnorm');
   });
 });

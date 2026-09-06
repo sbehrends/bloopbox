@@ -14,6 +14,7 @@ import { resolve } from 'node:path';
 import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
 import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
+import { CAPTURE_FILTER_CHAIN, PLAYBACK_FILTER_CHAIN } from '../audio/ffmpeg.ts';
 import { RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
 import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
@@ -128,6 +129,9 @@ async function main(): Promise<void> {
   const halOptions = {
     recordingDirectory: RECORDING_DIRECTORY,
     micGainPercent: config.current.audio.micGainPercent,
+    // Resolved here, so the HAL takes a chain and never a config flag.
+    captureFilter: config.current.audio.enhanceCapture ? CAPTURE_FILTER_CHAIN : null,
+    playbackFilter: config.current.audio.normalisePlayback ? PLAYBACK_FILTER_CHAIN : null,
     volumePercent: config.current.audio.speakerVolumePercent,
     amp: {
       volumePercent: config.current.audio.ampVolumePercent,

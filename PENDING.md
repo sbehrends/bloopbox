@@ -57,9 +57,10 @@ When a change is made in the Admin, the server restarts. Add a loading in the ad
 
 ### The website is a first iteration, and three things are still missing
 
-The marketing site landed on 2026-08-02: `website/`, one statically exported Next.js 16 page. It is
-complete as a page — hero with an interactive device, one section per argument, and a build guide —
-but it cannot be published as it stands.
+The marketing site landed on 2026-08-02: `website/`, a statically exported Next.js 16 site. It is
+complete as a site — a hero with an interactive device, one section per argument, and since
+2026-09-06 a second page at `/manual/` carrying the whole build — but it cannot be published as it
+stands.
 
 Worth knowing before editing it: **the page deliberately carries no status or limitations section
 and no LED reference table.** Both were written and then cut — its job is to make a parent want one
@@ -78,6 +79,63 @@ device is buyable or shipping.** Every call to action is "build one".
 Smaller, and deliberate: the site has **no ESLint** (`npm run check` is `tsc --noEmit` plus a full
 export), and `npm audit` reports three high advisories that are all transitive inside Next itself
 (`postcss`, `sharp`) — the offered fix is `next@9`, so they stand until Next ships past them.
+
+### The build manual ships with placeholders, and one of them is a parts conflict
+
+`/manual/` landed on 2026-09-06 — the parts list, the wiring and the setup walkthrough, written for
+a parent rather than for this repository. Four things in it are deliberately unfinished, and they
+are visible on the page rather than hidden, because a manual that quietly omits its gaps is one
+nobody remembers to finish.
+
+1. ~~**The buttons are 30 mm on the site and 60 mm in `docs/hardware.md`.**~~ **Settled 2026-09-06:
+   the part is 30 mm**, the standard arcade action-button size, matching the parts actually bought
+   and photographed in `website/public/parts-photo.jpg`. The old 60 mm figure and its rationale
+   ("big enough for a 2-year-old's whole hand") are gone from all six places that carried them —
+   `docs/hardware.md` twice (the part and the enclosure cut-outs), `docs/PRODUCT.md` §2,
+   `README.md`, `box/hardware/README.md`, and a `BUTTON_RADIUS` comment in the simulator. The
+   enclosure's cut-outs are **30 mm** with it.
+2. **Six of the nine illustrations do not exist.** Each renders as a dashed placeholder carrying
+   the prompt that will generate it, sharing one house-style clause defined in
+   `website/components/Figure.tsx`. Replacing one is a two-word edit: drop `prompt`, add `src`. The
+   three that *do* exist — the finished device, the parts flat-lay and the family roster — came with
+   the branch as `Gemini_Generated_Image_*.jpeg` and were renamed to URL-safe names.
+3. **The card image cannot be downloaded.** Step 1's button points at the releases page, which is
+   empty, and the manual says so in a note rather than pretending. It needs a published
+   `--audio-hat wm8960` build; see `docs/deployment.md` for what produces one.
+4. **The waitlist form posts nowhere.** `website/lib/site.ts` carries `waitlist.endpoint` as
+   `https://example.invalid/...`. The site is a static export, so the form has to post to a
+   third-party endpoint (Formspree, Buttondown, a Google Form) — there is no Route Handler to add.
+   While `waitlist.configured` is false the panel renders a visible setup note admitting the form is
+   not wired up, which is deliberate: silently discarding a parent's email address is worse.
+
+**The line about not implying the device is buyable still holds, and the form is the place it is
+most likely to erode.** The copy says twice, in the body and in the note under the button, that no
+kit exists and that this is not a pre-order. Do not let a rewrite soften that into a waitlist for a
+product — there is no product.
+
+One thing the manual settled that the home page had left open: the **LED reference now exists on the
+site**, in the manual's dark band, as the box's own animated lamp ladder rather than as a table —
+`website/components/LightSignature.tsx` ports the keyframes out of
+`box/software/public/brand/brand.css` at identical timings, and adds the three-flash "delivered"
+burst the kit has no rung for. That is not a reversal of the decision to keep the reference off the
+home page — the split is the point. The marketing page sells and stays clean; the manual documents,
+and a parent who has just built a box needs to know what solid means.
+
+**It is now a third copy of those timings**, after `src/core` and the brand kit, and nothing
+enforces that the three agree — the same shape of problem as the mark being drawn twice and copied
+twice more, below. The authority remains `docs/PRODUCT.md` §6.
+
+### The site's chrome is shared, and its nav is not
+
+Adding `/manual/` turned the header and footer into `website/components/SiteHeader.tsx` and
+`SiteFooter.tsx`, lifted out of `app/page.module.css` unchanged. The header takes its section links
+as a prop rather than owning a list, because both pages' links are anchors **into themselves** — a
+shared list would send a reader on the manual back to the home page to find "How it works".
+
+Still open: **below 56rem the nav is `display: none` entirely**, so on a phone the only ways to the
+manual are the hero's "Build one yourself" and the footer. That predates the manual and is now
+carrying more weight than it was designed to. A disclosure button is the obvious fix and would be
+the site's first piece of interactive chrome.
 
 ### The monorepo defers one thing now that there is a second package
 

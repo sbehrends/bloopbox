@@ -1,0 +1,63 @@
+/* Moved out of app/page.module.css when the manual arrived and the chrome stopped belonging to
+   one page. The declarations are unchanged. */
+
+.header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-block-end: 1px solid var(--border);
+}
+
+.headerInner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-block-size: 4.25rem;
+}
+
+.brand {
+  text-decoration: none;
+  color: inherit;
+  flex: none;
+}
+
+.nav {
+  display: none;
+  margin-inline-start: auto;
+  gap: var(--space-6);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.nav a:hover {
+  color: var(--text);
+}
+
+/* The page you are on is not a place to navigate to. */
+.nav a[aria-current='page'] {
+  color: var(--text);
+}
+
+.headerCta {
+  margin-inline-start: auto;
+  font-size: var(--text-sm);
+  padding-inline: var(--space-5);
+  min-block-size: 2.5rem;
+}
+
+@media (width >= 56rem) {
+  .nav {
+    display: flex;
+  }
+
+  .headerCta {
+    margin-inline-start: 0;
+  }
+}

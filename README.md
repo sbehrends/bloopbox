@@ -71,6 +71,11 @@ preference: the GPIO addon compiles against the libgpiod v2 API, which Bookworm 
 
 ## Install
 
+> **Building one for the first time?** The website carries a step-by-step manual written for a
+> parent rather than for this repository — the parts with links, what is on the back of an arcade
+> button, the pin map as a picture, and the Wi-Fi and WhatsApp setup with screenshots. It is
+> `website/app/manual/`, served at `/manual/`. What follows here is the terse version.
+
 ### On a Raspberry Pi
 
 The easiest route is a card that needs no install step at all. On a Linux machine with root:

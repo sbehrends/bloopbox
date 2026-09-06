@@ -1,58 +1,7 @@
-/* Layout for the one page. Primitives (.wrap, .btn, .card, .eyebrow) live in globals.css;
-   everything here positions them. Class names are specific on purpose — a `.section` and a
-   `.card` that quietly cancel each other's padding is the classic way this file rots. */
-
-/* ---- header ---- */
-
-.header {
-  position: sticky;
-  inset-block-start: 0;
-  z-index: 5;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(10px);
-  border-block-end: 1px solid var(--border);
-}
-
-.headerInner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  min-block-size: 4.25rem;
-}
-
-.nav {
-  display: none;
-  margin-inline-start: auto;
-  gap: var(--space-6);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-
-.nav a {
-  color: var(--muted);
-  text-decoration: none;
-}
-
-.nav a:hover {
-  color: var(--text);
-}
-
-.headerCta {
-  margin-inline-start: auto;
-  font-size: var(--text-sm);
-  padding-inline: var(--space-5);
-  min-block-size: 2.5rem;
-}
-
-@media (width >= 56rem) {
-  .nav {
-    display: flex;
-  }
-
-  .headerCta {
-    margin-inline-start: 0;
-  }
-}
+/* Layout for the home page. Primitives (.wrap, .btn, .card, .eyebrow) live in globals.css and
+   the chrome lives in components/SiteHeader and SiteFooter; everything here positions the
+   sections of this one page. Class names are specific on purpose — a `.section` and a `.card`
+   that quietly cancel each other's padding is the classic way this file rots. */
 
 /* ---- hero ---- */
 
@@ -175,7 +124,7 @@
 .cards {
   display: grid;
   gap: var(--space-5);
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
 }
 
 /* ---- one button, one person ---- */
@@ -237,7 +186,7 @@ p.nightEyebrow {
   padding: 0;
   display: grid;
   gap: var(--space-8);
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
 }
 
 .step {
@@ -285,46 +234,4 @@ p.nightEyebrow {
 .closing .ctas {
   margin-block-start: var(--space-2);
   justify-content: center;
-}
-
-/* ---- footer ---- */
-
-.footer {
-  background: var(--night);
-  color: var(--night-muted);
-  padding-block: var(--space-12);
-}
-
-.footerInner {
-  display: grid;
-  gap: var(--space-8);
-}
-
-@media (width >= 56rem) {
-  .footerInner {
-    grid-template-columns: 1fr auto;
-    align-items: start;
-  }
-}
-
-.footerTag {
-  margin-block-start: var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--night-muted);
-  max-inline-size: 26rem;
-}
-
-.footerNav {
-  display: grid;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
-}
-
-.footerNav a {
-  color: var(--night-text);
-  text-decoration: none;
-}
-
-.footerNav a:hover {
-  text-decoration: underline;
 }

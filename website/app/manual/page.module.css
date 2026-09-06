@@ -1,0 +1,413 @@
+/* Layout for the manual. Primitives (.wrap, .btn, .card, .eyebrow, .lede) live in globals.css;
+   the chrome lives in components/SiteHeader and SiteFooter. Everything here is this page.
+
+   The one structural difference from the home page: this page has a *measure*. Marketing copy is
+   scanned, instructions are read line by line, and a 74rem column of build steps is unreadable.
+   So `.stepBody` is capped and the numbers sit outside it. */
+
+/* ---- intro ---- */
+
+.hero {
+  display: grid;
+  gap: var(--space-8);
+  padding-block: clamp(2.5rem, 7vw, 4.5rem) clamp(1.5rem, 3vw, 2.5rem);
+  align-items: start;
+}
+
+@media (width >= 64rem) {
+  .hero {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-16);
+    align-items: center;
+  }
+}
+
+.heroCopy {
+  display: grid;
+  gap: var(--space-5);
+  justify-items: start;
+  /* A grid item defaults to `min-width: auto`, which means "never shrink below your own
+     min-content" — and `.facts` below reports a min-content of three 9rem tracks whether or not
+     three fit. Without this the column is 472px wide inside a 342px phone and the whole page
+     scrolls sideways. */
+  min-inline-size: 0;
+}
+
+.heroLede {
+  max-inline-size: var(--measure);
+}
+
+/* Three facts, so a reader knows within one screen whether this afternoon is for them. */
+.facts {
+  display: grid;
+  /* `min(9rem, 100%)` rather than a bare `9rem`: it caps the track floor at the container's own
+     width, so a narrow phone drops to fewer columns instead of demanding three. Belt and braces
+     with the `min-inline-size` above — either alone fixes this, and both are cheap. */
+  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+  gap: var(--space-5);
+  margin: var(--space-4) 0 0;
+  inline-size: 100%;
+  max-inline-size: var(--measure);
+}
+
+.facts dt {
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-block-end: var(--space-1);
+}
+
+.facts dd {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-display);
+  line-height: 1.2;
+}
+
+/* ---- shared section furniture ---- */
+
+.section {
+  padding-block: clamp(3rem, 8vw, 6rem);
+}
+
+.sectionTitle {
+  max-inline-size: 22ch;
+  margin-block-end: var(--space-4);
+}
+
+.sectionLede {
+  margin-block-end: var(--space-8);
+}
+
+/* A figure sitting directly in a section — the parts flat-lay — is a 4:3 image in a 74rem
+   column, which is most of a screen of height for one picture. Capped so the section below it
+   stays in view. Figures inside a step are already bounded by `.stepBody`. */
+.section > figure {
+  max-inline-size: 52rem;
+  margin-block: var(--space-8);
+}
+
+.split {
+  display: grid;
+  gap: var(--space-6);
+  margin-block-end: var(--space-12);
+}
+
+@media (width >= 60rem) {
+  .split {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-16);
+    align-items: start;
+  }
+}
+
+/* ---- the three phases ---- */
+
+.phases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+}
+
+.phases li {
+  border-block-start: 3px solid var(--border-strong);
+  padding-block-start: var(--space-5);
+}
+
+.phases h3 {
+  margin-block: var(--space-3) var(--space-2);
+}
+
+.phases p {
+  color: var(--muted);
+}
+
+/* Not a channel colour: yellow, coral and teal mean "which button" on this device and a phase
+   of the build is not a button. `docs/BRAND.md`. */
+.phaseTag {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 900;
+  letter-spacing: var(--tracking-label);
+  color: var(--accent-ink);
+}
+
+/* ---- the kit panel ---- */
+
+.kit {
+  padding-block: clamp(1rem, 3vw, 2rem);
+}
+
+/* ---- parts table ---- */
+
+/* Tables are the one thing on this page that genuinely cannot reflow, so they scroll in their
+   own box and the page body never scrolls sideways. */
+.tableScroll {
+  overflow-x: auto;
+  margin-block: var(--space-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.parts {
+  inline-size: 100%;
+  min-inline-size: 34rem;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  text-align: start;
+}
+
+.parts th,
+.parts td {
+  padding: var(--space-4) var(--space-5);
+  text-align: start;
+  vertical-align: top;
+  border-block-end: 1px solid var(--border);
+}
+
+.parts thead th {
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface-sunken);
+  white-space: nowrap;
+}
+
+.parts tbody th {
+  font-family: var(--font-display);
+  font-weight: var(--weight-display);
+  font-size: var(--text-base);
+  color: var(--text);
+  inline-size: 15rem;
+}
+
+.parts tbody td {
+  color: var(--muted);
+}
+
+.parts tbody tr:last-child th,
+.parts tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+.qty {
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+/* ---- notes ---- */
+
+.noteRow {
+  display: grid;
+  gap: var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+}
+
+/* Amber, because on this device coral means "button 2" and the danger red means "this failed".
+   A caveat is neither. `docs/BRAND.md`. */
+.note {
+  border-inline-start: 4px solid var(--warm);
+  background: var(--surface-sunken);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  padding: var(--space-5);
+}
+
+.note p {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.noteTitle {
+  font-family: var(--font-display);
+  font-weight: var(--weight-display);
+  margin-block-end: var(--space-2);
+}
+
+p.noteTitle {
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+/* ---- the steps ---- */
+
+.steps {
+  display: grid;
+  gap: clamp(2.5rem, 6vw, 4rem);
+}
+
+.step {
+  display: grid;
+  gap: var(--space-5);
+  scroll-margin-block-start: 6rem;
+}
+
+.stepHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  border-block-start: 3px solid var(--border-strong);
+  padding-block-start: var(--space-4);
+}
+
+/* Deliberately not a channel colour — see .phaseTag. */
+.stepNumber {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: 900;
+  line-height: 1;
+  color: var(--accent-ink);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.stepTitle {
+  font-size: var(--text-2xl);
+}
+
+/* The measure — and the reason it is applied to the children rather than to the box.
+   Instructions get read line by line rather than scanned, so the prose is capped at a width a
+   person can track along. A pin map and a photograph are looked at, not read, and squeezing
+   those into a text column wastes the one thing they need. So the box is wide and only the
+   things that are read are narrow. */
+.stepBody {
+  display: grid;
+  gap: var(--space-4);
+  max-inline-size: 58rem;
+}
+
+.stepBody > :is(p, ul, ol, h4, aside) {
+  max-inline-size: 44rem;
+}
+
+/* A picture beside a 44rem column of text should not be half again as wide as it. The pin map
+   is the exception and it is not a figure — it brings its own scrolling box. */
+.stepBody > figure {
+  max-inline-size: 48rem;
+}
+
+.stepBody :is(figure, .note) {
+  margin-block: var(--space-2);
+}
+
+.subhead {
+  font-family: var(--font-display);
+  font-weight: var(--weight-display);
+  font-size: var(--text-lg);
+  margin: var(--space-4) 0 0;
+}
+
+.list {
+  margin: 0;
+  padding-inline-start: var(--space-6);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.list li {
+  padding-inline-start: var(--space-1);
+}
+
+/* ---- the pin-map legend ---- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.key {
+  inline-size: 0.9rem;
+  block-size: 0.9rem;
+  border-radius: 4px;
+  border: 1.5px solid var(--device-edge);
+  flex: none;
+}
+
+/* ---- the lights: this page's one dark band ---- */
+
+.night {
+  background: var(--night);
+  color: var(--night-text);
+  padding-block: clamp(3.5rem, 9vw, 6.5rem);
+}
+
+/* These beat the global colours on specificity rather than source order, which a CSS module
+   cannot rely on. */
+p.nightEyebrow {
+  color: var(--night-muted);
+}
+
+.night h2 {
+  color: var(--night-text);
+}
+
+.night .lede {
+  color: var(--night-muted);
+}
+
+
+/* ---- closing ---- */
+
+.closing {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: var(--space-5);
+  padding-block: clamp(3rem, 8vw, 6rem);
+}
+
+.mark {
+  inline-size: clamp(7rem, 18vw, 10rem);
+}
+
+.closingTitle {
+  max-inline-size: 18ch;
+}
+
+.closingLede {
+  color: var(--muted);
+  max-inline-size: 42ch;
+  font-size: var(--text-lg);
+}
+
+.ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: center;
+  margin-block-start: var(--space-2);
+}
+
+/* ---- utility ---- */
+
+.srOnly {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

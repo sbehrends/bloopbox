@@ -80,10 +80,20 @@ Reported as noise and an echoey quality on outgoing messages; the measurement sa
 - Encoding already costs ~2.8 s for a 10 s note **before the whoosh plays**, and cleaning the signal
   makes Opus *faster*, not slower — 1627 ms vs 2770 ms with denoise in the chain.
 
-Ordered fixes are in the doc. The first needs no code at all (`micGainPercent` is already a config
-field), but choosing its value needs a listening test with a real child's voice, which no sweep can
-substitute for. The 400–800 Hz lift is deliberately **not** actioned: the sweep went out through the
-HAT's own speaker, so the curve cannot separate speaker from enclosure.
+Confirmed with **real speech** — macOS `say` played from the MacBook beside the box — not just a
+sweep: at the shipped gain a normal speaking level peaks at exactly 0 dBFS. At `micGainPercent` 60
+the same voice peaks at −10.7 dBFS, and `speechnorm` puts 12 dB of level back, ending *louder* than
+the clipped original (−14.4 vs −16.5 dB RMS) with peaks off the rail.
+
+The 400–800 Hz lift **is** the microphone and enclosure: the sweep was repeated from the MacBook,
+an unrelated transducer, and the peak survived the swap (+2.6 dB via the HAT, +4.5 dB via the Mac).
+A corrective cut is justified in principle but deliberately unspecified — an octave table is too
+coarse to set a notch's depth and Q, and it is the one change that makes things worse if fitted to
+the wrong curve.
+
+Ordered fixes are in the doc. The first needs no code at all — `micGainPercent` is already a config
+field — though the exact value still wants confirming by ear, since a child's mouth is not a
+MacBook speaker.
 
 ### Loading after config save
 

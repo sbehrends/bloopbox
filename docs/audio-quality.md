@@ -15,10 +15,22 @@ earned itself again here: two passes at identical settings gave RMS −23.1 dB a
 12.5 dB spread with nothing changed.
 
 So every comparison below comes from **windows inside one recording** — a silent window and a
-signal window from the same take, with the HAT's own speaker as the stimulus. Room drift moves
-both windows together and cancels out of the difference.
+signal window from the same take. Room drift moves both windows together and cancels out of the
+difference.
 
-The stimulus is a 150 Hz → 3.5 kHz sweep, which gives SNR and a rough response curve from one pass.
+Three stimuli, and the second and third exist because the first cannot answer everything:
+
+1. **The HAT's own speaker**, playing a 150 Hz → 3.5 kHz sweep. Convenient, but it measures the
+   round trip and cannot separate the speaker from the microphone.
+2. **The MacBook beside the box**, playing the same sweep. A completely different transducer, so
+   whatever survives the swap belongs to the microphone and enclosure. This is what settles
+   Finding 3.
+3. **The MacBook playing real speech** (macOS `say`), which is what settles whether a *voice*
+   clips — a question no sweep can answer, because the sweep is louder than a person.
+
+Window alignment is found by profiling the recording second by second rather than assumed from a
+sleep: SSH start-up latency put the first attempt's "silence" window on top of the sweep, which
+showed up as a silence window 24 dB louder than the signal.
 
 ## Finding 1 — the input clips, and analog gain buys no SNR at all
 
@@ -51,10 +63,18 @@ makes the shipped setting a pure loss: same SNR as a quiet setting, plus clippin
 smeared, and does not sound like simple distortion to most listeners — "fuzzy", "doubled" and
 "echoey" are the usual descriptions.
 
-> **Caveat, stated plainly.** The stimulus is the HAT's own speaker firing into its own microphone
-> at a few centimetres, which is louder than a child talking. That the *sweep* clips does not prove
-> a child's voice clips. The ambient measurement peaking at −0.38 dBFS is the stronger evidence and
-> does not depend on the stimulus at all.
+This was first measured with the HAT's own speaker, which is louder than a child talking and so
+could not settle whether a *voice* clips. It was then repeated with real speech — macOS `say`,
+played from the MacBook beside the box, at a normal listening level:
+
+| `Capture` | peak | RMS |
+| --------- | ---- | --- |
+| **63** (shipped) | **0.00 dBFS — clipping** | −16.5 dB |
+| 49 | −10.7 dB | −26.7 dB |
+| 39 | −18.1 dB | −33.9 dB |
+
+A real voice at a realistic level clips at the shipped gain. This is no longer an inference from a
+loud stimulus.
 
 ## Finding 2 — the noise is low-frequency, not hiss
 
@@ -75,7 +95,10 @@ sits entirely below the range a voice needs.
 A child's voice has a fundamental around 250–400 Hz. **A high-pass at 100–120 Hz removes the single
 largest noise component at no cost to speech**, and it is one filter argument.
 
-## Finding 3 — a mid peak, but the measurement cannot attribute it
+## Finding 3 — a mid peak, and it is the microphone side
+
+*Originally recorded here as unattributable. Resolved the same day by using the MacBook beside the
+box as a second, completely different source — the obvious control that the first round missed.*
 
 Sweep window, by octave:
 
@@ -91,12 +114,34 @@ Sweep window, by octave:
 There is a broad lift around 400–800 Hz and a steep fall above 3.2 kHz, which would read as boxy
 and dull — consonants live at 2–6 kHz.
 
-**This does not justify an EQ curve yet.** The sweep went out through the HAT's small speaker and
-came back through the microphone, so the curve is the *round trip*: speaker, enclosure and
-microphone multiplied together. A child's voice reaches the microphone directly and never passes
-through the speaker, so this measurement over-attributes to the enclosure whatever the speaker is
-doing. Separating them needs an external reference source. Until then, a corrective EQ would be
-fitting a curve that partly is not there.
+Taken alone that curve proves nothing, because the sweep went out through the HAT's own small
+speaker and came back through the microphone: it is the *round trip*, speaker and enclosure and
+microphone multiplied together, and a child's voice never passes through the speaker at all.
+
+So the sweep was repeated from a **different transducer entirely** — the MacBook sitting beside the
+box — recorded on the box microphone, both at `Capture` 32. Normalising each curve to its own
+800–1600 Hz band, so only the *shape* is compared:
+
+| Band | via HAT speaker | via MacBook speaker |
+| ---- | --------------- | ------------------- |
+| 100–200 Hz | −25.9 | −5.9 |
+| 200–400 Hz | −8.3 | +2.6 |
+| **400–800 Hz** | **+2.6** | **+4.5** |
+| 800–1600 Hz | 0 (ref) | 0 (ref) |
+| 1600–3200 Hz | −1.9 | −7.3 |
+| 3200–6400 Hz | −11.4 | −25.7 |
+
+**The 400–800 Hz lift survives the change of source.** Two unrelated speakers, the same peak, so it
+belongs to what they have in common: the microphone and the enclosure around it. That is the boxiness.
+
+The bands that *disagree* are the ones that should. The HAT's speaker cannot reproduce 100–200 Hz
+and the MacBook can, which is the 20 dB gap at the bottom; the top octave is past the sweep's
+3.5 kHz end and differs by distance and air absorption. Those differences are the control working —
+if every band had matched, the comparison would be measuring the microphone twice and saying nothing.
+
+A corrective EQ is now justified in principle. It is still not specified here, because the depth and
+Q of the notch should come from a measurement of the mounted microphone rather than from an octave
+table this coarse.
 
 ## Finding 4 — encoding is on the critical path, and cleaning the signal makes it faster
 
@@ -126,6 +171,43 @@ Two results worth keeping:
 - `loudnorm` is the one filter that genuinely costs — it is an analysis filter. It belongs on the
   **inbound** path, where nothing is waiting.
 
+## Finding 5 — the proposed chain, measured end to end on real speech
+
+Same recording throughout: macOS `say` played from the MacBook, captured at `Capture` 49, with a
+voice window and a silence window taken from the one take.
+
+| Voice window | peak | RMS |
+| ------------ | ---- | --- |
+| raw — what would be sent today | −10.7 dB | −26.7 dB |
+| `+ highpass=110` | −11.4 dB | −27.0 dB |
+| `+ highpass + speechnorm` | −0.4 dB | **−14.4 dB** |
+| `+ highpass + afftdn + speechnorm` | −0.4 dB | **−14.7 dB** |
+
+| Silence window — this is the audible hiss | peak | RMS |
+| ----------------------------------------- | ---- | --- |
+| raw | −34.4 dB | −46.7 dB |
+| `+ highpass=110` | −35.2 dB | **−50.4 dB** |
+| `+ highpass + afftdn` | −47.2 dB | **−62.4 dB** |
+
+Read together:
+
+- The high-pass takes **3.7 dB off the noise and 0.3 dB off the voice**, which is Finding 2 holding
+  up under a real signal rather than a sweep.
+- `speechnorm` recovers **12 dB** of level, so backing the preamp off costs nothing in loudness.
+  The processed voice ends up *louder* than the clipped recording at the shipped gain
+  (−14.4 dB against −16.5 dB RMS) while peaking at −0.4 dBFS instead of hard against the rail.
+- `afftdn` removes a further **12 dB** of noise and leaves the voice level alone
+  (−14.7 against −14.4 dB), on top of making the encode faster.
+
+Against what ships today, the whole chain is louder, undistorted, and roughly 16 dB quieter between
+words.
+
+Two cautions on those numbers. Measuring noise reduction on a silence window flatters a denoiser,
+which behaves differently while someone is speaking — the 12 dB is not a perceptual SNR gain of
+12 dB. And `speechnorm` at its default peak target lands at −0.4 dBFS, which is too close to the
+rail to survive an Opus round trip cleanly; it should be given an explicit lower target
+(`p=0.7`, about −3 dBFS) rather than shipped as measured here.
+
 ## What to change, in order of value
 
 1. **Stop clipping the input.** Lower `micGainPercent` from 100. It is already a config field and
@@ -138,9 +220,11 @@ Two results worth keeping:
    | 60 | 49 | +19.50 |
    | 40 | 39 | +12.00 |
 
-   Nothing above is a recommendation of a specific value, because the right one depends on how
-   loudly a particular child speaks at a particular distance — and that needs a listening test,
-   not a sweep. What *is* settled is that 100 is wrong: it clips on room tone alone and buys no SNR.
+   **Start at 60–70.** With real speech at a normal level, `Capture` 49 (= `micGainPercent` 60) put
+   peaks at −10.7 dBFS, which is ample headroom for a child who leans in closer or shouts, and
+   `speechnorm` makes the level back up afterwards. A child's mouth is not a MacBook speaker, so
+   this is a starting point to confirm by ear, not a final answer — but 100 is settled as wrong: it
+   clips on room tone alone and buys no SNR.
 
 2. **High-pass the capture at 100–120 Hz** (Finding 2). Largest measured noise component, no cost
    to speech, ~free.
@@ -155,12 +239,15 @@ Two results worth keeping:
    cost is affordable exactly here and nowhere else. This is what stops one relative arriving at a
    whisper and the next at a shout.
 
-5. **Consider `afftdn` on capture** — measured to pay for itself in encode time. Worth trying only
-   after 1–3, because much of what it would be removing is what the gain fix and the high-pass
-   already take out, and a denoiser working on a clipped signal cannot help.
+5. **`afftdn` on capture** — promoted from "consider" by Finding 5: a further 12 dB off the noise,
+   no measurable cost to the voice, and it makes the encode faster rather than slower. Still applies
+   only after 1–3, because a denoiser cannot help a signal that is already clipped. `nf` wants
+   tuning against a real noise floor; −30 was used here without being optimised.
 
-Not recommended yet: **corrective EQ for the 400–800 Hz lift** (Finding 3), until a measurement
-exists that separates the microphone from the speaker.
+6. **A gentle cut around 400–800 Hz**, now that Finding 3 attributes the lift to the microphone and
+   enclosure rather than to the HAT's speaker. Left unspecified deliberately: an octave table is too
+   coarse to set the depth and Q of a notch, and this is the one change that can make things worse
+   if fitted to the wrong curve.
 
 Untested by any of this: whether the microphone is mechanically coupled to the enclosure. If it is
 rigidly mounted rather than gasketed at a port, that is a mechanical fix no filter substitutes for,

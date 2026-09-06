@@ -1,5 +1,6 @@
 import { DeviceDemo } from '@/components/DeviceDemo'
-import { Lockup } from '@/components/Lockup'
+import { SiteFooter } from '@/components/SiteFooter'
+import { SiteHeader } from '@/components/SiteHeader'
 import { channels, links } from '@/lib/site'
 
 import styles from './page.module.css'
@@ -25,6 +26,13 @@ const WHO = [
   },
 ] as const
 
+/** The header's own links. Anchors into this page; `SiteHeader` appends the manual. */
+const NAV = [
+  { href: '#people', label: 'Three people' },
+  { href: '#how', label: 'How it works' },
+  { href: '#parents', label: 'For parents' },
+] as const
+
 export default function Home() {
   return (
     <>
@@ -32,19 +40,7 @@ export default function Home() {
         Skip to content
       </a>
 
-      <header className={styles.header}>
-        <div className={`wrap ${styles.headerInner}`}>
-          <Lockup />
-          <nav className={styles.nav} aria-label="Sections">
-            <a href="#people">Three people</a>
-            <a href="#how">How it works</a>
-            <a href="#parents">For parents</a>
-          </nav>
-          <a className={`btn btn-secondary ${styles.headerCta}`} href={links.repo}>
-            GitHub
-          </a>
-        </div>
-      </header>
+      <SiteHeader nav={NAV} />
 
       <main id="main">
         {/* ---- hero ---- */}
@@ -248,22 +244,7 @@ export default function Home() {
         </section>
       </main>
 
-      <footer className={styles.footer}>
-        <div className={`wrap ${styles.footerInner}`}>
-          <div>
-            <Lockup size="hero" />
-            <p className={styles.footerTag}>
-              A screenless WhatsApp voice messenger for children aged 2–5.
-            </p>
-          </div>
-          <nav className={styles.footerNav} aria-label="Elsewhere">
-            <a href={links.repo}>Source on GitHub</a>
-            <a href={links.releases}>Releases</a>
-            <a href={links.hardware}>Wiring and parts</a>
-            <a href={links.product}>What it does, precisely</a>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter />
     </>
   )
 }

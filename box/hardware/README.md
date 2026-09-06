@@ -38,7 +38,7 @@ Two things worth committing to from the start:
 
 From `docs/hardware.md` and the product spec:
 
-- Three 60 mm illuminated arcade buttons, **left / centre / right**, in that order — the caps are
+- Three 30 mm illuminated arcade buttons, **left / centre / right**, in that order — the caps are
   yellow, coral, teal to match the logo mark, and the software's `--ch-1/2/3` tokens assume it.
 - No screen and no power button. The only openings are the three buttons, a speaker grille, a
   microphone hole and the power cable.

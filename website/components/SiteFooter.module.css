@@ -1,0 +1,41 @@
+/* Moved out of app/page.module.css when the manual arrived. Declarations unchanged. */
+
+.footer {
+  background: var(--night);
+  color: var(--night-muted);
+  padding-block: var(--space-12);
+}
+
+.footerInner {
+  display: grid;
+  gap: var(--space-8);
+}
+
+@media (width >= 56rem) {
+  .footerInner {
+    grid-template-columns: 1fr auto;
+    align-items: start;
+  }
+}
+
+.footerTag {
+  margin-block-start: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--night-muted);
+  max-inline-size: 26rem;
+}
+
+.footerNav {
+  display: grid;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.footerNav a {
+  color: var(--night-text);
+  text-decoration: none;
+}
+
+.footerNav a:hover {
+  text-decoration: underline;
+}

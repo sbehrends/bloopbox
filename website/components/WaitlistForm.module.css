@@ -1,0 +1,92 @@
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: clamp(var(--space-6), 4vw, var(--space-12));
+  box-shadow: var(--shadow-lift);
+  display: grid;
+  gap: var(--space-5);
+}
+
+.title {
+  margin: 0;
+}
+
+.body {
+  color: var(--muted);
+  max-inline-size: var(--measure);
+}
+
+.form {
+  display: grid;
+  gap: var(--space-3);
+  margin-block-start: var(--space-2);
+  /* One short field does not get to be as wide as the panel. */
+  max-inline-size: 40rem;
+}
+
+@media (width >= 34rem) {
+  .form {
+    grid-template-columns: 1fr auto;
+    align-items: end;
+  }
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.label {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-display);
+}
+
+.input {
+  min-block-size: var(--tap);
+  padding-inline: var(--space-4);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--text);
+  background: var(--bg);
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+
+.input::placeholder {
+  color: var(--muted);
+}
+
+.input:focus-visible {
+  border-color: var(--focus);
+}
+
+/* Bots fill in everything they can see. This one they cannot. */
+.trap {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.fineprint {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  max-inline-size: var(--measure);
+}
+
+/* The "this is not a shop" note. Amber edge because it is a caveat, not an error — coral and
+   the danger red both mean something else here. `docs/BRAND.md`. */
+.notice {
+  border-inline-start: 4px solid var(--warm);
+  padding-inline-start: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  max-inline-size: var(--measure);
+}

@@ -68,9 +68,15 @@ export const download = {
 /**
  * The bill of materials, as the manual lists it.
  *
- * `href: null` means "no authoritative page to link to" — a generic part somebody buys wherever
- * they already shop. A made-up shop link would rot faster than the part does, so those render as
- * plain text and the note carries the spec instead.
+ * Every part carries a **list** of `links`, because most of them are stocked in more than one
+ * place and the reader wants whichever shop delivers to them: add another
+ * `{ label, href }` to a part's `links` and the manual renders one more link under that name,
+ * no page edit needed. `label` is what the reader clicks — the shop or the manufacturer, short
+ * enough to sit in a table cell (`'raspberrypi.com'`, `'Pimoroni'`, `'Amazon DE'`).
+ *
+ * An empty `links: []` means "no authoritative page to link to" — a generic part somebody buys
+ * wherever they already shop. A made-up shop link would rot faster than the part does, so those
+ * render as plain text and the note carries the spec instead.
  *
  * Kept here rather than in the page because the same list will be wanted by a parts-only page
  * later, and because a price or a link changing should be a one-line edit somebody can find.
@@ -79,49 +85,54 @@ export const parts = [
   {
     name: 'Raspberry Pi 3B+',
     qty: '1',
-    href: 'https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/',
-    note: 'The brain. This is the board the build was tested on — see the note below about the other models.',
+    links: [
+      {
+        label: 'raspberrypi.com',
+        href: 'https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/',
+      },
+    ],
+    note: 'The brain. This build was tested with Raspberry Pi 3B+ but it should work on Pi 4, Pi 5 or Pi Zero 2 W.',
   },
   {
     name: 'Waveshare WM8960 audio HAT',
     qty: '1',
-    href: 'https://www.waveshare.com/wm8960-audio-hat.htm',
+    links: [{ label: 'waveshare.com', href: 'https://www.waveshare.com/wm8960-audio-hat.htm' }],
     note: 'Sound card, microphones and speaker amplifier on one board. It sits on the Pi’s pins — no wiring. Many listings include a speaker or two, which is worth checking before you buy the next line.',
   },
   {
     name: 'Illuminated arcade buttons, 30 mm',
     qty: '3',
-    href: null,
+    links: [],
     note: 'One yellow, one red, one blue. They must be the illuminated kind, with a 3 V lamp inside — that lamp is the whole interface, and 3 V is what lets it run straight off the Pi.',
   },
   {
     name: 'Small 8 Ω speakers',
     qty: '1 pair',
-    href: null,
+    links: [],
     note: 'Check the HAT listing first — plenty of them ship with a pair in the box, and then this line costs you nothing. If not, anything 8 Ω in the 2–5 W range works; the HAT drives them directly through its screw terminals.',
   },
   {
     name: 'microSD card, 8 GB or larger',
     qty: '1',
-    href: null,
-    note: 'Class 10 or better. 4 GB is too tight once the software is on it.',
+    links: [],
+    note: 'Class 10 or better.',
   },
   {
     name: '5 V 2.5 A power supply',
     qty: '1',
-    href: null,
+    links: [],
     note: 'Micro-USB for the 3B+ and Zero 2 W; USB-C for the Pi 4 and 5. No battery and no power switch — the box is always on.',
   },
   {
-    name: '2.8 mm flat connector to Dupont lead *',
+    name: '2.8 mm flat connector to Dupont lead',
     qty: '12',
-    href: null,
-    note: 'One end pushes onto a button terminal, the other onto a Pi pin. Six for the switches, six for the lamps. Read the asterisk before you order — this is the one part that is genuinely awkward to buy.',
+    links: [],
+    note: 'One end pushes onto a button terminal, the other onto a Pi pin. Six for the switches, six for the lamps.',
   },
   {
     name: 'An enclosure',
     qty: '1',
-    href: null,
-    note: 'A 3D-printable one is in the repository, and a wooden box works just as well. See below.',
+    links: [],
+    note: 'A 3D-printable one is in the repository, and a wooden box works just as well.',
   },
 ] as const

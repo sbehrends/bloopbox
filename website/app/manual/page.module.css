@@ -193,6 +193,21 @@
   inline-size: 15rem;
 }
 
+/* Where to buy a part. A list, because most parts are stocked in more than one shop — it wraps
+   under the name so a row with four links is the same shape as a row with one. */
+.partLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-block-start: var(--space-2);
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
 .parts tbody td {
   color: var(--muted);
 }
@@ -208,12 +223,6 @@
 }
 
 /* ---- notes ---- */
-
-.noteRow {
-  display: grid;
-  gap: var(--space-6);
-  grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
-}
 
 /* Amber, because on this device coral means "button 2" and the danger red means "this failed".
    A caveat is neither. `docs/BRAND.md`. */

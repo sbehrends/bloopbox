@@ -139,20 +139,6 @@
   }
 }
 
-/* Silent mode: a 0.1s pulse every 4s. */
-@keyframes heartbeat {
-  0%,
-  2.5% {
-    opacity: 1;
-    box-shadow: 0 0 12px var(--led);
-  }
-  2.6%,
-  100% {
-    opacity: 0.16;
-    box-shadow: none;
-  }
-}
-
 /* Delivered: three quick flashes, then a long dark gap so the burst reads as one event.
    The box's own kit has no rung for this one — it is a send confirmation rather than a state,
    so it never appears in a ladder of idle patterns. `docs/PRODUCT.md` §1 step 5. */
@@ -219,9 +205,17 @@
   animation: flash3 2.4s infinite;
 }
 
-.silent .led:nth-child(1),
-.silent .led:nth-child(3) {
-  animation: heartbeat 4s infinite;
+/* Silent-mode change: the boot chase again, at 0.5s a lamp. Once, on the real box. */
+.silentChange .led {
+  animation: chase 1.5s infinite;
+}
+
+.silentChange .led:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.silentChange .led:nth-child(3) {
+  animation-delay: 1s;
 }
 
 /* A page that flashes at someone who asked it not to has failed its own voice test.

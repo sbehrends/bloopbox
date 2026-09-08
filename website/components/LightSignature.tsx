@@ -20,7 +20,7 @@ type Pattern =
   | 'unread'
   | 'recording'
   | 'delivered'
-  | 'silent'
+  | 'silentChange'
   | 'error3'
   | 'error2'
   | 'idle'
@@ -53,7 +53,7 @@ const LADDER: readonly Rung[] = [
   {
     pattern: 'unread',
     title: 'One button, blinking slowly',
-    body: 'A voice note is waiting from that person, in their colour. Tap it to hear everything they sent, oldest first.',
+    body: 'A voice note is waiting from that person, in their colour. Tap it to hear everything they sent, oldest first — and until you do, that button will not record: a blinking button listens first.',
   },
   {
     pattern: 'recording',
@@ -66,9 +66,9 @@ const LADDER: readonly Rung[] = [
     body: 'That message was delivered. The only light on this page that reports something finishing rather than something continuing.',
   },
   {
-    pattern: 'silent',
-    title: 'The outer two, a pulse every few seconds',
-    body: 'Silent mode is on. Cue noises are suppressed; playback still works, because a child who taps a light expects to hear something.',
+    pattern: 'silentChange',
+    title: 'One slow pass, left to right',
+    body: 'Silent mode just went on, or just came off. It is the only thing the mode ever shows — while it is on the box looks exactly like an idle box. Cue noises are suppressed; playback still works, because a child who taps a light expects to hear something.',
   },
   {
     pattern: 'error3',
@@ -83,7 +83,7 @@ const LADDER: readonly Rung[] = [
   {
     pattern: 'idle',
     title: 'All off',
-    body: 'Ready, and waiting. This is the normal state, and a box in a child’s bedroom at night is allowed to be dark.',
+    body: 'Ready, and waiting — silent mode included. This is the normal state, and a box in a child’s bedroom at night is allowed to be dark.',
   },
 ]
 
@@ -102,7 +102,7 @@ const ANIMATED: Partial<Record<Pattern, string>> = {
   hotspot: styles.hotspot,
   unread: styles.unread,
   delivered: styles.delivered,
-  silent: styles.silent,
+  silentChange: styles.silentChange,
 }
 
 function Lamps({ pattern, label }: { readonly pattern: Pattern; readonly label: string }) {

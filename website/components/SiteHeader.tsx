@@ -9,7 +9,7 @@ import styles from './SiteHeader.module.css'
  * `nav` differs per page because the home page's links are anchors into itself and the manual's
  * are anchors into itself; a single shared list would send a reader on the manual back to the
  * home page to find "How it works". So the caller passes its own, and only the lockup, the
- * manual link and the GitHub button are fixed.
+ * manual link and the two buttons are fixed.
  */
 export function SiteHeader({
   nav = [],
@@ -35,9 +35,20 @@ export function SiteHeader({
             Manual
           </a>
         </nav>
-        <a className={`btn btn-secondary ${styles.headerCta}`} href={links.repo}>
-          GitHub
-        </a>
+        {/* Both buttons share the auto margin so the pair sits right of the lockup while the
+            nav is hidden; the nav takes it back at the wide breakpoint. */}
+        <div className={styles.headerActions}>
+          <a className={`btn btn-secondary ${styles.headerCta}`} href={links.repo}>
+            GitHub
+          </a>
+          <a
+            className={`btn btn-primary ${styles.headerCta}`}
+            href={links.build}
+            aria-current={current === 'manual' ? 'page' : undefined}
+          >
+            Build
+          </a>
+        </div>
       </div>
     </header>
   )

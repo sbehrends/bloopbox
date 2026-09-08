@@ -51,9 +51,8 @@ const REASONS = [
 
 /** The header's own links. Anchors into this page; `SiteHeader` appends the manual. */
 const NAV = [
-  { href: '#people', label: 'Three people' },
+  { href: '#thebox', label: 'The box' },
   { href: '#how', label: 'How it works' },
-  { href: '#parents', label: 'For parents' },
 ] as const
 
 export default function Home() {
@@ -116,7 +115,7 @@ export default function Home() {
         </section>
 
         {/* ---- why ---- */}
-        <section className={`wrap ${styles.section}`}>
+        <section id="thebox" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">Why a box</p>
           <div className={`${styles.split} rise`}>
             <h2>

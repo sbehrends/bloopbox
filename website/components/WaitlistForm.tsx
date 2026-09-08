@@ -22,9 +22,8 @@ export function WaitlistForm() {
       </h2>
 
       <p className={styles.body}>
-        Everything below is doable in an afternoon, but “doable” and “something you want to spend
-        an afternoon on” are different questions, and only you know the answer. If you would rather
-        have one arrive in a box with the parts already talking to each other, leave your email and
+        Everything below is doable in an afternoon with dedication, basic tooling and the right parts. 
+        If you would rather have one arrive in a box with the parts already talking to each other, leave your email and
         we will tell you if that ever becomes a thing you can actually get.
       </p>
 
@@ -66,22 +65,9 @@ export function WaitlistForm() {
 
       <p className={styles.notice} id="kit-notice">
         <strong>There is no kit yet, and this is not a pre-order.</strong> No price has been set and
-        nothing is for sale — this is a list of people to email if a ready-made bloopbox ever
-        exists. One message, only if it happens, and your address is used for nothing else.
+        nothing is for sale. Based on people interested we will try to get your hands on one.
+        One message, only if it happens, and your address is used for nothing else.
       </p>
-
-      {waitlist.configured ? null : (
-        /* Visible on purpose while the endpoint is a placeholder: a form that quietly discards a
-           parent's email is worse than one that admits it is not wired up yet. Deleted by setting
-           `waitlist.configured`. */
-        <p className={styles.fineprint}>
-          <em>
-            Setup note, for whoever is deploying this: the form endpoint in <code>lib/site.ts</code>{' '}
-            is still a placeholder, so submissions go nowhere. Point it at a real form service and
-            flip <code>waitlist.configured</code>.
-          </em>
-        </p>
-      )}
     </section>
   )
 }

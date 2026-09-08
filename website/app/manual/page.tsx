@@ -113,12 +113,6 @@ export default function Manual() {
           <p className="eyebrow rise">Before you start</p>
           <div className={`${styles.split} rise`}>
             <h2>Software first, then hardware, then a phone.</h2>
-            <p className="lede">
-              The order matters more than it looks. You write the software to the memory card
-              before anything is screwed together, because a card is much easier to reach when it
-              is not inside a box. Then the parts go together. Then you finish the setup from your
-              phone, with the box already sitting where it is going to live.
-            </p>
           </div>
 
           <ol className={`${styles.phases} rise-group`}>
@@ -126,7 +120,7 @@ export default function Manual() {
               <span className={styles.phaseTag}>Steps 1–3</span>
               <h3>The memory card</h3>
               <p>
-                Download the software, write it to the card, put the card in the Pi. Twenty minutes,
+                Download the software, write it to the SD card, put the card in the Pi. Twenty minutes,
                 and most of that is a progress bar.
               </p>
             </li>
@@ -134,13 +128,12 @@ export default function Manual() {
               <span className={styles.phaseTag}>Steps 4–7</span>
               <h3>The hardware</h3>
               <p>
-                Sound card on, speakers in, buttons wired, everything into the case. This is the
-                part with a screwdriver in it.
+                Sound card on, speakers in, buttons wired, everything into the case.
               </p>
             </li>
             <li>
               <span className={styles.phaseTag}>Steps 8–11</span>
-              <h3>Wi-Fi, WhatsApp, people</h3>
+              <h3>Wi-Fi, WhatsApp, Config</h3>
               <p>
                 Power it up and finish from your phone: join your network, link WhatsApp, and decide
                 who lives behind each colour.
@@ -186,12 +179,20 @@ export default function Manual() {
                 {parts.map((part) => (
                   <tr key={part.name}>
                     <th scope="row">
-                      {part.href === null ? (
-                        part.name
-                      ) : (
-                        <a href={part.href} rel="noreferrer">
-                          {part.name}
-                        </a>
+                      {part.name}
+                      {/* A part can be stocked in several shops, so the links sit under the name
+                          rather than on it: adding a second one to `parts` in `lib/site.ts`
+                          changes nothing about how the row is laid out. */}
+                      {part.links.length > 0 && (
+                        <ul className={styles.partLinks}>
+                          {part.links.map((link) => (
+                            <li key={link.href}>
+                              <a href={link.href} rel="noreferrer">
+                                {link.label}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </th>
                     <td className={styles.qty}>{part.qty}</td>
@@ -202,60 +203,6 @@ export default function Manual() {
             </table>
           </div>
 
-          <div className={`${styles.noteRow} rise-group`}>
-            <Note title="Which Raspberry Pi?">
-              <p>
-                The whole build was tested on a <strong>Raspberry Pi 3B+</strong>, so that is the one
-                this manual describes and the only one anyone has actually proved works end to end. A{' '}
-                <strong>Pi 4</strong>, <strong>Pi 5</strong> or <strong>Pi Zero 2 W</strong> should all
-                work too — they share the same 40-pin header and the same pin numbering, which is
-                everything this build depends on. The differences are practical rather than
-                electrical: the 4 and 5 want USB-C power instead of micro-USB, and the Zero 2 W needs
-                its header soldered on unless you buy the version that comes with one. If you are
-                buying a board specifically for this, the Zero 2 W is the smallest and the 3B+ is the
-                one we can promise.
-              </p>
-            </Note>
-
-            <Note title="* About those button wires">
-              <p>
-                An arcade button’s terminals are <strong>2.8 mm flat tabs</strong>. A Pi pin wants a
-                female <strong>Dupont</strong> socket. A lead with one of each on it does exist, but
-                it is not a thing most shops stock, and hunting for one is the only part of this
-                build likely to make you close a browser tab in disgust. Three ways round it, in the
-                order we would try them:
-              </p>
-              <ul className={styles.list}>
-                <li>
-                  <strong>Crimp your own.</strong> A bag of fifty 2.8 mm crimp terminals costs about
-                  a euro. Cut one end off a female-to-female Dupont lead, crimp the tab on, done —
-                  no soldering, and it is the same joint the ready-made lead would have had.
-                </li>
-                <li>
-                  <strong>Solder to the tab.</strong> If you own an iron, this is the strongest of
-                  the three and takes about a minute a wire.
-                </li>
-                <li>
-                  <strong>Twist and insulate.</strong> Strip a Dupont lead, hook the bare wire
-                  through the hole in the tab, twist it tight, cover it with heat-shrink or tape. It
-                  works — but it is also the one that will eventually shake loose inside a box that
-                  gets picked up and dropped, so treat it as the way to find out whether the box is
-                  fun before you commit to it.
-                </li>
-              </ul>
-            </Note>
-
-            <Note title="Which case?">
-              <p>
-                There is a <strong>3D-printable case</strong> in the repository, sized for these exact
-                parts, and printing it is the shortest route to something that looks finished. It is
-                not the interesting route. This is a box that will sit in a child’s room for years,
-                and the best ones we have seen are a wooden cigar box, a biscuit tin and a hollowed-out
-                picture book. Anything with a lid, room for a fist-sized board and somewhere to drill
-                three 30 mm holes will do it. Please build a strange one.
-              </p>
-            </Note>
-          </div>
         </section>
 
         {/* ================= PART ONE ================= */}
@@ -273,11 +220,6 @@ export default function Manual() {
                 One file, about a gigabyte. It contains the operating system and the bloopbox
                 software together, already configured — there is nothing to install afterwards and
                 no command line anywhere in this manual.
-              </p>
-              <p>
-                Grab the file whose name contains <code>wm8960</code>. That is the build that knows
-                about the audio HAT you are about to plug in; the plain one does not turn the sound
-                card on and you will get a box that lights up and stays silent.
               </p>
               <p>
                 <a className="btn btn-primary" href={download.image}>
@@ -430,8 +372,12 @@ export default function Manual() {
               </ul>
               <p>
                 Push-on flat connectors slide onto these — 2.8 mm is the size. On the Pi end, the
-                wire has to finish in a female Dupont socket. If your leads did not come with one of
-                each, the note under the parts table has the three ways of getting there.
+                wire has to finish in a female Dupont socket. A lead with one of each on it is not a
+                thing most shops stock, so if yours did not come that way: crimp a 2.8 mm terminal
+                onto the cut end of a female-to-female Dupont lead (a bag of fifty costs about a
+                euro, and no soldering), solder the wire straight to the tab if you own an iron, or
+                — to find out whether the box is fun before committing — twist the bare wire through
+                the hole in the tab and cover the joint with heat-shrink.
               </p>
 
               <h4 className={styles.subhead}>Where each wire goes</h4>

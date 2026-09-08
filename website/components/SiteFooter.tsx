@@ -12,7 +12,7 @@ export function SiteFooter() {
         <div>
           <Lockup size="hero" />
           <p className={styles.footerTag}>
-            A screenless WhatsApp voice messenger for children aged 2–5.
+            A screenless WhatsApp voice messenger for children.
           </p>
         </div>
         <nav className={styles.footerNav} aria-label="Elsewhere">

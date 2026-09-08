@@ -229,6 +229,11 @@
   font-size: var(--text-sm);
 }
 
+.note p + p,
+.note ul {
+  margin-block-start: var(--space-3);
+}
+
 .noteTitle {
   font-family: var(--font-display);
   font-weight: var(--weight-display);

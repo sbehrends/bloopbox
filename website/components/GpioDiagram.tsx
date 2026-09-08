@@ -6,14 +6,19 @@ import styles from './GpioDiagram.module.css'
  * **Drawn from data, not illustrated.** Every other picture in the manual can be a generated
  * illustration; this one cannot. A wiring diagram with a wrong pin number is worse than no
  * diagram — somebody follows it — and an image generator has no idea which pin GPIO27 is. So
- * the map below is transcribed from the standard 40-pin pinout, the four roles come from
+ * the map below is transcribed from the standard 40-pin pinout, the roles come from
  * `docs/hardware.md`, and the picture is generated from them.
+ *
+ * **Only the twelve pins the builder touches are labelled, and everything else is dimmed.** The
+ * pins the audio board occupies used to be called out here too; they were noise in a step whose
+ * whole job is "put this wire on that pin", and the board needs no wiring of its own. Nor is any
+ * power rail used: the lamps are 3 V and run off their own GPIO pin, so 3V3 and 5V go nowhere.
  *
  * If the pin assignments ever change, they change in `box/software/src/hal/gpioDriver.ts` first
  * (`GPIO_PINS`), then in `docs/hardware.md`, then here.
  */
 
-type Role = 'button' | 'lamp' | 'hat' | 'power' | 'ground' | 'free'
+type Role = 'button' | 'lamp' | 'power' | 'ground' | 'free'
 
 type Pin = {
   /** Physical position on the header, 1–40. What you count to when wiring. */
@@ -23,7 +28,7 @@ type Pin = {
   readonly role: Role
   /** Channel 1–3, for the six pins that belong to a button. Drives the colour. */
   readonly channel?: 1 | 2 | 3
-  /** Shown to the right of the header. Absent for a pin this build does not touch. */
+  /** Shown beside the header, and what marks a pin as used: absent means dimmed. */
   readonly use?: string
 }
 
@@ -31,8 +36,8 @@ type Pin = {
    the board when the USB ports face you. */
 const LEFT: readonly Pin[] = [
   { n: 1, label: '3V3', role: 'power' },
-  { n: 3, label: 'GPIO2', role: 'hat', use: 'HAT — I²C data' },
-  { n: 5, label: 'GPIO3', role: 'hat', use: 'HAT — I²C clock' },
+  { n: 3, label: 'GPIO2', role: 'free' },
+  { n: 5, label: 'GPIO3', role: 'free' },
   { n: 7, label: 'GPIO4', role: 'free' },
   { n: 9, label: 'GND', role: 'ground', use: 'Button 1 — other leg' },
   { n: 11, label: 'GPIO17', role: 'button', channel: 1, use: 'Button 1 — switch' },
@@ -47,32 +52,32 @@ const LEFT: readonly Pin[] = [
   { n: 29, label: 'GPIO5', role: 'free' },
   { n: 31, label: 'GPIO6', role: 'free' },
   { n: 33, label: 'GPIO13', role: 'free' },
-  { n: 35, label: 'GPIO19', role: 'hat', use: 'HAT — I²S' },
+  { n: 35, label: 'GPIO19', role: 'free' },
   { n: 37, label: 'GPIO26', role: 'free' },
   { n: 39, label: 'GND', role: 'ground', use: 'Button 3 — other leg' },
 ]
 
 const RIGHT: readonly Pin[] = [
-  { n: 2, label: '5V', role: 'power', use: 'ULN2003 — lamp power' },
+  { n: 2, label: '5V', role: 'power' },
   { n: 4, label: '5V', role: 'power' },
-  { n: 6, label: 'GND', role: 'ground', use: 'ULN2003 — ground' },
+  { n: 6, label: 'GND', role: 'ground' },
   { n: 8, label: 'GPIO14', role: 'free' },
   { n: 10, label: 'GPIO15', role: 'free' },
-  { n: 12, label: 'GPIO18', role: 'hat', use: 'HAT — I²S' },
-  { n: 14, label: 'GND', role: 'ground' },
-  { n: 16, label: 'GPIO23', role: 'lamp', channel: 1, use: 'Lamp 1 → ULN2003 IN1' },
-  { n: 18, label: 'GPIO24', role: 'lamp', channel: 2, use: 'Lamp 2 → ULN2003 IN2' },
-  { n: 20, label: 'GND', role: 'ground' },
-  { n: 22, label: 'GPIO25', role: 'lamp', channel: 3, use: 'Lamp 3 → ULN2003 IN3' },
+  { n: 12, label: 'GPIO18', role: 'free' },
+  { n: 14, label: 'GND', role: 'ground', use: 'Lamp 1 — other leg' },
+  { n: 16, label: 'GPIO23', role: 'lamp', channel: 1, use: 'Lamp 1 — drive' },
+  { n: 18, label: 'GPIO24', role: 'lamp', channel: 2, use: 'Lamp 2 — drive' },
+  { n: 20, label: 'GND', role: 'ground', use: 'Lamp 2 — other leg' },
+  { n: 22, label: 'GPIO25', role: 'lamp', channel: 3, use: 'Lamp 3 — drive' },
   { n: 24, label: 'GPIO8', role: 'free' },
   { n: 26, label: 'GPIO7', role: 'free' },
   { n: 28, label: 'GPIO1', role: 'free' },
-  { n: 30, label: 'GND', role: 'ground' },
+  { n: 30, label: 'GND', role: 'ground', use: 'Lamp 3 — other leg' },
   { n: 32, label: 'GPIO12', role: 'free' },
   { n: 34, label: 'GND', role: 'ground' },
   { n: 36, label: 'GPIO16', role: 'free' },
-  { n: 38, label: 'GPIO20', role: 'hat', use: 'HAT — I²S' },
-  { n: 40, label: 'GPIO21', role: 'hat', use: 'HAT — I²S' },
+  { n: 38, label: 'GPIO20', role: 'free' },
+  { n: 40, label: 'GPIO21', role: 'free' },
 ]
 
 const ROW_H = 27
@@ -83,7 +88,6 @@ const ROWS = 20
  *  button-and-lamp pins get one; everything else is neutral. */
 function fillFor(pin: Pin): string {
   if (pin.channel !== undefined) return `var(--ch-${pin.channel})`
-  if (pin.role === 'hat') return 'var(--accent-soft)'
   if (pin.role === 'power' || pin.role === 'ground') return 'var(--surface-sunken)'
   return 'var(--surface)'
 }
@@ -92,7 +96,12 @@ function PinRow({ pin, side, y }: { readonly pin: Pin; readonly side: 'left' | '
   const isLeft = side === 'left'
   const chipX = isLeft ? 168 : 312
   const numX = isLeft ? 272 : 288
-  const dim = pin.role === 'free'
+  /* A pin with no `use` is a pin you never touch — every free line, but also the 3V3 and 5V
+     rails and the ground pins that happen not to be the convenient ones. Dimming by "has a
+     job in this build" rather than by role is what keeps the twelve wired pins the only thing
+     the eye lands on; the power rails in particular used to read as significant, and a builder
+     hunting for 5V on a board that needs none is a wrong turn the diagram was inviting. */
+  const dim = pin.use === undefined
 
   return (
     <g opacity={dim ? 0.42 : 1}>
@@ -149,11 +158,9 @@ export function GpioDiagram() {
         <desc id="gpio-desc">
           Buttons connect their switch legs to GPIO17 on physical pin 11, GPIO27 on pin 13 and
           GPIO22 on pin 15, and their other legs to any ground pin — 9, 25 and 39 are the
-          convenient ones. Lamp drive runs from GPIO23 on pin 16, GPIO24 on pin 18 and GPIO25 on
-          pin 22 into inputs 1 to 3 of the ULN2003 board, which takes its own power from 5 volts on
-          pin 2 and ground on pin 6. The audio HAT occupies GPIO2 and GPIO3 on pins 3 and 5 for
-          I²C, and GPIO18, GPIO19, GPIO20 and GPIO21 on pins 12, 35, 38 and 40 for I²S. No other
-          pin is used.
+          convenient ones. The lamps run straight off the header: GPIO23 on pin 16, GPIO24 on pin
+          18 and GPIO25 on pin 22, with their other legs on the ground pins 14, 20 and 30. Twelve
+          wires in total, and no other pin is yours to touch.
         </desc>
 
         {/* Column headings */}

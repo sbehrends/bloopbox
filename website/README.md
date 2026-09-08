@@ -41,7 +41,6 @@ app/
 components/
 ├── SiteHeader.tsx    sticky chrome. Takes its section links as a prop — see below
 ├── SiteFooter.tsx    the navy band
-├── DeviceDemo.tsx    the interactive box in the home hero
 ├── Lockup.tsx        mark + wordmark
 ├── Figure.tsx        an illustration, or a placeholder carrying the prompt for one
 ├── GpioDiagram.tsx   the 40-pin header, drawn from data
@@ -79,9 +78,13 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
 - **No ESLint.** The box cannot use it (TypeScript 7 removed the compiler API `typescript-eslint`
   needs) and the site does not need a second opinion on a hundred lines of JSX. `npm run check` is
   the gate.
-- **The hero demo is the argument.** The device's whole interface is three lamps and two gestures,
-  so the page lets you hold a button rather than describing what would happen if you did. Its
-  thresholds are the box's shipped defaults, duplicated rather than imported, per the rule above.
+- **The hero is a photograph, full-bleed.** `public/bloopbox-hero.jpeg` is the background of the
+  band, and the copy sits on a veil mixed from `var(--bg)` — which is what lets every token over
+  it stay the token it already is in both themes while one unchanging photograph shows through.
+  Below 64rem the photograph becomes a band across the bottom of the hero instead: portrait, a
+  cover crop of a 16:9 frame is a 2.4x zoom into the middle of the box, with no object left in it.
+  There used to be a working device here instead, `DeviceDemo.tsx`, holdable and running the box's
+  own thresholds; it was removed on 2026-09-08 and the photograph is the hero on its own.
 - **The header's nav is a prop, not a constant.** Both pages' section links are anchors *into
   themselves*, so a shared list would send a reader on the manual back to the home page to find
   "How it works". `SiteHeader` owns only the lockup, the manual link and the GitHub button.
@@ -96,6 +99,28 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
   and a table can only write the word. It adds one rung the box's kit has no reason to carry: the
   three-flash "delivered" burst, which is a confirmation rather than a state. `docs/PRODUCT.md` §6
   stays the authority — these lamps are a picture of it.
+- **Blocks arrive on scroll, and it is CSS, not an observer.** Two global classes in `globals.css`,
+  `rise` and `rise-group`, fade a block up 1.25rem as it enters the scrollport, driven by
+  `animation-timeline: view()`. No JavaScript, which is the only kind of entrance a static export
+  can make honestly. Three things about it are load-bearing rather than stylistic:
+  - **Every declaration sits inside `@supports (animation-timeline: view())`.** A browser without
+    scroll-driven animations never applies the hidden `from` state, so it never hides copy it cannot
+    then reveal (Firefox, today, gets no entrance at all). Reduced motion and print each get
+    `animation: none`, which lands every block on its base style — the arrived one. The blanket rule
+    at the top of `globals.css` cannot do that job: a scroll-driven animation ignores
+    `animation-duration`.
+  - **The ranges are measured in `cover`, not `entry`.** `entry` is the element's own height, so a
+    one-line eyebrow would finish inside twenty pixels of scroll and pop rather than rise.
+  - **The closing section on neither page animates, and that is what makes the rest visible.** A
+    block at the very bottom has only its own height and the footer left to scroll through, so a
+    range that ends late leaves it stuck half-arrived. The first version obeyed that by ending every
+    range at `cover 20%` — and at 20% the effect is invisible, because a block finishes while it is
+    still in the bottom quarter of the screen, long before anyone looks at it. Exempting the
+    sign-off took the worst block on the page out of the calculation; the range is now
+    `cover 15%`–`cover 45%`, which starts the fade around 85% of screen height and finishes it
+    around 55%, in the reading zone. Measured at 1280×987, the tightest remaining block reaches
+    `cover 96%` against the 60% the fourth child of a row asks for. Re-measure if a row grows past
+    four, or if a new section lands between the last one and the footer.
 - **The pin map is drawn from data, not illustrated.** `GpioDiagram.tsx` transcribes the 40-pin
   header and colours it from `docs/hardware.md`. Every other picture on the site can be a generated
   illustration; this one cannot, because an image generator does not know which pin GPIO27 is and
@@ -118,6 +143,16 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
 - **One dark band, and it is the section about the three buttons.** Three saturated colours on cream
   are swatches; on navy they are lamps, which is what they are on the object. The footer runs on the
   same navy, which is also the only place the wordmark can be amber (10.8:1 there, 1.6:1 on cream).
+- **The three caps in that band blink, and they blink the real pattern.** Each rests as the unlit
+  lens (`--ch-N-off`, the cap colour dulled toward warm grey) and then plays the unread-message
+  blink from `docs/PRODUCT.md` §6 — 0.8 s on, 0.8 s off, three times — before resting again, with a
+  faint wash of that colour over its own card while it is lit. It is the same picture-of-the-ladder
+  rule the light signature follows, so the rate is not a design choice to retune: a lamp on this
+  site may only move the way a lamp on the object moves. The three are staggered so **one is lit at
+  a time**, which is what "when that person answers, their colour is the thing that lights up"
+  claims two paragraphs above it. Resting on the unlit lens rather than at 16% opacity is the one
+  departure from `LightSignature`: there, the plate is the subject and a dark lamp is information;
+  here, the cap is also the card's "which button", and it has to stay legible through the dark half.
 
 ## Before this goes live
 

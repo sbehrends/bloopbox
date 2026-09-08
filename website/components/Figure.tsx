@@ -38,7 +38,8 @@ export function Figure({
   readonly ratio?: string
 }) {
   return (
-    <figure className={styles.figure}>
+    // Both states rise into view: the placeholders are as tall as the art they stand in for.
+    <figure className={`${styles.figure} rise`}>
       {src ? (
         <div className={styles.frame} style={{ aspectRatio: ratio }}>
           <img src={src} alt={alt ?? ''} loading="lazy" decoding="async" />

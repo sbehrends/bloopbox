@@ -5,25 +5,124 @@
 
 /* ---- hero ---- */
 
+/* A full-bleed photograph with the copy on top. `isolation` rather than a stacking-context
+   accident: the veil and the picture live at negative z-index inside this section only, so the
+   sticky header above and the sections below are untouched. */
 .hero {
+  /* How much of the bottom edge the photograph takes on a narrow screen — see `.heroMedia`.
+     Zero once the hero is wide enough to hold the picture behind the copy. */
+  --band: min(19rem, 40vh);
+
+  position: relative;
+  isolation: isolate;
   display: grid;
-  gap: var(--space-12);
-  /* The next section brings its own top padding, so this end is deliberately short. */
-  padding-block: clamp(2.5rem, 7vw, 4.5rem) clamp(1.5rem, 3vw, 2.5rem);
   align-items: center;
+  min-block-size: clamp(30rem, 74vh, 40rem);
+  /* The bottom pad clears the band, so the copy never sits on the object. The next section
+     brings its own top padding, so this end is otherwise deliberately short. */
+  padding-block: clamp(2.5rem, 7vw, 5rem) calc(var(--band) + var(--space-6));
+  overflow: hidden;
+}
+
+/* Portrait, a cover crop of a 16:9 frame is a 2.4× zoom into the middle of the box — a smear
+   with no object in it. So on a phone the photograph is a band across the bottom of the hero,
+   at a crop that still shows the whole device, and the copy sits above it on flat page colour.
+   From 64rem the hero is wide enough to be landscape itself and the picture fills it. */
+.heroMedia {
+  position: absolute;
+  inset: auto 0 0;
+  block-size: var(--band);
+  z-index: -1;
 }
 
 @media (width >= 64rem) {
   .hero {
-    grid-template-columns: 1.05fr 0.95fr;
-    gap: var(--space-16);
+    --band: 0px;
+
+    padding-block: clamp(3rem, 8vw, 5rem) clamp(2.5rem, 6vw, 4rem);
   }
+
+  .heroMedia {
+    inset: 0;
+    block-size: auto;
+  }
+}
+
+/* Off-centre on purpose: the box sits right of centre in the frame, and this keeps it there
+   while the copy takes the left, at every width. */
+.heroMedia img {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  object-position: 68% 60%;
+}
+
+/* The veil, in the page colour rather than in a colour of its own — that is what lets every
+   token over it (text, muted, the buttons' navy edge) stay the token it already is in both
+   themes while one unchanging photograph shows through. On a phone the copy covers the whole
+   frame, so the veil is flat and heavy; from 64rem it opens to the right and lets the object
+   out. The `::before` is the bottom fade that dissolves the band into the section below. */
+.heroMedia::after,
+.heroMedia::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+/* On the band, the veil is only the top edge dissolving into the page — the photograph itself
+   stays clear, because there is no text on it. */
+.heroMedia::after {
+  background: linear-gradient(
+    180deg,
+    var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 62%, transparent) 26%,
+    color-mix(in srgb, var(--bg) 18%, transparent) 58%,
+    transparent 82%
+  );
+}
+
+.heroMedia::before {
+  z-index: 1;
+}
+
+@media (width >= 64rem) {
+  /* The falloff is placed against the copy, not against the picture: opaque through the column,
+     then gone by the time it reaches the box. */
+  .heroMedia::after {
+    background: linear-gradient(
+      98deg,
+      color-mix(in srgb, var(--bg) 96%, transparent) 0%,
+      color-mix(in srgb, var(--bg) 90%, transparent) 40%,
+      color-mix(in srgb, var(--bg) 40%, transparent) 62%,
+      color-mix(in srgb, var(--bg) 8%, transparent) 80%,
+      transparent 92%
+    );
+  }
+
+  /* Full-frame, the bottom edge dissolves into the section below instead. */
+  .heroMedia::before {
+    background: linear-gradient(180deg, transparent 74%, var(--bg));
+  }
+}
+
+/* The page gutter, so the headline starts on the same line as the lockup above it. Narrowing
+   `.heroCopy` itself would have re-centred it — `.wrap` carries `margin-inline: auto`. */
+.heroInner {
+  display: grid;
 }
 
 .heroCopy {
   display: grid;
   gap: var(--space-6);
   justify-items: start;
+}
+
+@media (width >= 64rem) {
+  .heroCopy {
+    /* Stop the copy before the object it is describing, which sits right of centre in the
+       photograph. */
+    max-inline-size: 33rem;
+  }
 }
 
 /* The kicker above the headline. Its three dots are the three caps, in cap order — the same
@@ -83,19 +182,6 @@
   color: var(--muted);
 }
 
-.heroDevice {
-  display: grid;
-  gap: var(--space-4);
-  justify-items: center;
-}
-
-.tryIt {
-  font-size: var(--text-sm);
-  color: var(--muted);
-  text-align: center;
-  max-inline-size: 24rem;
-}
-
 /* ---- generic section rhythm ---- */
 
 .section {
@@ -127,6 +213,27 @@
   grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
 }
 
+/* A card whose picture reaches its own edges. Two classes deep so it beats the global `.card`
+   padding on specificity rather than on source order, which a CSS module cannot rely on. */
+.cards .mediaCard {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* A fixed aspect, so three cards line their headings up whatever the source images measure. */
+.mediaCardImage {
+  inline-size: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-block-end: 1px solid var(--border);
+}
+
+.mediaCardBody {
+  padding: var(--space-6);
+}
+
 /* ---- one button, one person ---- */
 
 /* The page's one dark band. Three saturated colours on cream are three swatches; on navy they
@@ -155,6 +262,27 @@ p.nightEyebrow {
   background: var(--night-raised);
   border-color: var(--night-border);
   box-shadow: none;
+  /* Both children below are positioned against the card, and both are round-cornered by it. */
+  position: relative;
+  isolation: isolate;
+}
+
+/* The colour of the person who just answered, thrown across their own card. Faint on purpose:
+   the lamp is the event, this is only the room it happens in. */
+.night .whoCard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    22rem 16rem at 2.5rem 2.5rem,
+    color-mix(in srgb, var(--cap) 22%, transparent),
+    transparent 70%
+  );
+  animation: replyWash 16s infinite;
 }
 
 .night .whoCard h3 {
@@ -165,17 +293,119 @@ p.nightEyebrow {
   color: var(--night-muted);
 }
 
-/* A lit cap. Which button, and nothing else — the only meaning a channel colour ever carries.
-   Left to right: yellow, coral, teal, the order of the caps and of the rings in the mark. */
+/* A cap. Which button, and nothing else — the only meaning a channel colour ever carries.
+   Left to right: yellow, coral, teal, the order of the caps and of the rings in the mark.
+
+   At rest it is the unlit lens: the channel colour dulled toward warm grey, exactly what a
+   translucent cap looks like with the lamp behind it off. That keeps the card's identity legible
+   for the twelve seconds a real box would be dark, which a lamp at 16% opacity would not. */
 .swatch {
+  position: relative;
   display: block;
   inline-size: 2.25rem;
   block-size: 2.25rem;
   margin-block-end: var(--space-5);
   border: 2px solid var(--device-edge);
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--cap) 55%, #fff), var(--cap) 74%);
+  background: radial-gradient(
+    circle at 50% 34%,
+    color-mix(in srgb, var(--cap-off) 60%, #fff),
+    var(--cap-off) 74%
+  );
+}
+
+/* The lamp behind that lens. A separate layer so the burst animates opacity and a shadow, which
+   the compositor can do on its own, rather than repainting a gradient sixteen times a cycle. */
+.swatch::after {
+  content: '';
+  position: absolute;
+  /* Inside the cap's dark rim, which stays visible lit or dark, the way a moulded edge does. */
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  background: radial-gradient(
+    circle at 50% 34%,
+    color-mix(in srgb, var(--cap) 55%, #fff),
+    var(--cap) 74%
+  );
   box-shadow: 0 0 22px 4px color-mix(in srgb, var(--cap) 45%, transparent);
+  animation: reply 16s infinite;
+}
+
+/* Stagger. Each burst is 4.8 s long, so these three never overlap: one lamp at a time, then
+   eleven seconds in which the whole band is dark — the state a box in a bedroom is usually in. */
+.night .whoCard:nth-child(2)::before,
+.night .whoCard:nth-child(2) .swatch::after {
+  animation-delay: 5.6s;
+}
+
+.night .whoCard:nth-child(3)::before,
+.night .whoCard:nth-child(3) .swatch::after {
+  animation-delay: 10.4s;
+}
+
+/* Three slow blinks — 0.8 s on, 0.8 s off, the unread-message rate in `docs/PRODUCT.md` §6, which
+   is 5% of this 16 s cycle — and then the long dark rest that makes the burst read as one arrival
+   rather than as a pattern the page is stuck in. Hard edges, because a lamp has no fade. */
+@keyframes reply {
+  0%,
+  5% {
+    opacity: 1;
+  }
+  5.1%,
+  10% {
+    opacity: 0;
+  }
+  10.1%,
+  15% {
+    opacity: 1;
+  }
+  15.1%,
+  20% {
+    opacity: 0;
+  }
+  20.1%,
+  25% {
+    opacity: 1;
+  }
+  25.1%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The wash rides the same burst but does not blink with it: it comes up with the first flash and
+   leaves after the last, so the card warms once per arrival instead of strobing. */
+@keyframes replyWash {
+  0% {
+    opacity: 0;
+  }
+  4%,
+  25% {
+    opacity: 1;
+  }
+  32%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* A page that blinks at someone who asked it not to has failed its own voice test. This has to
+   beat the blanket `animation-duration: 0.001ms !important` in globals.css, which would otherwise
+   land every lamp on its unlit base state and throw the colour away. Same `!important`, higher
+   specificity — `LightSignature.module.css` carries the identical rule for the identical reason.
+   Lit rather than dark, because lit is the half that says something. */
+@media (prefers-reduced-motion: reduce) {
+  .night .whoCard .swatch::after {
+    animation: none !important;
+    opacity: 1;
+  }
+
+  /* The wash only ever meant "just now", so with the movement gone it means nothing. */
+  .night .whoCard::before {
+    animation: none !important;
+    opacity: 0;
+  }
 }
 
 /* ---- how it works ---- */

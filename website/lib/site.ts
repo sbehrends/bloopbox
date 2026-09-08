@@ -86,19 +86,19 @@ export const parts = [
     name: 'Waveshare WM8960 audio HAT',
     qty: '1',
     href: 'https://www.waveshare.com/wm8960-audio-hat.htm',
-    note: 'Sound card, microphones and speaker amplifier on one board. It sits on the Pi’s pins — no wiring.',
+    note: 'Sound card, microphones and speaker amplifier on one board. It sits on the Pi’s pins — no wiring. Many listings include a speaker or two, which is worth checking before you buy the next line.',
   },
   {
     name: 'Illuminated arcade buttons, 30 mm',
     qty: '3',
     href: null,
-    note: 'One yellow, one red, one blue. They must be the illuminated kind with a 5 V lamp inside — that lamp is the whole interface.',
+    note: 'One yellow, one red, one blue. They must be the illuminated kind, with a 3 V lamp inside — that lamp is the whole interface, and 3 V is what lets it run straight off the Pi.',
   },
   {
     name: 'Small 8 Ω speakers',
     qty: '1 pair',
     href: null,
-    note: 'The HAT drives these directly through its screw terminals. Anything in the 2–5 W range is fine.',
+    note: 'Check the HAT listing first — plenty of them ship with a pair in the box, and then this line costs you nothing. If not, anything 8 Ω in the 2–5 W range works; the HAT drives them directly through its screw terminals.',
   },
   {
     name: 'microSD card, 8 GB or larger',
@@ -113,22 +113,10 @@ export const parts = [
     note: 'Micro-USB for the 3B+ and Zero 2 W; USB-C for the Pi 4 and 5. No battery and no power switch — the box is always on.',
   },
   {
-    name: 'ULN2003 driver board',
-    qty: '1',
+    name: '2.8 mm flat connector to Dupont lead *',
+    qty: '12',
     href: null,
-    note: 'The Pi’s pins cannot light a 5 V arcade lamp on their own. This little board does it for them.',
-  },
-  {
-    name: '2×20 stacking header',
-    qty: '1',
-    href: null,
-    note: 'The HAT covers the Pi’s pins. This lifts them back up so the buttons have somewhere to go.',
-  },
-  {
-    name: 'Female-to-female jumper wires',
-    qty: '~12',
-    href: null,
-    note: 'For the buttons and the driver board. No soldering anywhere in this build.',
+    note: 'One end pushes onto a button terminal, the other onto a Pi pin. Six for the switches, six for the lamps. Read the asterisk before you order — this is the one part that is genuinely awkward to buy.',
   },
   {
     name: 'An enclosure',

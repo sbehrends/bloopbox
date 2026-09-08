@@ -230,3 +230,90 @@ code {
 .skip:focus {
   inset-block-start: var(--space-4);
 }
+
+/* ---- entering the view ---- */
+
+/* Two classes, used by both pages: `rise` for one block, `rise-group` for a row that should arrive
+   in order rather than all at once.
+ *
+ * Scroll-driven, so there is no JavaScript, no observer and no hydration involved — the browser
+ * ties each element's progress to its own position in the scrollport, which is the only thing that
+ * survives a static export honestly. It is also why every declaration sits inside `@supports`: a
+ * browser without scroll-driven animations (Firefox, at the time of writing) never applies the
+ * `from` state, so it never hides anything it cannot then reveal. An entrance animation is the one
+ * kind of motion that can eat a page rather than decorate it, and this is the whole guard against
+ * that — the same reason the reduced-motion and print rules below both land on the *finished*
+ * state. Somebody will print the manual.
+ *
+ * The range is measured in `cover`, which is the element's height *plus* the scrollport's, so a
+ * one-line eyebrow and a 500px card take about the same amount of scrolling to arrive. Ranges in
+ * `entry` are the tempting alternative and they are wrong here: `entry` is the element's own
+ * height, so an eyebrow would finish inside twenty pixels of scroll and pop rather than rise.
+ *
+ * It ends at `cover 45%`, which puts the finish around the middle of the screen. That number was
+ * 20% first, and 20% is invisible: the block finished while it was still in the bottom quarter, so
+ * it had always arrived by the time anybody looked at it. What forced it that low was the last
+ * block on a page — a sign-off at the very bottom has only its own height and the footer left to
+ * scroll through, so a late range leaves it stuck half-arrived with nothing further to scroll.
+ * Rather than let the worst block on the page set the tempo for every other one, **the closing
+ * section on both pages does not animate at all** and the range is tuned for the blocks that can
+ * actually use it. Measured at 1280×987, the tightest remaining block reaches `cover 78%`; the
+ * furthest this file asks for is 60%, on a fourth child. If a row ever grows past four, or a new
+ * section lands under the footer, measure again before trusting that margin. */
+@supports (animation-timeline: view()) {
+  @keyframes rise {
+    from {
+      opacity: 0;
+      translate: 0 1.25rem;
+    }
+
+    to {
+      opacity: 1;
+      translate: none;
+    }
+  }
+
+  .rise,
+  .rise-group > * {
+    /* Longhands on purpose: the `animation` shorthand would reset `animation-duration` to `0s`,
+       and a progress-based timeline needs `auto` to mean "the whole range". */
+    animation-name: rise;
+    animation-duration: auto;
+    animation-timing-function: var(--ease);
+    animation-fill-mode: both;
+    animation-timeline: view();
+    animation-range: cover 15% cover 45%;
+  }
+
+  /* The stagger is a shifted range rather than a delay, because a delay on a progress-based
+     timeline is a fraction of scroll, not a fraction of a second. Three is the most a row on
+     either page holds; the fourth is here so a row that grows does not fall back to unison. */
+  .rise-group > *:nth-child(2) {
+    animation-range: cover 22% cover 50%;
+  }
+
+  .rise-group > *:nth-child(3) {
+    animation-range: cover 29% cover 55%;
+  }
+
+  .rise-group > *:nth-child(4) {
+    animation-range: cover 36% cover 60%;
+  }
+
+  /* Both of these have to be `none` rather than a shorter range: with the animation gone the
+     element renders its base style, and the base style is the arrived one. The blanket rule at the
+     top of this file cannot do this job — a scroll-driven animation ignores `animation-duration`. */
+  @media (prefers-reduced-motion: reduce) {
+    .rise,
+    .rise-group > * {
+      animation: none !important;
+    }
+  }
+
+  @media print {
+    .rise,
+    .rise-group > * {
+      animation: none !important;
+    }
+  }
+}

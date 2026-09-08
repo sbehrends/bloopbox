@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     type: 'article',
     title: `Build your first ${site.name}`,
     description:
-      'The parts, the wiring and the setup — an afternoon, a screwdriver, and no soldering.',
+      'The parts, the wiring and the setup',
   },
 }
 
@@ -40,7 +40,7 @@ function Step({
   readonly children: React.ReactNode
 }) {
   return (
-    <section className={styles.step} id={`step-${n}`}>
+    <section className={`${styles.step} rise`} id={`step-${n}`}>
       <div className={styles.stepHead}>
         <span className={styles.stepNumber} aria-hidden="true">
           {String(n).padStart(2, '0')}
@@ -57,11 +57,14 @@ function Step({
 
 /** A thing worth stopping for. Amber, because coral and the danger red both mean something
  *  else on this device — `docs/BRAND.md`. */
+/* Children are rendered as-is rather than wrapped in a `<p>`: one note needs several
+   paragraphs, and a `<ul>` or a second `<p>` inside one is invalid HTML. Every caller wraps
+   its own prose, and `.note p` styles it either way. */
 function Note({ title, children }: { readonly title: string; readonly children: React.ReactNode }) {
   return (
     <aside className={styles.note}>
       <p className={styles.noteTitle}>{title}</p>
-      <p>{children}</p>
+      {children}
     </aside>
   )
 }
@@ -82,24 +85,13 @@ export default function Manual() {
             <p className="eyebrow">The build manual</p>
             <h1>Build your first bloopbox.</h1>
             <p className={`lede ${styles.heroLede}`}>
-              An afternoon, a screwdriver, and a computer with an SD card slot. There is no
-              soldering in this build and nothing you need to understand about electronics — the
-              parts push together, and every wire in it goes from one labelled hole to another
-              labelled hole.
-            </p>
-            <p className={styles.heroLede}>
-              If you have ever put together flat-pack furniture or set up a router, you have done
-              something harder than this.
+              Out of the shelf parts, an afternoon and a computer. Nothing you need to understand about electronics.
             </p>
 
             <dl className={styles.facts}>
               <div>
                 <dt>Time</dt>
-                <dd>2–3 hours, most of it waiting</dd>
-              </div>
-              <div>
-                <dt>Soldering</dt>
-                <dd>None</dd>
+                <dd>2–3 hours setup time</dd>
               </div>
               <div>
                 <dt>Hardest part</dt>
@@ -109,17 +101,17 @@ export default function Manual() {
           </div>
 
           <Figure
-            src="/device-finished.jpg"
-            alt="A finished bloopbox: a cream 3D-printed case with three lit arcade buttons in yellow, red and blue, photo windows below them, a speaker grille on the side and a single USB cable."
-            caption="What you are building. The photo windows under each button are optional — most people find a two-year-old learns the colours faster than the faces."
-            ratio="4 / 3"
+            src="/manual-hero.jpeg"
+            alt="Three bloopboxes side by side in different cases — a smooth red plastic one, a wooden box, and a cardboard box — each with three coloured buttons, photo windows and a speaker grille."
+            caption="What you are building. The printable case in the repository is the recommended one — but a wooden box or a cardboard one works just as well."
+            ratio="1195 / 896"
           />
         </section>
 
         {/* ---- what you're getting into ---- */}
         <section className={`wrap ${styles.section}`}>
-          <p className="eyebrow">Before you start</p>
-          <div className={styles.split}>
+          <p className="eyebrow rise">Before you start</p>
+          <div className={`${styles.split} rise`}>
             <h2>Software first, then hardware, then a phone.</h2>
             <p className="lede">
               The order matters more than it looks. You write the software to the memory card
@@ -129,7 +121,7 @@ export default function Manual() {
             </p>
           </div>
 
-          <ol className={styles.phases}>
+          <ol className={`${styles.phases} rise-group`}>
             <li>
               <span className={styles.phaseTag}>Steps 1–3</span>
               <h3>The memory card</h3>
@@ -158,15 +150,15 @@ export default function Manual() {
         </section>
 
         {/* ---- the kit alternative ---- */}
-        <section className={`wrap ${styles.kit}`}>
+        <section className={`wrap ${styles.kit} rise`}>
           <WaitlistForm />
         </section>
 
         {/* ---- bill of materials ---- */}
         <section id="parts" className={`wrap ${styles.section}`}>
-          <p className="eyebrow">What to buy</p>
-          <h2 className={styles.sectionTitle}>The bill of materials.</h2>
-          <p className={`lede ${styles.sectionLede}`}>
+          <p className="eyebrow rise">What to buy</p>
+          <h2 className={`${styles.sectionTitle} rise`}>The bill of materials.</h2>
+          <p className={`lede ${styles.sectionLede} rise`}>
             Everything here is an ordinary, stocked part — nothing custom, nothing hard to find.
             Expect somewhere around €70–110 all in, depending on what you already have in a drawer.
           </p>
@@ -174,11 +166,11 @@ export default function Manual() {
           <Figure
             src="/parts-flatlay.jpg"
             alt="The parts laid out: three arcade buttons in yellow, coral and teal, a Raspberry Pi 3B+, a WM8960 audio HAT, and a pair of small speakers."
-            caption="The four parts that matter. The rest — card, power supply, wires, driver board — you may already own."
+            caption="The four parts that matter. The rest — card, power supply, wires — you may already own."
             ratio="1195 / 896"
           />
 
-          <div className={styles.tableScroll}>
+          <div className={`${styles.tableScroll} rise`}>
             <table className={styles.parts}>
               <caption className={styles.srOnly}>
                 Parts needed to build one bloopbox, with quantities and notes
@@ -210,35 +202,67 @@ export default function Manual() {
             </table>
           </div>
 
-          <div className={styles.noteRow}>
+          <div className={`${styles.noteRow} rise-group`}>
             <Note title="Which Raspberry Pi?">
-              The whole build was tested on a <strong>Raspberry Pi 3B+</strong>, so that is the one
-              this manual describes and the only one anyone has actually proved works end to end. A{' '}
-              <strong>Pi 4</strong>, <strong>Pi 5</strong> or <strong>Pi Zero 2 W</strong> should all
-              work too — they share the same 40-pin header and the same pin numbering, which is
-              everything this build depends on. The differences are practical rather than
-              electrical: the 4 and 5 want USB-C power instead of micro-USB, and the Zero 2 W needs
-              its header soldered on unless you buy the version that comes with one. If you are
-              buying a board specifically for this, the Zero 2 W is the smallest and the 3B+ is the
-              one we can promise.
+              <p>
+                The whole build was tested on a <strong>Raspberry Pi 3B+</strong>, so that is the one
+                this manual describes and the only one anyone has actually proved works end to end. A{' '}
+                <strong>Pi 4</strong>, <strong>Pi 5</strong> or <strong>Pi Zero 2 W</strong> should all
+                work too — they share the same 40-pin header and the same pin numbering, which is
+                everything this build depends on. The differences are practical rather than
+                electrical: the 4 and 5 want USB-C power instead of micro-USB, and the Zero 2 W needs
+                its header soldered on unless you buy the version that comes with one. If you are
+                buying a board specifically for this, the Zero 2 W is the smallest and the 3B+ is the
+                one we can promise.
+              </p>
+            </Note>
+
+            <Note title="* About those button wires">
+              <p>
+                An arcade button’s terminals are <strong>2.8 mm flat tabs</strong>. A Pi pin wants a
+                female <strong>Dupont</strong> socket. A lead with one of each on it does exist, but
+                it is not a thing most shops stock, and hunting for one is the only part of this
+                build likely to make you close a browser tab in disgust. Three ways round it, in the
+                order we would try them:
+              </p>
+              <ul className={styles.list}>
+                <li>
+                  <strong>Crimp your own.</strong> A bag of fifty 2.8 mm crimp terminals costs about
+                  a euro. Cut one end off a female-to-female Dupont lead, crimp the tab on, done —
+                  no soldering, and it is the same joint the ready-made lead would have had.
+                </li>
+                <li>
+                  <strong>Solder to the tab.</strong> If you own an iron, this is the strongest of
+                  the three and takes about a minute a wire.
+                </li>
+                <li>
+                  <strong>Twist and insulate.</strong> Strip a Dupont lead, hook the bare wire
+                  through the hole in the tab, twist it tight, cover it with heat-shrink or tape. It
+                  works — but it is also the one that will eventually shake loose inside a box that
+                  gets picked up and dropped, so treat it as the way to find out whether the box is
+                  fun before you commit to it.
+                </li>
+              </ul>
             </Note>
 
             <Note title="Which case?">
-              There is a <strong>3D-printable case</strong> in the repository, sized for these exact
-              parts, and printing it is the shortest route to something that looks finished. It is
-              not the interesting route. This is a box that will sit in a child’s room for years,
-              and the best ones we have seen are a wooden cigar box, a biscuit tin and a hollowed-out
-              picture book. Anything with a lid, room for a fist-sized board and somewhere to drill
-              three 30 mm holes will do it. Please build a strange one.
+              <p>
+                There is a <strong>3D-printable case</strong> in the repository, sized for these exact
+                parts, and printing it is the shortest route to something that looks finished. It is
+                not the interesting route. This is a box that will sit in a child’s room for years,
+                and the best ones we have seen are a wooden cigar box, a biscuit tin and a hollowed-out
+                picture book. Anything with a lid, room for a fist-sized board and somewhere to drill
+                three 30 mm holes will do it. Please build a strange one.
+              </p>
             </Note>
           </div>
         </section>
 
         {/* ================= PART ONE ================= */}
         <section id="card" className={`wrap ${styles.section}`}>
-          <p className="eyebrow">Part one — the memory card</p>
-          <h2 className={styles.sectionTitle}>Put the software on first.</h2>
-          <p className={`lede ${styles.sectionLede}`}>
+          <p className="eyebrow rise">Part one — the memory card</p>
+          <h2 className={`${styles.sectionTitle} rise`}>Put the software on first.</h2>
+          <p className={`lede ${styles.sectionLede} rise`}>
             Nothing is assembled yet. This is all done on your computer, with the card in a slot or
             a USB adapter.
           </p>
@@ -261,13 +285,15 @@ export default function Manual() {
                 </a>
               </p>
               <Note title="Not published yet">
-                There is no released image to download at the moment — that button points at the
-                releases page, which is currently empty. Until one is published you can build the
-                card yourself from the source, which is written up in the repository’s{' '}
-                <a href={links.deployment} rel="noreferrer">
-                  deployment notes
-                </a>
-                .
+                <p>
+                  There is no released image to download at the moment — that button points at the
+                  releases page, which is currently empty. Until one is published you can build the
+                  card yourself from the source, which is written up in the repository’s{' '}
+                  <a href={links.deployment} rel="noreferrer">
+                    deployment notes
+                  </a>
+                  .
+                </p>
               </Note>
             </Step>
 
@@ -287,15 +313,18 @@ export default function Manual() {
                 and verifying takes five to fifteen minutes depending on the card.
               </p>
               <Figure
-                prompt="A laptop screen showing a simple three-step disk-flashing application: a file icon on the left, a memory card icon in the middle, a large button on the right, with a progress bar underneath. A microSD card sits on the desk beside the laptop. Clean, calm, three-quarter view."
+                src="/manual-flash.jpeg"
+                alt="A laptop on a desk showing three icons in a row — a file, a memory card, a large round button — with a progress bar beneath them. A microSD card lies beside the laptop."
                 caption="Etcher’s whole interface is these three steps, left to right."
-                ratio="16 / 10"
+                ratio="1376 / 768"
               />
               <Note title="It will warn you, and that is fine">
-                Your computer may announce that the card is unreadable and offer to format it, both
-                before and after writing. Say no every time. The card holds a Linux filesystem that
-                Windows and macOS genuinely cannot read; letting either of them &ldquo;fix&rdquo; it
-                erases the work.
+                <p>
+                  Your computer may announce that the card is unreadable and offer to format it, both
+                  before and after writing. Say no every time. The card holds a Linux filesystem that
+                  Windows and macOS genuinely cannot read; letting either of them &ldquo;fix&rdquo; it
+                  erases the work.
+                </p>
               </Note>
             </Step>
 
@@ -308,9 +337,10 @@ export default function Manual() {
               </p>
               <p>Leave the power off. The next four steps are all hardware.</p>
               <Figure
-                prompt="Close-up of a single-board computer held at an angle from underneath, with a hand sliding a microSD card into the slot at the board's edge. Only the board and the hand, no background clutter."
+                src="/manual-card.jpeg"
+                alt="Two hands holding a Raspberry Pi board tilted to show its underside, sliding a microSD card into the slot at the board’s edge."
                 caption="Underside, far edge from the USB ports."
-                ratio="16 / 10"
+                ratio="1376 / 768"
               />
             </Step>
           </div>
@@ -318,9 +348,9 @@ export default function Manual() {
 
         {/* ================= PART TWO ================= */}
         <section id="hardware" className={`wrap ${styles.section}`}>
-          <p className="eyebrow">Part two — the hardware</p>
-          <h2 className={styles.sectionTitle}>Now put it together.</h2>
-          <p className={`lede ${styles.sectionLede}`}>
+          <p className="eyebrow rise">Part two — the hardware</p>
+          <h2 className={`${styles.sectionTitle} rise`}>Now put it together.</h2>
+          <p className={`lede ${styles.sectionLede} rise`}>
             Four steps with the power unplugged the whole way through. Nothing here can be wired
             backwards in a way that breaks anything — the worst case is a button that does nothing
             until you move one wire.
@@ -335,15 +365,16 @@ export default function Manual() {
                 straight down until it stops. It takes more force than you expect.
               </p>
               <p>
-                <strong>Use the stacking header.</strong> Push that on first — it is a 40-pin socket
-                with 40 long pins sticking out of the top — then the HAT on top of it. The HAT
-                covers every pin it sits on, and the buttons in step 6 need six of them back. Skip
-                this and you will be taking the HAT off again in twenty minutes.
+                <strong>The pins you need are still there afterwards.</strong> The HAT passes the
+                header straight through to a matching row of pins on its own top side, so all forty
+                are as reachable with it seated as they were before. Nothing else goes between the
+                two boards, and step 6 wires onto that top row.
               </p>
               <Figure
-                prompt="An exploded vertical stack of three flat rectangular circuit boards floating one above the other: a green single-board computer at the bottom, a black double-row pin header in the middle, a small blue audio board on top, with dotted alignment lines showing how they press together. Side-on three-quarter view."
-                caption="Bottom to top: the Pi, the stacking header, the HAT."
-                ratio="4 / 3"
+                src="/manual-hat.jpeg"
+                alt="Two circuit boards drawn one above the other: a green Raspberry Pi below, a small blue audio HAT above it, with dotted lines showing the two rows of pins lining up, and a matching row of pins along the top of the blue board."
+                caption="Straight onto the Pi. The top row of pins is where the buttons go."
+                ratio="1375 / 768"
               />
             </Step>
 
@@ -351,8 +382,14 @@ export default function Manual() {
               <p>
                 The HAT has two pairs of screw terminals along one edge, marked left and right. Each
                 speaker has two wires. Loosen a screw with a small flat screwdriver, push the bare
-                end of the wire into the hole, tighten the screw, tug gently to check it holds.
-                Repeat four times.
+                end of the wire into the hole, tighten the screw, tug gently to check it holds. Then
+                do the same for every wire you have.
+              </p>
+              <p>
+                <strong>You may already have these.</strong> A lot of WM8960 HATs come with a small
+                speaker in the box. One is enough — the box records and plays in mono — so if yours
+                arrived with a single speaker, wire it into either pair of terminals and leave the
+                other pair empty.
               </p>
               <p>
                 Speakers have no polarity worth worrying about here. If you swap the two wires on one
@@ -360,9 +397,11 @@ export default function Manual() {
                 box records in mono anyway.
               </p>
               <Note title="The HAT is the microphone too">
-                There are two tiny microphones on the HAT itself, so nothing else needs plugging in
-                for the child to be heard. Keep those two little holes clear of the case wall when
-                you get to step 7 — a microphone pressed against plastic records plastic.
+                <p>
+                  There are two tiny microphones on the HAT itself, so nothing else needs plugging in
+                  for the child to be heard. Keep those two little holes clear of the case wall when
+                  you get to step 7 — a microphone pressed against plastic records plastic.
+                </p>
               </Note>
             </Step>
 
@@ -384,21 +423,24 @@ export default function Manual() {
                 </li>
                 <li>
                   <strong>The lamp pair</strong> is on the bulb holder, usually a separate little
-                  cylinder that twists out. These two light the button up. Also either way round.
+                  cylinder that twists out. These two light the button up. An LED lamp may care which
+                  way round it goes — if one button never lights, swap its two lamp wires before
+                  suspecting anything else.
                 </li>
               </ul>
               <p>
-                Push-on spade connectors slide onto these; if your wires came with bare ends, spade
-                crimps are a euro for a bag of fifty and need no soldering. On the Pi end, the wires
-                are plain female jumper leads that push onto the pins.
+                Push-on flat connectors slide onto these — 2.8 mm is the size. On the Pi end, the
+                wire has to finish in a female Dupont socket. If your leads did not come with one of
+                each, the note under the parts table has the three ways of getting there.
               </p>
 
               <h4 className={styles.subhead}>Where each wire goes</h4>
               <p>
-                Six wires for the switches — one per button to a numbered pin, one per button to any
-                ground pin — and six for the lamps, which run via the little driver board rather than
-                straight to the Pi. Count pins carefully: <strong>pin 1 is the corner nearest the
-                microSD card</strong>, odd numbers run down one side and even down the other.
+                Twelve wires, and every one of them goes to the Pi’s own header: six for the
+                switches — one per button to a numbered pin, one per button to a ground pin — and six
+                for the lamps, exactly the same way. Count pins carefully: <strong>pin 1 is the
+                corner nearest the microSD card</strong>, odd numbers run down one side and even
+                down the other.
               </p>
 
               <GpioDiagram />
@@ -416,30 +458,30 @@ export default function Manual() {
                   <span className={styles.key} style={{ background: 'var(--ch-3)' }} /> Button 3 —
                   right, teal
                 </span>
-                <span>
-                  <span className={styles.key} style={{ background: 'var(--accent-soft)' }} /> Taken
-                  by the audio HAT — leave alone
-                </span>
               </div>
 
               <p>
-                The <strong>lamps do not connect to the Pi directly</strong>. A Pi pin cannot supply
-                enough current to light a 5 V arcade lamp, so the three lamp pins go to inputs 1, 2
-                and 3 of the ULN2003 driver board, the board takes 5 V and ground from pins 2 and 6,
-                and each lamp connects between the board’s matching output and 5 V. The board is
-                doing one job: letting a small signal switch a larger one.
+                The <strong>lamps go straight onto the header too</strong> — one leg on the numbered
+                pin, the other on a ground pin. That works because the lamps in these buttons are
+                3 V ones, which is what the Pi’s pins put out: no driver board, no separate power,
+                nothing between the pin and the bulb. If you have 5 V or 12 V arcade buttons in a
+                drawer, they will look identical and stay dark — check the lamp before you wire
+                anything.
               </p>
 
               <Figure
-                prompt="A clear wiring diagram: three large round arcade buttons in yellow, coral and teal on the left, each with two labelled terminals, and lines running right to a small rectangular driver board and then to a two-column pin header. Lines are colour-coded per button and never cross. Flat, schematic, generous spacing."
+                src="/manual-wiring.jpeg"
+                alt="A wiring diagram: three arcade buttons in yellow, coral and teal down the left, each with two terminals, and colour-matched wires running right to a two-column pin header."
                 caption="The same information as the pin map, drawn as wires. Colours match the caps."
-                ratio="16 / 10"
+                ratio="1408 / 768"
               />
 
               <Note title="If a button does nothing later">
-                Nine times out of ten it is one wire on the neighbouring pin. The pins are 2.5 mm
-                apart and it is genuinely easy to be one row out — count again from pin 1 rather than
-                assuming a part is faulty.
+                <p>
+                  Nine times out of ten it is one wire on the neighbouring pin. The pins are 2.5 mm
+                  apart and it is genuinely easy to be one row out — count again from pin 1 rather than
+                  assuming a part is faulty.
+                </p>
               </Note>
             </Step>
 
@@ -470,20 +512,15 @@ export default function Manual() {
                 Leave the lid off for now. You are about to find out whether it all works, and the
                 first boot is much more pleasant when you can still reach things.
               </p>
-              <Figure
-                prompt="A cutaway view of a rounded box seen from above with the lid removed: three large round buttons set into the top panel, a small circuit board mounted on the floor of the case, two small speakers at one wall, and tidy colour-coded wires running between them. Warm, friendly, clearly labelled zones without text."
-                caption="Buttons in the lid, board on the floor, speakers at a wall with holes in it."
-                ratio="4 / 3"
-              />
             </Step>
           </div>
         </section>
 
         {/* ================= PART THREE ================= */}
         <section id="setup" className={`wrap ${styles.section}`}>
-          <p className="eyebrow">Part three — Wi-Fi, WhatsApp, people</p>
-          <h2 className={styles.sectionTitle}>Finish it from your phone.</h2>
-          <p className={`lede ${styles.sectionLede}`}>
+          <p className="eyebrow rise">Part three — Wi-Fi, WhatsApp, people</p>
+          <h2 className={`${styles.sectionTitle} rise`}>Finish it from your phone.</h2>
+          <p className={`lede ${styles.sectionLede} rise`}>
             No screen, no keyboard, nothing to plug into a monitor. The box raises its own Wi-Fi
             network for exactly this, and you do the rest in a browser.
           </p>
@@ -537,14 +574,17 @@ export default function Manual() {
                 instead: double-pulsing, then blinking together, then dark. Dark means done.
               </p>
               <Figure
-                prompt="A phone held in one hand showing a simple setup form with a list of Wi-Fi network names and a password field, and behind it, softly out of focus, a small box with three round coloured buttons glowing. Warm domestic setting."
+                src="/manual-09.jpeg"
+                alt="A hand holding a phone that shows a Wi-Fi setup form — a network field, a password field and a save button under a Wi-Fi symbol — with a bloopbox beside it, one button glowing."
                 caption="The setup page, on the box’s own network. It closes itself when it succeeds."
-                ratio="4 / 3"
+                ratio="1376 / 768"
               />
               <Note title="If the page never appears">
-                Some phones quietly drop a Wi-Fi network that has no internet behind it. If yours
-                keeps hopping back to mobile data, turn mobile data off for a minute, rejoin, and go
-                to <code>http://10.42.0.1</code> by hand.
+                <p>
+                  Some phones quietly drop a Wi-Fi network that has no internet behind it. If yours
+                  keeps hopping back to mobile data, turn mobile data off for a minute, rejoin, and go
+                  to <code>http://10.42.0.1</code> by hand.
+                </p>
               </Note>
             </Step>
 
@@ -575,10 +615,12 @@ export default function Manual() {
                 the one on screen rather than one you wrote down.
               </p>
               <Note title="Whose account?">
-                The account you link becomes the identity the box sends as — voice notes from your
-                child will arrive at Grandma looking like they came from you. Plenty of families are
-                fine with that. If you would rather the box had its own name in everyone’s phone, use
-                a spare number or a cheap second SIM, and link that instead.
+                <p>
+                  The account you link becomes the identity the box sends as — voice notes from your
+                  child will arrive at Grandma looking like they came from you. Plenty of families are
+                  fine with that. If you would rather the box had its own name in everyone’s phone, use
+                  a spare number or a cheap second SIM, and link that instead.
+                </p>
               </Note>
             </Step>
 
@@ -613,12 +655,6 @@ export default function Manual() {
                 Save. The box restarts — that takes a few seconds and the page waits for it — and the
                 lights go out. <strong>Dark is the ready state.</strong> Hand it to your child.
               </p>
-              <Figure
-                src="/family-roster.jpg"
-                alt="Four illustrated characters side by side: a young boy holding a toy car, a small girl holding a picture book, a father, and a grandmother holding a plate of biscuits."
-                caption="Three of these go behind three colours. The fourth one presses them."
-                ratio="1374 / 768"
-              />
             </Step>
           </div>
         </section>
@@ -626,8 +662,8 @@ export default function Manual() {
         {/* ---- the lights: the page's one dark band ---- */}
         <section className={styles.night}>
           <div className="wrap">
-            <p className={`eyebrow ${styles.nightEyebrow}`}>Keep this bit</p>
-            <div className={styles.split}>
+            <p className={`eyebrow ${styles.nightEyebrow} rise`}>Keep this bit</p>
+            <div className={`${styles.split} rise`}>
               <h2>What the lights are telling you.</h2>
               <p className="lede">
                 Three lamps are the entire vocabulary of this device — there is no screen to explain
@@ -638,7 +674,9 @@ export default function Manual() {
               </p>
             </div>
 
-            <LightSignature />
+            <div className="rise">
+              <LightSignature />
+            </div>
           </div>
         </section>
 

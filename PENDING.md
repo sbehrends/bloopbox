@@ -139,7 +139,7 @@ When a change is made in the Admin, the server restarts. Add a loading in the ad
 ### The website is a first iteration, and three things are still missing
 
 The marketing site landed on 2026-08-02: `website/`, a statically exported Next.js 16 site. It is
-complete as a site — a hero with an interactive device, one section per argument, and since
+complete as a site — a full-bleed photographic hero, one section per argument, and since
 2026-09-06 a second page at `/manual/` carrying the whole build — but it cannot be published as it
 stands.
 
@@ -695,6 +695,46 @@ neither has been tried), `ctx.roundRect` on whatever browser a parent has, and t
 `aria-checked` styling under a real screen reader.
 
 None of this blocks anything: the fallbacks are all "looks plainer", not "does not work".
+
+### The site's entrance animations are engine-gated: Firefox gets none, by design
+
+Added 2026-09-08. Both pages fade-and-rise their blocks on scroll, and the three cards in the home
+page's dark band blink the unread-message pattern. All of it is CSS: the entrances use
+`animation-timeline: view()`, wrapped in `@supports`, so **Firefox gets no entrance at all today** —
+deliberately, since the `from` state is what hides an element and an unsupporting browser never
+applies it. That is the fallback most likely to be seen and the least likely to be noticed as
+missing. It needs no work; it needs to be remembered when someone screenshots the site in Firefox
+and reports the animation as broken.
+
+Verified in Chrome 152 on macOS at 1280×987: both pages scrolled top to bottom with every `.rise`
+block's computed opacity asserted back at 1 — the failure that matters is a block stuck
+half-transparent at the foot of a page, where there is no scroll left to finish it. The two
+overrides were then rendered rather than reasoned about, by driving Chrome over CDP with
+`Emulation.setEmulatedMedia`: with `prefers-reduced-motion: reduce`, and again under `print`, 0 of
+20 blocks on `/` and 0 of 45 on `/manual/` stay hidden at the top of the page, against 20 and 44
+hidden in the same position as delivered. The manual also prints: 21 pages, complete, LED ladder
+included.
+
+**The first tuning shipped invisible**, which is worth remembering because the mistake is not
+obvious from the code. Ranges ended at `cover 20%`, so a block finished arriving while it was still
+in the bottom quarter of the screen — measurable, and never seen. The cause was one block setting
+the tempo for all of them: the sign-off at the page bottom cannot complete a late range, so every
+range was capped to suit it. Exempting the closing section from the entrance moved the tightest
+reachable progress from `cover 39%` to `cover 96%` and the ranges could then be tuned for the
+blocks that can actually use them (`cover 15%`–`cover 45%`, finishing around mid-screen).
+
+Still one engine on one platform, and no real printer.
+
+### The manual prints, but it prints badly
+
+Found 2026-09-08 while checking the above, and **not caused by it** — this is how the page has
+always printed. `chrome --headless --print-to-pdf` on `/manual/` gives 21 correct pages with two
+problems a reader would notice: sections break wherever they land, leaving half-empty pages (page 1
+ends after the facts list, page 3 after three short paragraphs), and the dark band plus the footer
+print as full-bleed navy across most of three pages, which is a lot of ink for a document whose
+whole purpose is to be next to someone holding a screwdriver. Neither is hard to fix —
+`break-inside: avoid` on the step blocks and a print rule that drops the night band to paper —
+but it is a deliberate piece of work on a page nobody has asked to print yet.
 
 ### Browser microphone capture
 

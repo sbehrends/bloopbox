@@ -135,8 +135,8 @@ and no sleeping. Keep it that way — `deviceController` is where I/O is allowed
 
 ## The LED priority ladder
 
-`PRODUCT.md` §6 lists the nine patterns independently, but they collide in practice: a silent-mode
-heartbeat wants LED 1 at the same moment an unread message does. `resolveLed()` in
+`PRODUCT.md` §6 lists the patterns independently, but they collide in practice: a send flash wants
+LED 1 at the same moment an unread message does. `resolveLed()` in
 [`src/core/ledAnimator.ts`](../box/software/src/core/ledAnimator.ts) is the single place that arbitrates, and it
 resolves **per LED, first match wins**:
 
@@ -146,8 +146,13 @@ resolves **per LED, first match wins**:
 | 2 | An active one-shot animation (sent flash, silent-mode transition chase)     | That animation's frame       |
 | 3 | Lifecycle status: boot chase, connecting blink, hotspot double-pulse, errors | That pattern                 |
 | 4 | An unread message on this button                                            | Blink 0.8 s on / 0.8 s off   |
-| 5 | Silent mode idle, **and** this is button 1 or 3                             | 0.1 s pulse every 4 s        |
-| 6 | otherwise                                                                   | Off                          |
+| 5 | otherwise                                                                   | Off                          |
+
+**Silent mode is not a rung.** It used to hold one — a 0.1 s pulse every 4 s on the outer pair, so a
+parent could read the mode at a glance — and that was removed on 2026-09-08: a box that is being
+quiet should look quiet too, and any lamp of its own is exactly the thing a dark bedroom does not
+want. The only thing the mode ever shows is the moment it flips, as the rung-2 transition chase, and
+that includes the scheduled 20:00 / 07:00 edges.
 
 Within rung 3, the statuses are mutually exclusive — one `DeviceStatus` each — and their relative
 order lives in `hardware-server.ts`. The **setup hotspot ranks above the Wi-Fi error**: with the
@@ -199,7 +204,7 @@ the chase cannot drift into disagreeing about what booting is.
 `PRODUCT.md` says a short press is the "oops" cancel *and* that a tap plays unread messages. That is
 resolved by press duration and unread state:
 
-Write `MESSAGE_MS` for `recordThresholdMs + minRecordingMs` — 650 ms with the shipped defaults, and
+Write `MESSAGE_MS` for `recordThresholdMs + minRecordingMs` — 1150 ms with the shipped defaults, and
 the actual boundary between the two gestures:
 
 | Press duration              | Unread present | Result                                                           |
@@ -207,13 +212,47 @@ the actual boundary between the two gestures:
 | `< debounceMs`              | either         | Ignored entirely — a toddler brushing it                         |
 | `debounceMs` – `MESSAGE_MS` | yes            | Play that contact's queue                                        |
 | `debounceMs` – `MESSAGE_MS` | no             | "Oops" double-beep, nothing sent                                 |
-| `≥ MESSAGE_MS`              | either         | Record; stays open for `resumeGraceMs` after release, then sends  |
+| `≥ MESSAGE_MS`              | yes            | **Refused**: `recordBlocked`, and the "oops". Listening first is the rule |
+| `≥ MESSAGE_MS`              | no             | Record; stays open for `resumeGraceMs` after release, then sends  |
 
 `recordThresholdMs` sits *inside* the tap window at 150 ms, and crossing it is not what decides the
 gesture — it is only where the bip plays and the microphone opens. A tap longer than that therefore
 bips and opens a microphone that catches nothing; the take is discarded and the press falls through
 to the tap rows above. That fallback is what keeps tap-to-play reachable, and without it lowering the
 threshold to make the bip prompt would have made every press over 150 ms a recording.
+
+`minRecordingMs` went from 500 ms to **1000 ms** on 2026-09-08, after a child playing with the
+buttons sent a run of empty notes — the reasoning is in `PRODUCT.md` §1, step 6. It doubled the tap
+window in the process, which is why the rows above matter more than they used to.
+
+### A blinking button does not record
+
+The fourth row is the whole of it: while notes are waiting on a button, that button only plays.
+`ButtonInterpreter` already asks `hasUnread(index)` at release to choose between the queue and the
+"oops"; the rule adds one more reading of the same question at `recordThresholdMs`, where a
+positive answer **withholds the microphone** instead of opening it.
+
+Withholding, rather than refusing on the spot, is the part worth keeping straight:
+
+| | `readOnly` | `unread` |
+| - | ---------- | -------- |
+| Microphone | Never opens | Never opens |
+| When the child is told | At `recordThresholdMs` | At release |
+| Why then | The box can never send; nothing further is knowable, and the bip moment is where an answer is worth most | A press is not a hold until `MESSAGE_MS`; answering earlier would refuse every tap over 150 ms and make a blinking button unplayable |
+
+Both arrive as `recordBlocked`, carrying a `reason`, and `deviceController` answers both with the
+"oops" — with one exception it makes itself: while a note from that queue is *playing*, the refusal
+is silent, because cues and playback share one output and an "oops" would talk across the message.
+
+Two things the rule deliberately does not do. It does not play the queue as well — answering "that
+did not send" and then handing over the message rewards the refused gesture and teaches that holding
+plays, which is the one distinction the device rests on. And it is not re-read after the threshold,
+so a note arriving mid-sentence cannot cancel a take already in progress.
+
+Behaviour and the reasoning about what the child hears: [`PRODUCT.md`](PRODUCT.md) §1, "Listening
+comes first". Locked by the unread blocks in
+[`src/tests/button.test.ts`](../box/software/src/tests/button.test.ts) and
+[`src/tests/deviceController.test.ts`](../box/software/src/tests/deviceController.test.ts).
 
 **These are configuration, not constants.** They live in `config.buttons` and are editable from the
 admin panel, because finding the right feel by editing source and rebuilding was far too slow.
@@ -398,10 +437,13 @@ the merge is asserted against the file on disk, and `routes.test.ts` asserts a `
 ### Read-only mode refuses in the interpreter, not in the controller
 
 `config.mode.readOnly` is read once at boot and handed to `ButtonInterpreter`, which stops emitting
-`captureConfirmed` entirely: at `recordThresholdMs` it emits `recordBlocked` instead, and
-`deviceController` answers that with the "oops". None of the capture events — confirmed, resumed,
-commit, cancel — fire at all on a read-only box, so nothing downstream has to know the mode exists
-or defend against a capture that should not have been opened.
+`captureConfirmed` entirely: at `recordThresholdMs` it emits `recordBlocked` with reason
+`readOnly`, and `deviceController` answers that with the "oops". None of the capture events —
+confirmed, resumed, commit, cancel — fire at all on a read-only box, so nothing downstream has to
+know the mode exists or defend against a capture that should not have been opened.
+
+The unread rule above reuses this path with the other reason. It is the same refusal in every
+respect except *when* it can be decided — see the table there.
 
 Refusing in the controller instead would have meant opening the interpreter's capture path and then
 declining it, which leaves the "is there a microphone open" question answered differently in two

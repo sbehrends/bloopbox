@@ -60,9 +60,17 @@ values below are the shipped defaults.
    produces the low **"oops"** double-beep. A tap never opens a carry-on window, so the queue it
    asks for is not delayed by one.
 
-   The boundary is `recordThresholdMs + minRecordingMs` — 650 ms with the shipped defaults, a wider
-   tap window than the 150–500 ms the old single threshold allowed. A tap over 150 ms is preceded by
-   the bip and opens a microphone that catches nothing, which is the accepted cost of a prompt bip.
+   The boundary is `recordThresholdMs + minRecordingMs` — **1150 ms** with the shipped defaults. On
+   a button with nothing waiting, a tap over 150 ms is preceded by the bip and opens a microphone
+   that catches nothing, which is the accepted cost of a prompt bip; on a blinking one no
+   microphone opens at all, so there is no bip either (see "Listening comes first").
+
+   `minRecordingMs` was **raised from 500 ms to 1000 ms on 2026-09-08**, after a child playing with
+   the buttons sent a run of empty notes. Half a second is well inside what a toddler produces by
+   pressing things, and every one of those arrives on a parent's phone as a real message. A full
+   second has to be held on purpose, and still fits a one-word "hola". The cost is that a very
+   short word is now a tap and answers "oops" — a refusal the child can hear and repeat, where a
+   silent empty send is one nobody notices.
 
 7. A press shorter than `debounceMs` (60 ms) is ignored entirely, silently — that is a toddler
    brushing past.
@@ -96,6 +104,38 @@ Bounds:
 
 A played note's file is deleted immediately, which is what makes *present on disk* mean *unread*.
 
+### Listening comes first
+
+**A button with notes waiting takes no message until they have been heard.** While its lamp is
+blinking, that button only plays: a tap plays the queue, and a hold is refused with the "oops".
+Added 2026-09-08.
+
+The reason is that the child cannot read a screen. The blinking lamp is the entire notice that
+somebody spoke to them, and a hold straight through it sends a reply to something they never heard —
+which the sender then reads as an answer. Holding the send gesture back until the queue has drained
+is what keeps the exchange in order, and it costs nothing a child would miss: the thing standing in
+the way is a message from someone they love.
+
+The details, all of which are the difference between a rule and an annoyance:
+
+- **No microphone opens, and no bip plays.** The capture is withheld at `recordThresholdMs`, where
+  the bip would have been. Nothing is recorded and nothing is discarded — and a tap on a blinking
+  button now reaches the message ~90 ms sooner than it used to, because the bip is gone from in
+  front of it.
+- **The refusal waits for release.** At the threshold a press is not yet a hold: the boundary is
+  `recordThresholdMs + minRecordingMs` and is only knowable when the button comes up. Answering at
+  the threshold instead would turn every press over 150 ms into "that did not send" and make a
+  blinking button impossible for a small child to play at all — a toddler's tap is often 300 ms.
+- **It is per contact, not per box.** A note waiting from mama does not stop a message to papa.
+- **It never takes away a message already being spoken.** The rule is read once, at the threshold,
+  so a note landing mid-sentence cannot cancel the take in progress.
+- **Nothing is said over a note that is playing.** A hold while the queue plays gets no "oops":
+  cues and playback share the one output, so it would talk across the message. The lamp under the
+  finger is the whole answer.
+- **The block lifts when the queue drains**, which is the same instant the lamp goes out (§6). The
+  lamp is therefore an exact statement of the rule: blinking means "listen first".
+- Like every other refusal it is the "oops", so it is **suppressed in silent mode** (§7).
+
 ### Read-only mode
 
 `mode.readOnly` switches the sending half off and leaves receiving untouched. Notes still arrive,
@@ -126,9 +166,10 @@ read-only box still sends them if that is switched on.
 ### Silent mode
 
 Holding **Button 1 + Button 3** together for `silentComboMs` (3 s) toggles silent mode, confirmed by
-a single slow left-to-right chase. Both presses are swallowed the instant the chord forms, so a
-child mashing the outer buttons can never send two voice notes; released early, nothing at all
-happens.
+a single slow left-to-right chase. That chase is the **only** thing silent mode ever shows: once it
+has passed the box looks exactly like an audible idle box, with no lamp of its own (§6). Both
+presses are swallowed the instant the chord forms, so a child mashing the outer buttons can never
+send two voice notes; released early, nothing at all happens.
 
 It can also be scheduled — see §7.
 
@@ -337,7 +378,7 @@ single source of truth — there is no hand-written parallel interface.
   "buttons": {
     "debounceMs": 60,
     "recordThresholdMs": 150,
-    "minRecordingMs": 500,
+    "minRecordingMs": 1000,
     "resumeGraceMs": 400,
     "silentComboMs": 3000
   },
@@ -503,9 +544,8 @@ numbers the runtime uses.
 | ------------ | ------------------- | -------------------- | ------- |
 | **Booting** | `[1] ➔ [2] ➔ [3]` | Sequential chasing loop, 0.2 s per step | Services starting. Held for 2.6 s on purpose — status resolves instantly, so it would otherwise never be seen |
 | **Connecting** | `[1]+[2]+[3]` | Synchronised blink, 0.5 s on / 0.5 s off | Joining Wi-Fi and establishing the WhatsApp socket |
-| **Ready / audible** | `[ ][ ][ ]` | All off | Online, connected, normal mode. The usual state |
-| **Ready / silent (idle)** | `[1] [ ] [3]` | Outer pair pulse 0.1 s every 4 s | Silent mode is on. Confirms it without being distracting at night |
-| **Silent mode transition** | `[1] ➔ [2] ➔ [3]` | One slow left-to-right pass, 0.5 s per step | Immediate feedback on entering or leaving silent mode |
+| **Ready** | `[ ][ ][ ]` | All off | Online and connected, **audible or silent alike**. The usual state |
+| **Silent mode transition** | `[1] ➔ [2] ➔ [3]` | One slow left-to-right pass, 0.5 s per step | Immediate feedback on entering or leaving silent mode — the single moment the mode is visible |
 | **Setup hotspot up** | `[1]+[2]+[3]` | Double-pulse: on 0.15 s, off 0.15 s, on 0.15 s, then dark for the rest of a 2 s period | The open `bloopbox-XXXX` network is up and the portal is waiting. A rhythm rather than another rate, because it has to be told from Connecting across a room. **No cue** — it can happen at 3am |
 | **Wi-Fi error** | `[1] [2] [3]` | All three **solid** | No network, and no hotspot up yet |
 | **WhatsApp error** | `[1] [2] [ ]` | Lamps 1 and 2 **solid** | Network is fine; the WhatsApp session is unlinked or waiting for a scan |
@@ -517,8 +557,11 @@ Two things this table cannot express on its own:
 
 - **Solid always means something is wrong**, except on the single button being held. That is why the
   hotspot got a rhythm instead of a fourth blink rate.
-- **These patterns collide.** A silent-mode heartbeat wants lamp 1 at the same moment an unread
-  message does. They are resolved **per lamp, first match wins**, by a fixed priority ladder — see
+- **Silent mode has no idle pattern.** It used to pulse the outer pair 0.1 s every 4 s; that was
+  removed on 2026-09-08, because a box being quiet in a dark bedroom should look quiet too. Only the
+  transition above shows, including the scheduled 20:00 / 07:00 edges (§7).
+- **These patterns collide.** A send flash wants lamp 1 at the same moment an unread message
+  does. They are resolved **per lamp, first match wins**, by a fixed priority ladder — see
   [`architecture.md`](./architecture.md#the-led-priority-ladder). The setup hotspot deliberately
   outranks the Wi-Fi error: with the hotspot up, "the network is gone" is the cause and "setup is
   waiting for you" is the part a parent can act on.
@@ -591,7 +634,7 @@ Behaviour while silent:
 | Record start / stop cues   | **Suppressed**                                                     |
 | Sent / oops cues           | **Suppressed**                                                     |
 | **Playback of a voice note** | **Not suppressed.** Always plays at the configured volume         |
-| LED patterns               | Unaffected, plus the outer-pair heartbeat                           |
+| LED patterns               | **Unaffected, and nothing added.** The mode shows only as the one-off transition chase |
 
 Playback is never silenced because a child who taps a light expects to hear something.
 

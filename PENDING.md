@@ -1217,7 +1217,7 @@ and nothing enforces it. The board also matters for what comes next: a 3B+ has a
 that a **Zero 2 W does not have at all**, so any playback verified here says nothing about the real
 target.
 
-`src/hal/gpioDriver.ts` is written from datasheets and the opengpio API. ULN2003 polarity and ALSA
+`src/hal/gpioDriver.ts` is written from datasheets and the opengpio API. Lamp polarity and ALSA
 device names remain unverified. See the `TODO(hardware)` banner in the driver;
 `docs/hardware-bringup.md` is the order to prove things in and what to reach for when one of them
 does not work.
@@ -1350,8 +1350,8 @@ Two decisions worth not re-litigating:
   On the 3B+ specifically both hang off a GPIO expander reachable only from the VPU, so every write is
   a firmware mailbox round-trip against a `setLed` the animator calls at 20 Hz; `/sys` is read-only
   under `ProtectKernelTunables=yes` and the files are root-owned, so it needs a udev rule and a
-  hardening exception; and two fixed-colour LEDs cannot express the matrix. If lamps are wanted on
-  this board, a 2×20 stacking header exposes 22/23/24/25/27 — the pins the code already defaults to.
+  hardening exception; and two fixed-colour LEDs cannot express the matrix. Lamps on this board need
+  no extra part: the HAT passes the header through, so 22/23/24/25/27 stay reachable with it seated.
 
 ### An MVP-profile SD image now exists, but has never been booted
 
@@ -1407,6 +1407,14 @@ Three specific things to listen for during bring-up, in gate 4a's audio pass:
 
 Not work, but things that could bite.
 
+- **The three lamps now draw their current from the header itself.** Changed 2026-09-08: the lamps are
+  3 V, so the ULN2003 came out and each lamp hangs between its GPIO pin and ground. A BCM283x pin
+  sources 16 mA comfortably and the header wants to stay under ~50 mA in total, and the LED matrix
+  lights all three at once routinely — so the margin is real but thin, and it depends entirely on
+  which lamps get fitted. Worth an ammeter at gate 5 rather than a guess: dim lamps, a lamp that
+  dims when its neighbours light, or an unexplained brownout under a marginal supply all point here
+  first. Nothing in software changes if it turns out a transistor is needed after all; `setLed` is
+  the same call either way.
 - **How much of a first word the microphone misses, now that it opens behind the bip.** Changed
   2026-08-17: the "pop" plays at `recordThresholdMs` (150 ms) and `arecord` is spawned only once the
   cue has finished, so nothing before the bip exists in the message. Deliberate — the bip is the

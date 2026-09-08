@@ -6,8 +6,7 @@ proven.
 > **The audio is measured; the GPIO is not.** Everything about the WM8960 HAT below — its mixer
 > control names, the 26 dB of amplifier stages, the three microphone settings — was measured on a
 > real board on 2026-08-10 and 2026-08-17, and each figure says so. Everything about **buttons and
-> lamps** was written from opengpio's published API and the ULN2003 datasheet and has never run on a
-> real chip: pin numbers and LED polarity are both unverified, and `gpioDriver.ts` carries a
+> lamps** was written from opengpio's published API and has never run on a real chip: pin numbers and LED polarity are both unverified, and `gpioDriver.ts` carries a
 > `TODO(hardware)` banner saying so. [`hardware-bringup.md`](./hardware-bringup.md) is the order to
 > prove the rest in. The section at the foot of this page is the current line between the two.
 
@@ -18,10 +17,9 @@ proven.
 | Component      | Selected part                            | Why this one                                                        |
 | -------------- | ---------------------------------------- | ------------------------------------------------------------------- |
 | **Brain**      | Raspberry Pi Zero 2 W                    | Quad-core, Wi-Fi on board, small enough to seal into a toy enclosure |
-| **Buttons**    | 3× 30 mm illuminated arcade buttons      | The standard arcade action-button size: a toddler hits one without aiming, and the lamp is the UI |
-| **LED driver** | ULN2003 driver board or chip             | Amplifies 3.3 V GPIO to drive the 5 V arcade lamps brightly and safely |
+| **Buttons**    | 3× 30 mm illuminated arcade buttons, **3 V lamps** | The standard arcade action-button size: a toddler hits one without aiming, and the lamp is the UI. A 3 V lamp runs straight off a GPIO pin, so there is no driver board |
 | **Audio I/O**  | [Waveshare WM8960 audio HAT](https://www.waveshare.com/wiki/WM8960_Audio_HAT) | Codec, two mics and a speaker amp on one board, over I²S. The only audio path measured on real hardware |
-| **Header**     | 2×20 stacking header                     | The HAT buries the Pi's pins; the lamps need 22/23/24/25/27 back      |
+| **Speakers**   | 1–2× small 8 Ω, 2–5 W                    | Into the HAT's screw terminals. **Often bundled with the HAT** — check the listing before ordering any. One is enough: the box is mono end to end |
 | **Power**      | 5 V 2.5 A micro-USB supply               | Steady wall power. No power button, no battery                       |
 | **Storage**    | 8 GB+ microSD card                       | 4 GB is too tight once the bundled runtime and ffmpeg are on it      |
 | **Enclosure**  | Wood or 3D print                         | Three 30 mm cut-outs, speaker grille, mic hole, cable strain relief   |
@@ -49,23 +47,20 @@ output vocabulary is three lamps.
 │   │ LEFT        │       │ CENTRE      │       │ RIGHT       │          │
 │   │ yellow      │       │ coral       │       │ teal        │          │
 │   └──┬───┬──────┘       └──┬───┬──────┘       └──┬───┬──────┘          │
-│      │   │ lamp            │   │ lamp            │   │ lamp           │
-│      │   └─────────────────┼───┴─────────────────┼───┴──────┐         │
-│      │ switch              │ switch              │ switch   │         │
-│      ▼                     ▼                     ▼          │         │
-│   ┌──────────────────────────────────────────────────┐      │         │
-│   │              Raspberry Pi Zero 2 W               │      │         │
-│   │   GPIO 17 / 27 / 22  in     23 / 24 / 25  out    │      │         │
-│   └──────┬──────────────────────────┬────────────────┘      │         │
-│          │ GPIO out                 │ I²S + I²C             │         │
-│          ▼                          ▼                       │         │
-│   ┌─────────────┐            ┌─────────────┐                │         │
-│   │   ULN2003   │            │ WM8960 HAT  │                │         │
-│   │   (sinks)   │            │ mic + spkr  │                │         │
-│   └──────┬──────┘            └─────────────┘                │         │
-│          │ 5 V lamp return                                  │         │
-│          └──────────────────────────────────────────────────►│         │
-│                                                       arcade lamps     │
+│      │   │ lamp 3 V        │   │ lamp 3 V        │   │ lamp 3 V        │
+│      │   └─────┐           │   └─────┐           │   └─────┐           │
+│      │ switch  │           │ switch  │           │ switch  │           │
+│      ▼         ▼           ▼         ▼           ▼         ▼           │
+│   ┌──────────────────────────────────────────────────────────────┐     │
+│   │                  Raspberry Pi Zero 2 W                       │     │
+│   │    GPIO 17 / 27 / 22  in       GPIO 23 / 24 / 25  out        │     │
+│   └────────────────────────────┬─────────────────────────────────┘     │
+│                                │ I²S + I²C                             │
+│                                ▼                                       │
+│                         ┌─────────────┐                                │
+│                         │ WM8960 HAT  │                                │
+│                         │ mic + spkr  │                                │
+│                         └─────────────┘                                │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -79,7 +74,7 @@ room stops matching the picture of it.
 | Function  | BCM pins                    | Direction | Notes                                              |
 | --------- | --------------------------- | --------- | -------------------------------------------------- |
 | Buttons   | `GPIO17`, `GPIO27`, `GPIO22` | in       | Switch to ground; the line idles HIGH and reads LOW when pressed |
-| LED drive | `GPIO23`, `GPIO24`, `GPIO25` | out      | Into the ULN2003 inputs. The chip sinks current, so a HIGH input lights the lamp |
+| LED drive | `GPIO23`, `GPIO24`, `GPIO25` | out      | Straight to the lamps: lamp between pin and ground, so a HIGH lights it |
 
 The assignments are exported as `GPIO_PINS` in [`src/hal/gpioDriver.ts`](../box/software/src/hal/gpioDriver.ts).
 They avoid the I2C, SPI and UART defaults so those buses stay available, and they are grouped for
@@ -96,8 +91,28 @@ changes in `/etc/bloopbox/environment` followed by a service restart:
 
 | Variable                  | Try flipping when                                       |
 | ------------------------- | ------------------------------------------------------- |
-| `LED_ACTIVE_HIGH=false`   | The lamps are on when they should be off                |
+| `LED_ACTIVE_HIGH=false`   | The lamps are on when they should be off — a lamp wired between 3V3 and the pin sinks instead of sourcing |
 | `BUTTON_ACTIVE_LOW=false` | Presses read backwards, or the switches went to 3V3     |
+
+### The lamps run at 3 V, straight off the pin
+
+The buttons carry **3 V lamps**, which is what removes a part from the board: 3.3 V logic is already
+the right voltage, so each lamp goes between its GPIO pin and a ground pin and the pin switches it
+directly. There is no ULN2003, no darlington array and no 5 V lamp rail — earlier revisions of this
+page specified one, and a board built to them still works, but it is no longer the design.
+
+Two things to respect, because the pin is now the driver:
+
+- **Budget the current.** A BCM283x pin sources 16 mA comfortably and the whole header wants to stay
+  under ~50 mA, so three lamps at 16 mA is the ceiling, not the target. Pick lamps in the 10–15 mA
+  range and all three can be lit at once — which the LED matrix does routinely.
+- **A bare 3 V LED still needs its resistor.** "3 V lamp" here means a lamp module with its own
+  current limiting. If yours is a naked LED, put a series resistor in line with it; a pin driving an
+  LED with nothing in between is a short across the diode's forward drop.
+
+Polarity follows from the wiring: pin → lamp → ground means a HIGH lights it, which is
+`LED_ACTIVE_HIGH=true`, the default. Wiring the lamp to 3V3 instead and sinking through the pin
+inverts it, which is what the override is for.
 
 ### Pull-ups come from the firmware, not from the library
 
@@ -177,7 +192,7 @@ all three lamps are wired. The one part that differs is the brain.
 | Brain | Pi Zero 2 W | **Pi 3B+** — same BCM numbering, verified on 2026-08-10 |
 | Audio | WM8960 HAT | same — over I²S, with its own mics |
 | Buttons | 3 arcade, GPIO 17 / 27 / 22 | same — and GPIO17 is also the HAT's own button |
-| LEDs | 3 lamps via ULN2003, GPIO 23 / 24 / 25 | same |
+| LEDs | 3 lamps direct on GPIO 23 / 24 / 25 | same |
 
 So every measurement on this page holds for the shipped part list, with the Pi 3B+ standing in for
 the Zero 2 W. The two share BCM pin numbering, which is what makes the substitution safe; where it
@@ -294,8 +309,9 @@ mailbox round-trip against a `setLed` the animator calls at 20 Hz; `/sys` is rea
 udev rule and a hardening exception; and two fixed-colour LEDs in fixed positions cannot express the
 matrix anyway. For an MVP the audio cues carry the feedback.
 
-A 2×20 stacking header is the better answer when lamps are wanted: the HAT's female header buries the
-Pi's pins, and an extender exposes 22/23/24/25/27 — the pins the code already defaults to.
+Lamps need no extra part either: the HAT passes the header through to its own top row, so
+22/23/24/25/27 — the pins the code already defaults to — stay reachable with it seated. Earlier
+revisions of this page called for a 2×20 stacking header; it is not needed.
 
 ## The OS target is Raspberry Pi OS Trixie, 64-bit
 

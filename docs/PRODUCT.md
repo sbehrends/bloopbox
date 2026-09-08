@@ -145,34 +145,33 @@ Full bill of materials, wiring, GPIO assignments and the ALSA notes are in
 │                                                                        │
 │   ┌─────────────┐       ┌─────────────┐       ┌─────────────┐          │
 │   │ [ MOM ] LED │       │ [ DAD ] LED │       │ [GRANDMA]LED│          │
-│   └──────┬──────┘       └──────┬──────┘       └──────┬──────┘          │
-│          │ switch              │ switch              │ switch          │
-│          ▼                     ▼                     ▼                 │
-│   ┌─────────────────────────────────────────────────────────┐          │
-│   │                  Raspberry Pi Zero 2 W                  │          │
-│   └───────┬────────────────────┬────────────────────┬───────┘          │
-│           │                    │ GPIO               │ I²S + I²C        │
-│           │                    ▼                    ▼                  │
-│           │             ┌─────────────┐      ┌─────────────┐           │
-│           │             │   ULN2003   │      │ WM8960 HAT  │           │
-│           │             │   Drivers   │      │ mic + spkr  │           │
-│           │             └──────┬──────┘      └─────────────┘           │
-│           │                    │ 5 V lamp power                        │
-│           └───────────────────►│                                       │
-│                          Arcade LEDs (1 / 2 / 3)                       │
+│   └──┬───┬──────┘       └──┬───┬──────┘       └──┬───┬──────┘          │
+│      │   │ lamp 3 V        │   │ lamp 3 V        │   │ lamp 3 V        │
+│      │   └─────┐           │   └─────┐           │   └─────┐           │
+│      │ switch  │           │ switch  │           │ switch  │           │
+│      ▼         ▼           ▼         ▼           ▼         ▼           │
+│   ┌──────────────────────────────────────────────────────────────┐     │
+│   │                  Raspberry Pi Zero 2 W                       │     │
+│   └────────────────────────────┬─────────────────────────────────┘     │
+│                                │ I²S + I²C                             │
+│                                ▼                                       │
+│                         ┌─────────────┐                                │
+│                         │ WM8960 HAT  │                                │
+│                         │ mic + spkr  │                                │
+│                         └─────────────┘                                │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Component      | Selected spec                          | Purpose                                                        |
 | -------------- | -------------------------------------- | -------------------------------------------------------------- |
 | **Brain**      | Raspberry Pi Zero 2 W                  | Runs Linux and three units: two Node daemons plus a root network agent |
-| **Buttons**    | 3× 30 mm illuminated arcade buttons    | Button 1 left, 2 centre, 3 right                                |
-| **LED driver** | ULN2003 driver board / chip            | Amplifies 3.3 V GPIO to drive the 5 V arcade lamps              |
+| **Buttons**    | 3× 30 mm illuminated arcade buttons, 3 V lamps | Button 1 left, 2 centre, 3 right                        |
 | **Audio I/O**  | Waveshare WM8960 audio HAT             | Codec, mics and speaker amp on one board, over I²S              |
 | **Power**      | 5 V 2.5 A micro-USB                    | Steady wall power — no power button, no battery                  |
 
 Buttons are on BCM `GPIO17 / 27 / 22` with **firmware** pull-ups; LED drive lines are on
-`GPIO23 / 24 / 25`. The HAT occupies `GPIO2 / 3` (I²C) and `18–21` (I²S), which collides with
+`GPIO23 / 24 / 25`. **The lamps are 3 V and hang directly off those pins** — no driver board — so
+each one goes between its pin and ground and a HIGH lights it. The HAT occupies `GPIO2 / 3` (I²C) and `18–21` (I²S), which collides with
 neither. The OS target is **Raspberry Pi OS Trixie 64-bit**, forced by the GPIO addon's libgpiod v2
 requirement.
 

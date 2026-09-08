@@ -699,7 +699,7 @@ are testing configuration at all.
 | `STATS_PATH`                                 | `/data/stats.json`         | Activity totals. Beside the config, never inside it       |
 | `THERMAL_ZONE_PATH`                          | `/sys/class/thermal/thermal_zone0/temp` | SoC temperature for the health card. Absent off Linux → reported as a dash |
 | `DEVICE_MODEL_PATH`                          | `/sys/firmware/devicetree/base/model` | The board's own name, for the health card           |
-| `LED_ACTIVE_HIGH`                            | `true`                     | Pi only, unverified — the ULN2003 inverts, so try both     |
+| `LED_ACTIVE_HIGH`                            | `true`                     | Pi only, unverified — a 3 V lamp between pin and ground lights on HIGH; flip if inverted |
 | `BUTTON_ACTIVE_LOW`                          | `true`                     | Pi only, unverified — pull-ups mean a press reads low      |
 | `ALSA_CAPTURE_DEVICE` / `ALSA_PLAYBACK_DEVICE` | `default`                | Pi only, unverified                                       |
 | `ALSA_MIXER_CONTROL`                         | `PCM`                      | Pi only. Differs across USB adapters; a wrong name silently ignores the volume setting |

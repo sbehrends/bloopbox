@@ -25,7 +25,7 @@ import type {
 /**
  * ============================ UNVERIFIED ON HARDWARE ============================
  *
- * TODO(hardware): written against opengpio@2.0.2's published API and the ULN2003 datasheet,
+ * TODO(hardware): written against opengpio@2.0.2's published API,
  * but never run on a real Pi Zero 2 W. Work through `docs/hardware-bringup.md` before
  * trusting it. Most likely first failures:
  *   - LEDs inverted -> set LED_ACTIVE_HIGH=false.
@@ -47,7 +47,7 @@ import type {
 export const GPIO_PINS = {
   /** Buttons: switch to ground, so the line idles HIGH and reads LOW when pressed. */
   buttons: ['GPIO17', 'GPIO27', 'GPIO22'] as const,
-  /** LED drive lines into the ULN2003 inputs. */
+  /** LED drive lines. The lamps are 3 V, so they hang directly off these pins. */
   leds: ['GPIO23', 'GPIO24', 'GPIO25'] as const,
 } as const;
 
@@ -77,8 +77,8 @@ export const BUTTON_PINS = parsePinList('BUTTON_PINS', GPIO_PINS.buttons);
 export const LED_PINS = parsePinList('LED_PINS', GPIO_PINS.leds);
 
 /**
- * The ULN2003 sinks current: the LED cathode ties to the chip output, so a HIGH input
- * lights the LED. Flip via env if bring-up shows them inverted.
+ * The lamp sits between its pin and ground, so the pin sources and a HIGH lights it.
+ * Flip via env if a lamp went to 3V3 instead and the pin has to sink.
  */
 export const LED_ACTIVE_HIGH = process.env['LED_ACTIVE_HIGH'] !== 'false';
 

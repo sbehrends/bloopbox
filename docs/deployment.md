@@ -333,6 +333,6 @@ Optional repository secrets for the image job: `WIFI_SSID`, `WIFI_PSK`, `WIFI_CO
 
 Everything above has been exercised: the tarball builds, installs and boots on arm64 Trixie, and
 the image has been mounted back and booted from inside. What has **not** happened is any of it
-running on a Raspberry Pi with buttons attached. Pin numbers, ULN2003 polarity and ALSA device
+running on a Raspberry Pi with buttons attached. Pin numbers, lamp polarity and ALSA device
 names remain unverified, `arecord`/`aplay`/`amixer` have never been called against real
 hardware, and no WhatsApp account has been paired. See `PENDING.md`.

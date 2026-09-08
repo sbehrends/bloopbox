@@ -324,15 +324,15 @@ are one `peak` value each in `scripts/generate-sounds.ts`; the tone gains are th
 
 Now the wiring. `src/hal/gpioDriver.ts` was written from datasheets and has never run.
 
-GPIO 17, 27, 22 for the buttons, pulled up in firmware; the LEDs through the ULN2003 on
-GPIO 23, 24, 25. [`hardware.md`](./hardware.md) has the wiring and the reason the pull-ups come
+GPIO 17, 27, 22 for the buttons, pulled up in firmware; the 3 V lamps straight off
+GPIO 23, 24, 25, one leg on the pin and one on ground. [`hardware.md`](./hardware.md) has the wiring and the reason the pull-ups come
 from `config.txt` rather than from the library. If
 nothing lights, the first two suspects are both in `deploy/environment.example`, and both are
 one-line changes on the device followed by `sudo systemctl restart bloopbox-hardware`:
 
 ```bash
 ssh bloop@bloopbox.local 'sudo nano /etc/bloopbox/environment'
-#   LED_ACTIVE_HIGH=false     # the ULN2003 inverts; try both
+#   LED_ACTIVE_HIGH=false     # if a lamp went to 3V3 rather than ground; try both
 #   BUTTON_ACTIVE_LOW=false   # pull-ups mean a press reads low; try both
 ```
 

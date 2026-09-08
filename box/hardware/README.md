@@ -7,7 +7,7 @@ are not on hand yet — so what exists today is the written reference, not the a
 
 ## The authoritative reference is `docs/hardware.md`, not this folder
 
-Pin assignments, the bill of materials, the ULN2003 wiring, LED polarity and the ALSA device names
+Pin assignments, the bill of materials, the lamp wiring, LED polarity and the ALSA device names
 all live in [`../../docs/hardware.md`](../../docs/hardware.md), which is kept in step with
 `box/software/src/hal/gpioDriver.ts` — the code that actually drives those pins.
 
@@ -24,7 +24,7 @@ encodes a pin, a dimension or a part number should say where it came from and be
 | `enclosure/`     | The case: source CAD (STEP or the tool's native format) **and** printable STL/3MF |
 | `pcb/`           | Schematic and layout for the button/LED breakout, if it stops being hand-wired |
 | `templates/`     | Drilling and cut templates as PDF at 1:1 scale                         |
-| `reference/`     | Datasheets for the button, the ULN2003 and the USB audio adapter        |
+| `reference/`     | Datasheets for the button and the audio board                          |
 
 Two things worth committing to from the start:
 
@@ -42,8 +42,8 @@ From `docs/hardware.md` and the product spec:
   yellow, coral, teal to match the logo mark, and the software's `--ch-1/2/3` tokens assume it.
 - No screen and no power button. The only openings are the three buttons, a speaker grille, a
   microphone hole and the power cable.
-- A Pi Zero 2 W, a ULN2003 breakout, and a USB audio adapter with a cable that has to route
-  somewhere.
+- A Pi Zero 2 W and its audio board, with a cable that has to route somewhere. The lamps are 3 V and
+  wire straight to the header, so there is no driver board to find room for.
 - It sits in a child's bedroom and will be picked up, dropped, and leaned on. Strain relief on the
   power cable is not optional.
 - Mains-adjacent heat: a sealed enclosure on a Zero 2 W can throttle. `bloopbox-debug on` samples

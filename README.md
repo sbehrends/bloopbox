@@ -50,9 +50,9 @@ own directory** — `box/software/` for the device, `website/` for the site. See
 | Component  | Part                                    |
 | ---------- | --------------------------------------- |
 | Brain      | Raspberry Pi Zero 2 W                   |
-| Buttons    | 3× 30 mm illuminated arcade buttons     |
-| LED driver | ULN2003 (3.3 V GPIO → 5 V LEDs)         |
+| Buttons    | 3× 30 mm illuminated arcade buttons, 3 V lamps |
 | Audio      | Waveshare WM8960 audio HAT              |
+| Speakers   | 1–2× small 8 Ω, 2–5 W — often bundled with the HAT |
 | Power      | 5 V 2.5 A micro-USB                     |
 | Storage    | 8 GB+ microSD card                      |
 
@@ -62,9 +62,6 @@ Wiring, GPIO pins and the enclosure layout are in [`docs/hardware.md`](./docs/ha
 `--audio-hat wm8960`, and there is no sound card at all until the reboot that follows — see
 [Install](#install) below. A USB speakerphone works in its place in principle, and the code still
 supports it, but nothing about that path has been measured on hardware; the HAT has.
-
-A HAT's female header buries the Pi's pins, so lamps need a **2×20 stacking header** to expose
-GPIO 22/23/24/25/27 again.
 
 The OS target is **Raspberry Pi OS Trixie, 64-bit**, and that is a constraint rather than a
 preference: the GPIO addon compiles against the libgpiod v2 API, which Bookworm does not have.

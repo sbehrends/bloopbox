@@ -239,6 +239,7 @@ Save, wait for the restart, and the lights go dark — which means ready.
 | Lets go by accident, presses again | The **same** message carries on — see below                      |
 | Taps a blinking button             | Plays everything waiting from that person, oldest first           |
 | Taps a dark button                 | A low "oops" double-beep. Nothing was sent                        |
+| **Holds a blinking button**        | A low "oops". **That button listens first** — see below           |
 | Brushes a button                   | Nothing at all                                                   |
 
 **The bip is an invitation, not a receipt.** The microphone opens only once the pop has finished
@@ -253,16 +254,25 @@ depends on the child and on the switches. Shipped defaults:
 | ------------------- | ------- | ---------------------------------------------------------------- |
 | `debounceMs`        | 60 ms   | Shorter than this is a brush, and is ignored entirely            |
 | `recordThresholdMs` | 150 ms  | How long the child waits for the bip before the microphone opens |
-| `minRecordingMs`    | 500 ms  | The least audio a take must carry to be a message rather than a tap |
+| `minRecordingMs`    | 1000 ms | The least audio a take must carry to be a message rather than a tap |
 | `resumeGraceMs`     | 400 ms  | How long a released recording stays open, waiting to carry on    |
 | `silentComboMs`     | 3000 ms | How long buttons 1 + 3 must be held together to toggle silence   |
 
 **Nothing here is the tap/hold boundary on its own.** That boundary is `recordThresholdMs +
-minRecordingMs` — **650 ms** with the shipped defaults — so a press under it plays the waiting
-queue and one over it sends. `recordThresholdMs` sits *inside* the tap window: crossing it opens
+minRecordingMs` — **1150 ms** with the shipped defaults — so a press under it plays the waiting
+queue and one over it sends. The minimum was doubled on purpose: at half a second, a child playing
+with the buttons sent a run of empty notes, and every one of those lands on a phone as a real
+message. A full second has to be held on purpose. `recordThresholdMs` sits *inside* the tap window: crossing it opens
 the microphone, but a take that never reaches `minRecordingMs` is still treated as a tap and
 thrown away. That split is what lets the bip be prompt without making every short press a
 message. See [`docs/architecture.md`](./docs/architecture.md) for the full ladder.
+
+**A button with messages waiting will not record.** While a light is blinking, that button only
+plays: tap it and you hear what arrived, hold it and you get the "oops" instead of sending. The
+child cannot read a screen, so that blinking light is the only notice that somebody spoke to them —
+and holding straight through it would send a reply to something they never heard. The light going
+out is also the block lifting, so there is one thing to learn: **blinking means listen first.** It
+is per person, not per box; the other two buttons still send.
 
 **The carry-on window is the one worth knowing about.** A toddler's grip slips. Releasing the
 button does not send the message immediately — it stays open for `resumeGraceMs`, and pressing the
@@ -276,8 +286,10 @@ cannot extend a message past that ceiling.
 ### Silent mode
 
 Holding **buttons 1 and 3 together for three seconds** toggles silent mode, confirmed by a slow
-left-to-right chase. It can also be scheduled — **Quiet hours**, 20:00 to 07:00 once you switch it
-on, which wraps past midnight as you would expect.
+left-to-right chase. That chase is the only thing you ever see of it: once it has passed, a silent
+box looks exactly like an audible one — no light of its own, because a box being quiet in a dark
+bedroom should look quiet too. It can also be scheduled — **Quiet hours**, 20:00 to 07:00 once you
+switch it on, which wraps past midnight as you would expect.
 
 It ships **off**, and the admin panel asks for a timezone alongside the times. A fresh image runs
 on whatever Raspberry Pi OS picked — Europe/London — so a schedule enabled before you say where you
@@ -299,12 +311,11 @@ Three lights are the device's entire vocabulary. **Solid always means something 
 | --------------------------------------------- | -------------------------------------------------------- |
 | Chase left to right, 0.2 s a step             | Starting up                                              |
 | All three together, 0.5 s on / 0.5 s off      | Joining Wi-Fi and linking WhatsApp                       |
-| All off                                       | Ready and idle. This is the normal state                 |
+| All off                                       | Ready and idle, silent mode or not. The normal state      |
 | One button blinking, 0.8 s on / 0.8 s off     | A voice note is waiting from that person — tap it        |
 | One button solid                              | That button is recording right now                       |
 | One button, three quick flashes               | That message was delivered                               |
-| Buttons 1 and 3, a brief pulse every 4 s      | Silent mode is on                                        |
-| A slow left-to-right pass, once               | Silent mode just changed                                 |
+| A slow left-to-right pass, once               | Silent mode just went on, or just came off               |
 | All three double-pulse: on-off-on, then dark  | The setup hotspot is up and the setup page is waiting    |
 | **All three solid**                           | No network, and no hotspot yet                           |
 | **Buttons 1 and 2 solid**                     | Network is fine; WhatsApp is unlinked or waiting for a scan |

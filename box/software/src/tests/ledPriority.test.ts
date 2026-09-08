@@ -146,47 +146,52 @@ describe('ladder step 3 — lifecycle status', () => {
   });
 });
 
-describe('ladder step 4 — unread beats the silent heartbeat', () => {
-  it('blinks the unread button instead of pulsing it, even in silent mode', () => {
-    const state = snapshot({ silentMode: true, unreadCounts: [2, 0, 0] });
+describe('ladder step 4 — unread', () => {
+  it('blinks the unread button identically in silent mode and in audible mode', () => {
+    const silent = snapshot({ silentMode: true, unreadCounts: [2, 0, 0] });
+    const audible = snapshot({ silentMode: false, unreadCounts: [2, 0, 0] });
     const half = LED_TIMINGS.unreadHalfPeriodMs;
 
-    // Full blink duty cycle, not a 100ms pulse every 4s.
-    expect(resolveLed(0, state, 0, null)).toBe(true);
-    expect(resolveLed(0, state, half - 1, null)).toBe(true);
-    expect(resolveLed(0, state, half, null)).toBe(false);
-    expect(resolveLed(0, state, half * 2, null)).toBe(true);
+    for (const state of [silent, audible]) {
+      expect(resolveLed(0, state, 0, null)).toBe(true);
+      expect(resolveLed(0, state, half - 1, null)).toBe(true);
+      expect(resolveLed(0, state, half, null)).toBe(false);
+      expect(resolveLed(0, state, half * 2, null)).toBe(true);
+    }
   });
 
-  it('still pulses the other outer button for silent mode', () => {
+  it('leaves the buttons without unread dark, silent mode or not', () => {
     const state = snapshot({ silentMode: true, unreadCounts: [2, 0, 0] });
-    // Button 3 has no unread, so it keeps the heartbeat.
-    expect(resolveLed(2, state, 0, null)).toBe(true);
-    expect(resolveLed(2, state, LED_TIMINGS.silentPulseOnMs, null)).toBe(false);
+    // Silent mode used to pulse the outer pair here (PRODUCT.md §6). It no longer shows at all.
+    expect(resolveLed(1, state, 0, null)).toBe(false);
+    expect(resolveLed(2, state, 0, null)).toBe(false);
   });
 });
 
-describe('ladder step 5 — silent-mode idle heartbeat', () => {
-  it('pulses the outer pair briefly and leaves the centre dark', () => {
-    const state = snapshot({ silentMode: true });
-
-    expect(frame(state, 0)).toEqual([true, false, true]);
-    expect(frame(state, LED_TIMINGS.silentPulseOnMs - 1)).toEqual([true, false, true]);
-    expect(frame(state, LED_TIMINGS.silentPulseOnMs)).toEqual([false, false, false]);
+describe('ladder step 5 — off, silent mode included', () => {
+  /**
+   * Silent mode is deliberately invisible: the box on a bedside table at night must look
+   * exactly like an audible one. Only the moment it flips is shown, by the `silentTransition`
+   * overlay tested at step 2.
+   */
+  it('holds every lamp dark for a full sweep of a silent idle box', () => {
+    const silent = snapshot({ silentMode: true });
+    for (let t = 0; t <= 8000; t += 50) {
+      expect(frame(silent, t)).toEqual([false, false, false]);
+    }
   });
 
-  it('repeats once every 4 seconds', () => {
-    const state = snapshot({ silentMode: true });
-    const period = LED_TIMINGS.silentPulsePeriodMs;
-
-    expect(resolveLed(0, state, period - 1, null)).toBe(false);
-    expect(resolveLed(0, state, period, null)).toBe(true);
-    expect(resolveLed(0, state, period * 2, null)).toBe(true);
+  it('is indistinguishable from audible ready at every instant', () => {
+    const silent = snapshot({ silentMode: true });
+    const audible = snapshot({ silentMode: false });
+    for (let t = 0; t <= 8000; t += 50) {
+      expect(frame(silent, t)).toEqual(frame(audible, t));
+    }
   });
 
-  it('stays dark in audible ready mode — the spec wants all lights off', () => {
-    const state = snapshot({ silentMode: false });
-    expect(frame(state, 0)).toEqual([false, false, false]);
-    expect(frame(state, 2000)).toEqual([false, false, false]);
+  it('shows nothing for scheduled quiet hours either', () => {
+    const scheduled = snapshot({ silentMode: true, silentFromSchedule: true });
+    expect(frame(scheduled, 0)).toEqual([false, false, false]);
+    expect(frame(scheduled, 2000)).toEqual([false, false, false]);
   });
 });

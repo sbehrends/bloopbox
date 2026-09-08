@@ -13,6 +13,15 @@ const {
   resumeGraceMs: RESUME_GRACE_MS,
 } = DEFAULT_BUTTON_TIMINGS;
 
+/**
+ * A hold that carries a message: past the tap/hold boundary, with room to spare.
+ *
+ * Derived rather than written out, because the boundary is `recordThresholdMs +
+ * minRecordingMs` and both are tunable — a literal here would quietly become a tap the next
+ * time either is retuned, and the test would pass while asserting nothing.
+ */
+const HOLD_MS = RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 500;
+
 import {
   DeviceController,
   MIN_USABLE_AUDIO_MS,
@@ -154,7 +163,7 @@ describe('recording and sending', () => {
   it('sends a recording that is long enough', async () => {
     hal.fixedDurationMs = 3000;
 
-    await press(0, RECORD_THRESHOLD_MS + 1500);
+    await press(0, HOLD_MS);
     await waitFor(() => sent.length > 0, 'the recording to be sent');
 
     expect(sent).toHaveLength(1);
@@ -188,7 +197,7 @@ describe('recording and sending', () => {
     // The hold was long enough, but the microphone delivered almost nothing.
     hal.fixedDurationMs = MIN_USABLE_AUDIO_MS - 1;
 
-    await press(0, RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 1000);
+    await press(0, HOLD_MS + 500);
     await waitFor(
       () => hal.cueSequence().includes(AudioCue.Oops),
       'the oops cue after discarding a fragment',
@@ -210,7 +219,7 @@ describe('recording and sending', () => {
       return { ...result, path: recordingPath, durationMs: 100 };
     };
 
-    await press(1, RECORD_THRESHOLD_MS + 500);
+    await press(1, HOLD_MS);
     await waitFor(() => !existsSync(recordingPath), 'the fragment file to be deleted');
 
     await expect(readFile(recordingPath, 'utf8')).rejects.toThrow(/ENOENT/);
@@ -220,7 +229,7 @@ describe('recording and sending', () => {
     hal.fixedDurationMs = 3000;
     sendResult = 'fail';
 
-    await press(2, RECORD_THRESHOLD_MS + 1000);
+    await press(2, HOLD_MS);
     await waitFor(
       () => hal.cueSequence().includes(AudioCue.Oops),
       'the oops cue after a failed send',
@@ -290,6 +299,125 @@ describe('the resume window', () => {
   });
 });
 
+/**
+ * A button with notes waiting takes no message until they have been heard (PRODUCT.md §1).
+ *
+ * The interpreter block is unit-tested in `button.test.ts`; what matters here is what the
+ * child actually gets — no microphone, no send, and the "oops" that says so.
+ */
+describe('holds on a button with notes waiting', () => {
+  /** Queues one note on button 0 and waits for its lamp to be lit. */
+  function queueNote(id = 'm-block'): string {
+    const path = join(workDir, `${id}.ogg`);
+    controller.handleIncoming(0, {
+      messageId: id,
+      path,
+      receivedAt: Date.now(),
+      durationMs: 1400,
+    });
+    return path;
+  }
+
+  it('opens no microphone and sends nothing', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    queueNote();
+    hal.clearHistory();
+
+    await press(0, HOLD_MS);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
+    // The note is still waiting: a refused hold must not consume the queue either.
+    expect(controller.state.unreadCount(0)).toBe(1);
+    expect(hal.playSequence()).toEqual([]);
+  });
+
+  it('answers with the "oops", and nothing else', async () => {
+    queueNote();
+    hal.clearHistory();
+
+    await press(0, HOLD_MS);
+
+    // No bip inviting speech, no whoosh claiming a send: one sound, and it means "not sent".
+    expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
+  });
+
+  it('says nothing at all at night, like every other refusal', async () => {
+    controller.state.setManualSilent(true);
+    queueNote();
+    hal.clearHistory();
+
+    await press(0, HOLD_MS);
+
+    expect(hal.cueSequence()).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('stays quiet rather than talking over a note that is playing', async () => {
+    /*
+     * The child is being told to listen, so an "oops" here would cut across the message —
+     * cues and playback share one output. The lamp under their finger is the whole answer.
+     */
+    // Assigned synchronously by the executor below, which is why it is never undefined here.
+    let finishPlayback: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      finishPlayback = resolve;
+    });
+    const path = queueNote();
+    hal.play = async (file: string): Promise<void> => {
+      hal.filesPlayed.push({ path: file, at: Date.now() });
+      await gate;
+    };
+
+    // A tap starts the queue, and it stays open until the gate is released.
+    await press(0, 300);
+    await waitFor(() => controller.state.playing === 0, 'playback to start');
+    expect(hal.playSequence()).toEqual([path]);
+    hal.clearHistory();
+
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(HOLD_MS);
+    hal.releaseButton(0);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+    await flush();
+
+    expect(hal.cueSequence()).toEqual([]);
+    expect(sent).toHaveLength(0);
+
+    // And the message the hold interrupted nothing of finishes normally.
+    expect(finishPlayback).toBeTypeOf('function');
+    finishPlayback?.();
+    await waitFor(() => controller.state.unreadCount(0) === 0, 'the queue to drain');
+  });
+
+  it('sends again once the queue has drained', async () => {
+    hal.fixedDurationMs = 3000;
+    queueNote();
+
+    await press(0, HOLD_MS);
+    expect(sent).toHaveLength(0);
+
+    // Tap to listen: the light goes out, and the button takes messages again.
+    await press(0, 300);
+    await waitFor(() => controller.state.unreadCount(0) === 0, 'the queue to drain');
+
+    await press(0, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
+    expect(sent).toHaveLength(1);
+  });
+
+  it('leaves the other buttons free to send', async () => {
+    hal.fixedDurationMs = 3000;
+    queueNote();
+
+    await press(1, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
+
+    expect(sent[0]).toMatchObject({ index: 1 });
+    expect(controller.state.unreadCount(0)).toBe(1);
+  });
+});
+
 describe('taps', () => {
   it('beeps when there is nothing to play', async () => {
     // Short enough that the microphone was never asked for: no bip either.
@@ -300,8 +428,8 @@ describe('taps', () => {
   });
 
   it('plays the queue for a tap held past the threshold, rather than sending nothing', async () => {
-    // The press opened a microphone and then turned out to be a tap. What the child asked for
-    // is the message, and answering "oops" while a light is blinking would be a lie.
+    // A press past the threshold on a blinking button. No microphone opens at all — notes are
+    // waiting, so the button is listening only — and what the child asked for is the message.
     controller.handleIncoming(0, {
       messageId: 'm-tap',
       path: join(workDir, 'm-tap.ogg'),
@@ -533,7 +661,7 @@ describe('silent mode', () => {
     hal.fixedDurationMs = 3000;
     hal.clearHistory();
 
-    await press(0, RECORD_THRESHOLD_MS + 1000);
+    await press(0, HOLD_MS);
 
     expect(hal.cueSequence()).toEqual([]);
     // The message still goes out — only the sounds are suppressed.
@@ -629,7 +757,7 @@ describe('the silent-mode chord', () => {
 
     // And the button still records afterwards, into a capture of its own.
     hal.fixedDurationMs = 3000;
-    await press(2, RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 400);
+    await press(2, HOLD_MS);
     await waitFor(() => sent.length === 1, 'the recording after the chord to be sent');
   });
 
@@ -835,7 +963,7 @@ describe('activity counting', () => {
   it('counts a delivered message, with the audio it carried', async () => {
     hal.fixedDurationMs = 3000;
 
-    await press(0, RECORD_THRESHOLD_MS + 1500);
+    await press(0, HOLD_MS);
     await waitFor(() => sent.length > 0, 'the recording to be sent');
 
     expect(counted).toEqual([{ kind: 'sent', index: 0, value: 3000 }]);
@@ -849,7 +977,7 @@ describe('activity counting', () => {
     hal.fixedDurationMs = 3000;
     sendResult = 'fail';
 
-    await press(0, RECORD_THRESHOLD_MS + 1500);
+    await press(0, HOLD_MS);
     await waitFor(() => hal.cueSequence().includes(AudioCue.Oops), 'the failure cue');
 
     expect(counted).toEqual([]);

@@ -7,9 +7,9 @@ import { DeviceStatus, type DeviceSnapshot } from './deviceState.ts';
  * The animator only ever calls `setLed(index, on)` — it knows nothing about GPIO or the
  * browser. That keeps every pattern verifiable against a recording mock on fake timers.
  *
- * `PRODUCT.md` §6 describes each pattern in isolation, but they overlap in practice (a
- * silent-mode heartbeat on LED 1 while LED 1 has an unread message). {@link resolveLed}
- * is the single place that arbitrates, using the priority ladder documented in CLAUDE.md.
+ * `PRODUCT.md` §6 describes each pattern in isolation, but they overlap in practice (a send
+ * flash on LED 1 while LED 1 has an unread message). {@link resolveLed} is the single place
+ * that arbitrates, using the priority ladder documented in CLAUDE.md.
  */
 
 /** Timings, straight from the spec's signal matrix. Tests assert against these. */
@@ -20,9 +20,6 @@ export const LED_TIMINGS = {
   connectingHalfPeriodMs: 500,
   /** Unread: symmetric slow blink. */
   unreadHalfPeriodMs: 800,
-  /** Silent idle heartbeat: a brief pulse, rarely. */
-  silentPulseOnMs: 100,
-  silentPulsePeriodMs: 4000,
   /** Message sent: three fast flashes. */
   sentFlashHalfPeriodMs: 100,
   sentFlashCount: 3,
@@ -54,9 +51,6 @@ const LED_INDICES: readonly ButtonIndex[] = [0, 1, 2];
 /** Total lifetime of the single chasing pass: one step per LED. */
 export const SILENT_TRANSITION_DURATION_MS = LED_TIMINGS.silentTransitionStepMs * LED_COUNT;
 
-/** Buttons that carry the silent-mode heartbeat: the outer pair. */
-const SILENT_PULSE_BUTTONS: ReadonlySet<ButtonIndex> = new Set<ButtonIndex>([0, 2]);
-
 /**
  * Tick period. 50ms divides every timing above exactly, so patterns land on precise
  * boundaries, and 20Hz is negligible load even on a Pi Zero 2 W.
@@ -81,8 +75,11 @@ export type LedSink = {
  *   2. an active overlay (send flash, silent-mode transition)
  *   3. lifecycle status (boot chase, connecting blink, error patterns)
  *   4. unread on this button
- *   5. silent-mode idle heartbeat, outer buttons only
- *   6. off
+ *   5. off
+ *
+ * Silent mode itself is **deliberately absent** from the ladder: while it is on the box looks
+ * exactly like a normal idle box. Only the moment it flips is shown, by the `silentTransition`
+ * overlay at step 2.
  */
 export function resolveLed(
   index: ButtonIndex,
@@ -132,12 +129,7 @@ export function resolveLed(
     return isOnForSquareWave(elapsedMs, LED_TIMINGS.unreadHalfPeriodMs);
   }
 
-  // 5. Silent-mode reassurance pulse, so a parent can see the mode at a glance at night.
-  if (snapshot.silentMode && SILENT_PULSE_BUTTONS.has(index)) {
-    return elapsedMs % LED_TIMINGS.silentPulsePeriodMs < LED_TIMINGS.silentPulseOnMs;
-  }
-
-  // 6. Ready and quiet.
+  // 5. Ready and quiet — silent mode looks no different from audible.
   return false;
 }
 

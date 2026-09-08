@@ -45,7 +45,7 @@
   "buttons": {
     "debounceMs": 60,
     "recordThresholdMs": 150,
-    "minRecordingMs": 500,
+    "minRecordingMs": 1000,
     "resumeGraceMs": 400,
     "silentComboMs": 3000
   },

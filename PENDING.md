@@ -103,6 +103,52 @@ Added 2026-09-06 with `config.mode.readOnly`. Two gaps, both deliberate for now:
   developer testing read-only has only the checkbox to go on. Adding it is one field on the IPC
   contract.
 
+### An installed box keeps `minRecordingMs: 500` until somebody changes it
+
+The default went to 1000 ms on 2026-09-08 (`docs/PRODUCT.md` §1, step 6), and a **default is not a
+migration**: `/data/config.json` already holds 500 on every device that has been set up, and
+`mergeConfig` keeps what is there. So the box the empty notes came from still sends them until
+either the parent types 1000 into **Button timings** in the admin panel, or the file is edited and
+the daemon restarts.
+
+Deliberately not migrated, because a config value cannot be told apart from one a parent chose:
+rewriting 500 to 1000 on load would also overwrite a device somebody had tuned to 500 on purpose.
+Worth revisiting only as part of a general "defaults that moved after release" mechanism — which
+would need a record of what was set explicitly, and there is none today.
+
+### A read-only box answers a long tap on a blinking button with the "oops"
+
+Pre-existing, noticed 2026-09-08 while adding the listen-first rule and left alone.
+
+`readOnly` refuses **at** `recordThresholdMs` (150 ms), before a press can be told from a tap, so on
+a read-only box any press over 150 ms on a blinking button gets "that did not send" instead of
+playing the note — and a toddler's tap is often 300 ms. The listen-first rule hit exactly this and
+solved it by withholding the microphone and deciding at release instead (`docs/architecture.md`, "A
+blinking button does not record"); the same treatment would fix read-only, at the cost of moving its
+refusal off the bip moment, which `PRODUCT.md` §1 argues for on its own merits. Worth doing when
+somebody next has a read-only box in front of them: it needs a judgement about which matters more,
+and the answer probably differs for a button with notes waiting and one without.
+
+### Silent mode is now invisible on the box, by design — the box cannot be asked
+
+Changed 2026-09-08: the outer-pair heartbeat (0.1 s every 4 s) was removed, so while quiet mode is
+on the lamps look exactly like an audible idle box. Only the transition chase remains, at the
+moment it flips in either direction. `docs/PRODUCT.md` §6 and the ladder in
+`docs/architecture.md` are updated; `ledPriority.test.ts` now pins the darkness.
+
+What that costs, and is accepted for now:
+
+- **There is no way to read the mode off the device.** The admin status line still says `silent` /
+  `silent (scheduled)` (`public/admin/main.ts`), and that is the only answer. A parent who missed
+  the chase — or a toddler who produced it by accident — cannot tell a quiet box from a normal one
+  without opening the panel.
+- **The chord's own feedback is that single chase.** Cues are suppressed the instant the mode goes
+  on, so entering silent mode is confirmed by lamps only. If that chase is ever cut too, the chord
+  becomes completely unobservable.
+- **The scheduled edges still animate.** 20:00 and 07:00 run the chase unprompted, which is a light
+  moving by itself in a dark bedroom. Left in on purpose — it is 1.5 s, once, and it is the only
+  sign the schedule fired — but it is the obvious next thing to want gone.
+
 ### The capture chain clips, and its analog gain buys no SNR
 
 Measured on the device 2026-09-06 — full write-up in [`docs/audio-quality.md`](docs/audio-quality.md).
@@ -632,6 +678,48 @@ any other page — about 7 KB gzipped of static HTML, no JS. It contains no secr
 ungated is not a leak, but it is a page a parent could stumble into. Options if that ever matters:
 drop the entry from `vite.config.ts` for release builds, or move it behind `requireAdmin`. Left
 shipping on purpose: a style guide that is not built alongside what it documents rots.
+
+### Re-running `install.sh` without `--audio-hat wm8960` silently un-configures the codec
+
+Found 2026-09-08 on the live device, which had been completely silent since the 2026-09-07
+upgrade. `aplay -l` listed only `bcm2835 Headphones` and `vc4hdmi`; `arecord -l` listed nothing at
+all. The cause was one flag: the upgrade was installed as `install.sh` with no `--audio-hat`, so it
+defaulted to `usb`.
+
+The two halves of the audio configuration have **different write policies**, and that asymmetry is
+the whole bug:
+
+- `/etc/bloopbox/environment` is written **once** and never overwritten (`install.sh:260`), so it
+  kept its 2026-08-17 WM8960 content — `plughw:CARD=wm8960soundcard,DEV=0` both directions.
+- The `# >>> bloopbox >>>` block in `config.txt` is **deleted and regenerated on every install**
+  (`install.sh:393-395`), so the `dtparam=i2c_arm=on` / `dtoverlay=wm8960-soundcard` /
+  `dtparam=audio=off` lines vanished, and `dtparam=audio=on` from the stock file won again.
+
+After the reboot the daemon was pointed at a card that no longer existed. Nothing else looked
+wrong: the box booted, joined Wi-Fi, connected to WhatsApp, the buttons worked, the API reported
+`{"state":"READY","silentMode":false}`. The only signal was `bloopbox-audio-init.service` sitting
+in `failed` with `no mixer on card 'wm8960soundcard' — is the overlay loaded?`, and that unit is
+deliberately not a `Requires=` of the hardware service, so nothing propagated it.
+
+Fixed on the device by restoring the three lines by hand and rebooting; `bloopbox-doctor` is green
+again apart from the known `Name=Value` false failures below. **The repository fix is still open**,
+and the box will lose its audio again on the next upgrade installed without the flag. Options,
+roughly in order of preference:
+
+1. **Persist the profile.** Have the first install record `AUDIO_HAT` (and `NO_LEDS`) in
+   `/etc/bloopbox/environment` or beside `release.env`, and have later installs default to what the
+   box already is rather than to `usb`. A re-install should not need the operator to remember a flag
+   the device already knows.
+2. **Refuse the downgrade.** If the environment names a `wm8960soundcard` device and the install is
+   `--audio-hat usb`, `die` with the mismatch instead of quietly rewriting `config.txt`.
+3. **Make the failure loud.** `bloopbox-audio-init.service` is the one thing that noticed. Its
+   failure should reach the health card and the LED language, not just `systemctl status` — a
+   screenless box cannot show a red cross to anyone.
+
+Worth doing all three: (1) removes the trap, (2) catches the operator who bypasses it, (3) shortens
+the next diagnosis from an SSH session to a glance. Note also that this is exactly the silence
+`docs/audio-quality.md` and the `audio-init` unit comment already warn about — "completely silent
+while every other indicator looks healthy" — arriving through a new door.
 
 ### `bloopbox-doctor` fails two checks that are actually fine — it cannot read a `Name=Value` switch
 

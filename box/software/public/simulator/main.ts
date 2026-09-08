@@ -147,7 +147,7 @@ function drawButton(ctx: CanvasRenderingContext2D, index: ButtonIndex): void {
   const lens = lit ? device.lens[index] : device.lensOff[index];
 
   if (lit) {
-    // A soft glow makes fast patterns (the 0.1s silent-mode pulse) legible on screen.
+    // A soft glow makes fast patterns (the 0.1s flashes of a send) legible on screen.
     ctx.save();
     ctx.shadowColor = lens;
     ctx.shadowBlur = 38;
@@ -504,7 +504,7 @@ function asVolume(value: unknown): number {
 const INJECTORS: readonly { label: string; run: () => void }[] = [
   {
     // Without this the device never leaves CONNECTING, so the normal-mode LED patterns
-    // (all off, unread blink, silent heartbeat) are unreachable in the simulator.
+    // (all off, unread blink) are unreachable in the simulator.
     label: 'WhatsApp connected (go READY)',
     run: () => socket.emit('sim:injectWhatsAppConnected'),
   },

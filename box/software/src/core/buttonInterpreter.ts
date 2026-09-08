@@ -19,6 +19,17 @@ import type { ButtonIndex, ButtonTimings } from '../config/schema.ts';
  */
 export const SILENT_COMBO_BUTTONS: readonly ButtonIndex[] = [0, 2];
 
+/** Why a hold was refused instead of opening a capture. */
+export type BlockReason =
+  /** `config.mode.readOnly`: this box never sends, so no hold ever does. */
+  | 'readOnly'
+  /**
+   * Notes are waiting on this button, so listening is the only thing it does until they have
+   * been heard (PRODUCT.md §1). No microphone ever opened, so nothing was recorded and there
+   * is nothing to discard. The queue is not consumed here either — a *tap* asks for it.
+   */
+  | 'unread';
+
 export type CancelReason =
   /**
    * Not a message: released before the microphone opened, or holding too little audio to be
@@ -36,14 +47,21 @@ export type ButtonInterpreterEvents = {
    */
   captureConfirmed: [{ index: ButtonIndex }];
   /**
-   * The press reached `recordThresholdMs` on a read-only box, so no microphone opened.
+   * A hold that opened no microphone — see {@link BlockReason}. It is the whole answer to
+   * the press: nothing else fires for it, in either direction.
    *
-   * Fires exactly where `captureConfirmed` would have, and is the whole answer to the press:
-   * releasing afterwards does nothing at all. A hold is a send gesture, and on a box that
-   * cannot send, saying so at the moment the child expects the bip is more use than staying
-   * silent and letting them press harder.
+   * **When it fires differs by reason, because the two know different things.** `readOnly`
+   * fires at `recordThresholdMs`, exactly where `captureConfirmed` would have: the box can
+   * never send, so there is nothing left to learn and the moment the child expects the bip is
+   * the moment an answer is worth most. `unread` fires at *release*, because until then a
+   * press is not yet a hold — the boundary is `recordThresholdMs + minRecordingMs`, and
+   * answering early would make a blinking button impossible to tap.
+   *
+   * Deliberately **not** followed by the queue playing, for either reason: answering "that
+   * did not send" and then rewarding the same gesture with a message teaches that holding
+   * plays, which is the one distinction the whole device rests on. A tap plays.
    */
-  recordBlocked: [{ index: ButtonIndex }];
+  recordBlocked: [{ index: ButtonIndex; reason: BlockReason }];
   /**
    * The button came back down inside the resume window: the *same* take is carrying on,
    * not a new one. No capture is started and no cue plays — the microphone never stopped
@@ -71,7 +89,12 @@ export type ButtonInterpreterOptions = {
   readonly timings: ButtonTimings;
   /** Auto-commits a recording that runs this long, bounding RAM-disk use. */
   readonly maxRecordingSeconds: number;
-  /** Whether the contact on this button has messages waiting. */
+  /**
+   * Whether the contact on this button has messages waiting.
+   *
+   * Read at two moments: at `recordThresholdMs`, where waiting notes refuse the hold, and at
+   * release, where a tap either plays them or gets the "oops".
+   */
   readonly hasUnread: (index: ButtonIndex) => boolean;
   /**
    * Receive-only: refuse every hold rather than opening a capture (`config.mode.readOnly`).
@@ -93,8 +116,13 @@ type ActivePress = {
   confirmed: boolean;
   /** Set when the chord claimed this press, so release does nothing. */
   swallowed: boolean;
-  /** Set when a read-only box refused this press, so release does nothing either. */
+  /** Set when the press was refused at the threshold, so release does nothing either. */
   blocked: boolean;
+  /**
+   * Set when the microphone was withheld because notes are waiting on this button. Unlike
+   * `blocked`, the answer is still owed: release decides between playing them and refusing.
+   */
+  withheld: boolean;
 };
 
 /**
@@ -200,6 +228,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       confirmed: false,
       swallowed: false,
       blocked: false,
+      withheld: false,
     };
     this.#active.set(index, press);
 
@@ -217,7 +246,28 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
        */
       if (this.#readOnly) {
         press.blocked = true;
-        this.emit('recordBlocked', { index });
+        this.emit('recordBlocked', { index, reason: 'readOnly' });
+        return;
+      }
+
+      /*
+       * Notes waiting on this button: withhold the microphone, but say nothing yet.
+       *
+       * Nothing is refused *here* because this instant cannot tell a tap from a hold — the
+       * boundary is `recordThresholdMs + minRecordingMs` and is only knowable at release.
+       * Answering now would turn every tap longer than 150 ms into "that did not send" and
+       * make the blinking button unplayable, which is the one thing it must do.
+       *
+       * So the press simply carries on with no capture behind it, and `#finish` splits it:
+       * a tap plays the queue, a hold gets the refusal. The child hears no bip either way,
+       * which is a bonus rather than a compromise — the bip is an invitation to speak, and
+       * this button is not taking a message yet.
+       *
+       * Checked once, at the threshold, and never re-checked: a note that lands mid-sentence
+       * must not cancel a message the child is already speaking.
+       */
+      if (this.#hasUnread(index)) {
+        press.withheld = true;
         return;
       }
 
@@ -337,6 +387,8 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       confirmed: true,
       swallowed: false,
       blocked: false,
+      // A resumed take had its microphone opened at the first press; nothing was withheld.
+      withheld: false,
     });
 
     this.emit('pressVisualOn', { index });
@@ -404,12 +456,13 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     if (!press) return;
 
     const durationMs = Date.now() - press.startedAt;
-    const { blocked } = press;
+    const { blocked, withheld } = press;
+    const wasHold = this.#isMessage(press.startedAt);
     this.#clearPress(press);
     this.emit('pressVisualOff', { index });
 
     /*
-     * Read-only already answered this press with `recordBlocked`. Falling through to tap
+     * The threshold already answered this press with `recordBlocked`. Falling through to tap
      * handling would play the waiting queue on top of the refusal — two sounds telling a
      * child two different things about one gesture, one of them rewarding the gesture that
      * was just refused.
@@ -421,17 +474,28 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
      * The ceiling firing is by definition long enough, and asking again on a fake-timer
      * boundary would be a needless way to lose a full-length recording.
      */
-    if (press.confirmed && (reachedMaxDuration || this.#isMessage(press.startedAt))) {
+    if (press.confirmed && (reachedMaxDuration || wasHold)) {
       this.emit('captureCommit', { index, durationMs, reachedMaxDuration });
       return;
     }
 
     /*
-     * Either the bip never played, or it did and the child let go straight after: a tap.
-     * Read-only opens no captures, so there is nothing to tear down and the event would be
-     * a claim about a microphone that never ran — none of the capture events fire there.
+     * A hold on a button with notes waiting: the send gesture, on the one button that is not
+     * taking one. Refused now that the length says it really was a hold — and refused
+     * *instead* of playing the queue, because rewarding the gesture with a message would
+     * teach that holding plays, which is the distinction the whole device rests on.
      */
-    if (!this.#readOnly) {
+    if (withheld && wasHold) {
+      this.emit('recordBlocked', { index, reason: 'unread' });
+      return;
+    }
+
+    /*
+     * Either the bip never played, or it did and the child let go straight after: a tap.
+     * Read-only opens no captures, and neither does a button with notes waiting, so there is
+     * nothing to tear down and the event would be a claim about a microphone that never ran.
+     */
+    if (!this.#readOnly && !withheld) {
       this.emit('captureCancel', { index, durationMs, reason: 'tooShort' });
     }
 
@@ -466,8 +530,8 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       if (!press || press.swallowed) continue;
       press.swallowed = true;
       this.#clearTimers(press);
-      // Read-only opens no captures, so there is never one for the chord to cancel.
-      if (this.#readOnly) continue;
+      // A press with no microphone behind it has nothing for the chord to cancel.
+      if (this.#readOnly || press.blocked || press.withheld) continue;
       const durationMs = Date.now() - press.startedAt;
       this.emit('captureCancel', { index, durationMs, reason: 'combo' });
     }

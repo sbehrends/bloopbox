@@ -405,20 +405,6 @@ section.band {
   }
 }
 
-/* Silent mode: a 0.1s pulse every 4s. A rhythm, not another rate — see CLAUDE.md. */
-@keyframes led-heartbeat {
-  0%,
-  2.5% {
-    opacity: 1;
-    box-shadow: 0 0 12px var(--led);
-  }
-  2.6%,
-  100% {
-    opacity: 0.16;
-    box-shadow: none;
-  }
-}
-
 .p-boot .led {
   animation: led-chase 1.2s infinite;
 }
@@ -443,9 +429,17 @@ section.band {
   animation: led-on-off 1.6s infinite;
 }
 
-.p-silent .led:nth-child(1),
-.p-silent .led:nth-child(3) {
-  animation: led-heartbeat 4s infinite;
+/* Silent-mode change: the boot chase again, at 0.5s per lamp. Once, on the real device. */
+.p-silent-change .led {
+  animation: led-chase 1.5s infinite;
+}
+
+.p-silent-change .led:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.p-silent-change .led:nth-child(3) {
+  animation-delay: 1s;
 }
 
 /* A brand kit that flashes at someone who asked it not to has failed its own voice test. */

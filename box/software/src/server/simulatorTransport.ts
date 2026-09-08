@@ -32,8 +32,8 @@ export type SimulatorInjector = {
    * Force the linked/READY state.
    *
    * Without this the simulator could never reach READY — the state where the spec's
-   * normal-operation patterns live (all off, unread blink, silent heartbeat) — because a
-   * real link needs the WhatsApp bridge running.
+   * normal-operation patterns live (all off, unread blink) — because a real link needs the
+   * WhatsApp bridge running.
    */
   injectWhatsAppConnected(): void;
   /** Replay the boot sequence. */

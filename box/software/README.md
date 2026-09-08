@@ -65,8 +65,9 @@ lives.
 
 | Action                                                        | What it does                                    |
 | ------------------------------------------------------------- | ----------------------------------------------- |
-| Click-and-hold a button, or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> | Records, then sends                   |
+| Click-and-hold a button, or hold <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> | Records, then sends — for at least 1.15 s, or it counts as a tap |
 | Tap a blinking button                                         | Plays that contact's queue                      |
+| Hold a blinking button                                        | "Oops". A button with notes waiting listens first |
 | Tap a dark button                                             | "Oops" double-beep                              |
 | Hold <kbd>1</kbd> + <kbd>3</kbd>                              | Toggles silent mode after three seconds         |
 | Event injector                                                | Reboot, go READY, inbound notes, Wi-Fi down and restored, hotspot up and down, session expiry |

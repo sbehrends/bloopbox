@@ -340,11 +340,18 @@ const buttonTimingsShape = z.object({
    * The least *actual audio* a take must carry to be a message rather than a tap.
    *
    * Distinct from the threshold above, and the second half of the tap/hold boundary: with the
-   * defaults, a press under 650 ms plays the waiting queue and one over it sends. Measured as
+   * defaults, a press under 1150 ms plays the waiting queue and one over it sends. Measured as
    * held time, in `buttonInterpreter`; whether the microphone then actually delivered is a
    * separate question, answered by `MIN_USABLE_AUDIO_MS` in `deviceController`.
+   *
+   * **Raised from 500 ms to 1000 ms on 2026-09-08**, after a child playing with the buttons
+   * sent a stream of empty notes: half a second is inside what a toddler produces by pressing
+   * things, and every one of those arrives on a parent's phone as a real message. A full
+   * second has to be held on purpose, and still fits a one-word "hola". The cost is that a
+   * very short word is now a tap, which answers with the "oops" rather than sending — a
+   * refusal the child can hear and repeat, where a silent empty send is one nobody notices.
    */
-  minRecordingMs: z.number().int().min(0).max(10_000).default(500),
+  minRecordingMs: z.number().int().min(0).max(10_000).default(1000),
   /**
    * How long after release a recording stays open, waiting to be continued.
    *

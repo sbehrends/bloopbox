@@ -314,12 +314,19 @@ export class DeviceController {
     });
 
     /*
-     * A read-only box refusing a hold. The "oops" rather than a cue of its own: to a child
-     * this is the same fact the double-beep already carries — *that did not send* — and a
-     * second negative sound would be one more thing to learn for no extra information.
-     * It is silenced during quiet hours exactly like the rest of them.
+     * A hold refused at the threshold — a read-only box, or notes still waiting on that
+     * button. The "oops" rather than a cue of its own: to a child both are the same fact the
+     * double-beep already carries — *that did not send* — and a second negative sound would
+     * be one more thing to learn for no extra information. The blinking lamp is what says
+     * why, and it is already lit. Silenced during quiet hours exactly like the rest of them.
      */
-    this.#interpreter.on('recordBlocked', () => {
+    this.#interpreter.on('recordBlocked', ({ reason }) => {
+      /*
+       * Except while one of those notes is actually playing. The child is being told to
+       * listen; an "oops" over the top would talk across the message mid-sentence, since
+       * cues interrupt playback. The lamp under their finger is the whole answer.
+       */
+      if (reason === 'unread' && this.state.playing !== null) return;
       if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
         void this.#safeCue(AudioCue.Oops);
       }

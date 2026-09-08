@@ -26,6 +26,9 @@ const TAP_MS = Math.round((DEBOUNCE_MS + RECORD_THRESHOLD_MS) / 2);
 /** A tap the child held too long: the bip played and the microphone opened, briefly. */
 const LONG_TAP_MS = Math.round((RECORD_THRESHOLD_MS + MESSAGE_MS) / 2);
 
+/** A deliberate hold: comfortably past the boundary, with room to spare. */
+const HOLD_MS = MESSAGE_MS + 500;
+
 /** How many times one event was emitted. */
 const counts = (log: Recorded[], event: string): number =>
   log.filter((entry) => entry.event === event).length;
@@ -90,7 +93,7 @@ describe('configurable timings', () => {
     expect(DEFAULT_BUTTON_TIMINGS).toEqual({
       debounceMs: 60,
       recordThresholdMs: 150,
-      minRecordingMs: 500,
+      minRecordingMs: 1000,
       resumeGraceMs: 400,
       silentComboMs: 3000,
     });
@@ -235,8 +238,12 @@ describe('tap — past the record threshold but short of a message', () => {
     vi.advanceTimersByTime(LONG_TAP_MS);
     interpreter.handleButtonUp(1);
 
-    // The bip did play — the accepted cost of a prompt one.
-    expect(names()).toContain('captureConfirmed');
+    /*
+     * And with no bip at all: notes are waiting, so the microphone was withheld at the
+     * threshold. The "a tap is preceded by a short bip" cost is paid only on a button with
+     * nothing to play — exactly where the press might still turn out to be a message.
+     */
+    expect(names()).not.toContain('captureConfirmed');
     expect(names()).toContain('playQueue');
     expect(names()).not.toContain('captureCommit');
   });
@@ -266,7 +273,8 @@ describe('tap — past the record threshold but short of a message', () => {
   });
 
   it('sends the moment the take clears minRecordingMs', () => {
-    const { interpreter, names } = setup({ unread: [1] });
+    // Nothing waiting on this button, so a hold is a send: see the unread block below.
+    const { interpreter, names } = setup({ unread: [] });
 
     interpreter.handleButtonDown(1);
     vi.advanceTimersByTime(MESSAGE_MS);
@@ -286,7 +294,7 @@ describe('hold — at or beyond the record threshold', () => {
     vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
     expect(names()).toContain('captureConfirmed');
 
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(HOLD_MS - RECORD_THRESHOLD_MS);
     interpreter.handleButtonUp(1);
     // Committing waits out the resume window; see the block below.
     vi.advanceTimersByTime(RESUME_GRACE_MS);
@@ -297,19 +305,6 @@ describe('hold — at or beyond the record threshold', () => {
       index: 1,
       reachedMaxDuration: false,
     });
-  });
-
-  it('records even when that contact has unread messages waiting', () => {
-    // Holding always means "send", never "play" — unread state must not change this.
-    const { interpreter, names } = setup({ unread: [1] });
-
-    interpreter.handleButtonDown(1);
-    vi.advanceTimersByTime(1500);
-    interpreter.handleButtonUp(1);
-    vi.advanceTimersByTime(RESUME_GRACE_MS);
-
-    expect(names()).toContain('captureCommit');
-    expect(names()).not.toContain('playQueue');
   });
 
   it('auto-commits at maxRecordingSeconds so a stuck button cannot fill the disk', () => {
@@ -333,12 +328,141 @@ describe('hold — at or beyond the record threshold', () => {
   });
 });
 
+/**
+ * Notes waiting on a button make it a listening button until they have been heard
+ * (PRODUCT.md §1). Nothing here consumes the queue — the interpreter only ever asks whether
+ * one is waiting, and it is the *tap* that plays it.
+ */
+describe('hold — on a button with notes waiting', () => {
+  it('refuses the send instead of recording', () => {
+    const { interpreter, names, find } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    expect(names()).toContain('recordBlocked');
+    expect(find('recordBlocked')?.payload).toMatchObject({ index: 1, reason: 'unread' });
+    expect(names()).not.toContain('captureCommit');
+  });
+
+  it('never opens a microphone, so there is nothing to discard', () => {
+    const { interpreter, names } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    // No bip, no capture, no cancel: none of these would be true of a capture that ran.
+    expect(names()).not.toContain('captureConfirmed');
+    expect(names()).not.toContain('captureCancel');
+    expect(interpreter.hasPendingCommit(1)).toBe(false);
+  });
+
+  it('does not play the queue as well — a hold is not a listen', () => {
+    // The whole reason the refusal is not "play it anyway": rewarding the send gesture with a
+    // message is what would teach a child that holding plays.
+    const { interpreter, names } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).not.toContain('playQueue');
+    expect(names()).not.toContain('cancelBeep');
+  });
+
+  it('still plays on a tap, at either length', () => {
+    const { interpreter, names, log } = setup({ unread: [2] });
+
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(2);
+
+    // And again past the threshold, where a press used to be recording already.
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(LONG_TAP_MS);
+    interpreter.handleButtonUp(2);
+
+    expect(counts(log, 'playQueue')).toBe(2);
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('leaves the other buttons free to send', () => {
+    // Per contact, not per box: a note from mama does not stop a message to papa.
+    const { interpreter, names } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    expect(names()).toContain('captureCommit');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('sends again once the queue has been heard', () => {
+    const { interpreter, names, unread } = setup({ unread: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    expect(names()).toContain('recordBlocked');
+
+    // What `queueDrained` does on the device: the light goes out, and so does the block.
+    unread.delete(1);
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    expect(names()).toContain('captureCommit');
+  });
+
+  it('is decided at the threshold, so a note arriving mid-sentence cannot cancel a take', () => {
+    const { interpreter, names, unread } = setup({ unread: [] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
+    expect(names()).toContain('captureConfirmed');
+
+    // Mama answers while the child is still talking. The microphone is already open.
+    unread.add(1);
+    vi.advanceTimersByTime(HOLD_MS - RECORD_THRESHOLD_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    expect(names()).toContain('captureCommit');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('does not swallow the silent-mode chord', () => {
+    const { interpreter, names } = setup({ unread: [0, 2] });
+
+    interpreter.handleButtonDown(0);
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(SILENT_COMBO_MS);
+
+    // The chord swallows both presses at button-down, before either could reach the
+    // threshold, so the block never comes into it: no refusal, and releasing plays nothing.
+    expect(names()).toContain('toggleSilent');
+    expect(names()).not.toContain('recordBlocked');
+
+    interpreter.handleButtonUp(0);
+    interpreter.handleButtonUp(2);
+    expect(names()).not.toContain('playQueue');
+  });
+});
+
 describe('the resume window — letting go by accident', () => {
   it('does not commit the instant the button comes up', () => {
     const { interpreter, names } = setup();
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
 
     expect(names()).not.toContain('captureCommit');
@@ -349,7 +473,7 @@ describe('the resume window — letting go by accident', () => {
     const { interpreter, names } = setup();
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
 
     vi.advanceTimersByTime(RESUME_GRACE_MS - 1);
@@ -364,7 +488,7 @@ describe('the resume window — letting go by accident', () => {
     const { interpreter, log, names } = setup();
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
 
     vi.advanceTimersByTime(RESUME_GRACE_MS - 100);
@@ -384,7 +508,7 @@ describe('the resume window — letting go by accident', () => {
     const { interpreter, find } = setup();
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
 
     vi.advanceTimersByTime(200);
@@ -393,15 +517,19 @@ describe('the resume window — letting go by accident', () => {
     interpreter.handleButtonUp(0);
     vi.advanceTimersByTime(RESUME_GRACE_MS);
 
-    // 1500 held + 200 gap + 1000 held. The trailing window is not speech, so it is not counted.
-    expect(find('captureCommit')?.payload).toMatchObject({ index: 0, durationMs: 2700 });
+    // Both grips plus the gap between them. The trailing window is not speech, so it is not
+    // counted — and neither is the resume window that closed the take.
+    expect(find('captureCommit')?.payload).toMatchObject({
+      index: 0,
+      durationMs: HOLD_MS + 200 + 1000,
+    });
   });
 
   it('reports how long the gap was, for the log', () => {
     const { interpreter, find } = setup();
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
     vi.advanceTimersByTime(250);
     interpreter.handleButtonDown(0);
@@ -413,7 +541,7 @@ describe('the resume window — letting go by accident', () => {
     const { interpreter, names } = setup({ timings: { resumeGraceMs: 0 } });
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
 
     expect(names()).toContain('captureCommit');
@@ -454,25 +582,28 @@ describe('the resume window — letting go by accident', () => {
   });
 
   it('cannot be pumped past the recording ceiling', () => {
-    const { interpreter, log, find } = setup({ maxRecordingSeconds: 3 });
+    const ceilingMs = 10_000;
+    const { interpreter, log, find } = setup({ maxRecordingSeconds: ceilingMs / 1000 });
 
     // Three grips with gaps between them, each long enough to carry a message so each release
     // opens a window. If a resume restarted the ceiling, the last one would push the commit
-    // out to well past 3s.
+    // out to well past the ceiling.
+    const gapMs = 200;
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(800);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(gapMs);
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(800);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(gapMs);
     interpreter.handleButtonDown(0);
 
-    vi.advanceTimersByTime(999);
+    const elapsed = HOLD_MS * 2 + gapMs * 2;
+    vi.advanceTimersByTime(ceilingMs - elapsed - 1);
     expect(counts(log, 'captureCommit')).toBe(0);
 
-    // 3s after the very first press, exactly.
+    // 10s after the very first press, exactly.
     vi.advanceTimersByTime(1);
     expect(counts(log, 'captureCommit')).toBe(1);
     expect(find('captureCommit')?.payload).toMatchObject({ reachedMaxDuration: true });
@@ -485,7 +616,7 @@ describe('the resume window — letting go by accident', () => {
     const { interpreter, log, find } = setup();
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
 
     // The child has moved on to another contact: do not leave two takes open at once.
@@ -503,7 +634,7 @@ describe('the resume window — letting go by accident', () => {
     const { interpreter, names } = setup();
 
     interpreter.handleButtonDown(0);
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
     interpreter.reset();
     vi.advanceTimersByTime(10_000);

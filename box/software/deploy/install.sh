@@ -26,6 +26,12 @@ SIMULATOR=false
 FORCE=false
 AUDIO_HAT=usb
 NO_LEDS=false
+PROFILE_FILE="${ETC_DIR}/profile"
+# Whether the two above came from the command line rather than from these defaults. The
+# resolution step below turns on that difference: an absent flag has to mean "whatever this
+# box already is", never "usb".
+AUDIO_HAT_GIVEN=false
+NO_LEDS_GIVEN=false
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -45,14 +51,18 @@ Options:
   --no-watchdog      Do not enable the hardware watchdog
   --no-start         Install and enable, but do not start the services
   --simulator        Run the browser simulator HAL instead of real GPIO (for a test box)
-  --audio-hat NAME   Audio hardware: usb (default) or wm8960 for the WM8960 codec HAT
+  --audio-hat NAME   Audio hardware: usb or wm8960 for the WM8960 codec HAT
   --no-leds          No lamps are wired — claim no LED lines at all
-  --force            Continue even if the architecture or OS looks wrong
+  --force            Continue even if the architecture or OS looks wrong, or to change
+                     the recorded audio profile to one the box contradicts
   -h, --help         This message
 
 The MVP board (Pi 3B+ + WM8960 HAT, the HAT's own button as button 1, no lamps) is:
 
   sudo ./install.sh --audio-hat wm8960 --no-leds
+
+Both of those are remembered in /etc/bloopbox/profile, so an upgrade needs neither flag
+again. Passing one changes what this box is recorded as; passing nothing keeps it.
 EOF
 }
 
@@ -67,8 +77,8 @@ while [[ $# -gt 0 ]]; do
     --no-watchdog) NO_WATCHDOG=true; shift ;;
     --no-start) NO_START=true; shift ;;
     --simulator) SIMULATOR=true; shift ;;
-    --audio-hat) AUDIO_HAT="$2"; shift 2 ;;
-    --no-leds) NO_LEDS=true; shift ;;
+    --audio-hat) AUDIO_HAT="$2"; AUDIO_HAT_GIVEN=true; shift 2 ;;
+    --no-leds) NO_LEDS=true; NO_LEDS_GIVEN=true; shift ;;
     --force) FORCE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -96,6 +106,100 @@ SYSTEMD_RUNNING=true
 [[ -d /run/systemd/system ]] || SYSTEMD_RUNNING=false
 HAS_SYSTEMCTL=true
 command -v systemctl >/dev/null 2>&1 || { HAS_SYSTEMCTL=false; SYSTEMD_RUNNING=false; }
+
+# --------------------------------------------------------------------------------------
+step "resolving the hardware profile"
+# What this box IS has to outlive the command line that first said so.
+#
+# Before this file existed, --audio-hat and --no-leds were remembered only in
+# ${ETC_DIR}/environment, which is written once and never rewritten — while the config.txt
+# block those same flags drive is deleted and regenerated on EVERY run. So an upgrade run
+# without the flags left the environment pointing at a codec whose overlay it had just
+# removed. The box booted, joined Wi-Fi, connected to WhatsApp, reported READY, and made no
+# sound at all. That is what this step exists to make impossible. See PENDING.md.
+#
+#   explicit flag  >  recorded profile  >  inferred from an existing environment  >  usb
+
+RECORDED_AUDIO_HAT=
+RECORDED_NO_LEDS=
+if [[ -f "${PROFILE_FILE}" ]]; then
+  # Matched out, never sourced. We write this file, but `.`-ing anything that lives in the
+  # one directory an operator hand-edits buys nothing and costs a shell-injection foot-gun.
+  RECORDED_AUDIO_HAT="$(sed -n 's/^AUDIO_HAT=\([A-Za-z0-9_-]\{1,\}\)$/\1/p' "${PROFILE_FILE}" | tail -1)"
+  RECORDED_NO_LEDS="$(sed -n 's/^NO_LEDS=\([a-z]\{1,\}\)$/\1/p' "${PROFILE_FILE}" | tail -1)"
+  # `\|` alternation is a GNU sed extension that silently matches nothing on BSD sed, so the
+  # value is captured loosely and checked here instead.
+  [[ "${RECORDED_NO_LEDS}" == true || "${RECORDED_NO_LEDS}" == false ]] || RECORDED_NO_LEDS=
+fi
+
+# A box installed before the profile file existed still describes its own hardware, in the
+# environment file. Read the profile back out of that rather than defaulting to usb and
+# rewriting config.txt underneath it — every device in the field today is in this case, so
+# without it the bug above gets one more chance to happen to each of them.
+INFERRED_AUDIO_HAT=
+INFERRED_NO_LEDS=
+if [[ -f "${ETC_DIR}/environment" ]]; then
+  if [[ -z "${RECORDED_AUDIO_HAT}" ]] \
+     && grep -q '^ALSA_PLAYBACK_DEVICE=.*wm8960soundcard' "${ETC_DIR}/environment"; then
+    INFERRED_AUDIO_HAT=wm8960
+  fi
+  if [[ -z "${RECORDED_NO_LEDS}" ]] && grep -q '^LED_PINS=$' "${ETC_DIR}/environment"; then
+    INFERRED_NO_LEDS=true
+  fi
+fi
+
+AUDIO_HAT_SOURCE='the default'
+if [[ "${AUDIO_HAT_GIVEN}" == true ]]; then
+  AUDIO_HAT_SOURCE='--audio-hat'
+elif [[ -n "${RECORDED_AUDIO_HAT}" ]]; then
+  AUDIO_HAT="${RECORDED_AUDIO_HAT}"; AUDIO_HAT_SOURCE="${PROFILE_FILE}"
+elif [[ -n "${INFERRED_AUDIO_HAT}" ]]; then
+  AUDIO_HAT="${INFERRED_AUDIO_HAT}"; AUDIO_HAT_SOURCE="${ETC_DIR}/environment"
+fi
+
+NO_LEDS_SOURCE='the default'
+if [[ "${NO_LEDS_GIVEN}" == true ]]; then
+  NO_LEDS_SOURCE='--no-leds'
+elif [[ -n "${RECORDED_NO_LEDS}" ]]; then
+  NO_LEDS="${RECORDED_NO_LEDS}"; NO_LEDS_SOURCE="${PROFILE_FILE}"
+elif [[ -n "${INFERRED_NO_LEDS}" ]]; then
+  NO_LEDS="${INFERRED_NO_LEDS}"; NO_LEDS_SOURCE="${ETC_DIR}/environment"
+fi
+
+# The recorded value gets the same validation the flag does — a hand-mangled profile file
+# must not reach the config.txt writer.
+case "${AUDIO_HAT}" in
+  usb|wm8960) ;;
+  *) die "unknown audio profile '${AUDIO_HAT}' from ${AUDIO_HAT_SOURCE} (expected usb or wm8960)" ;;
+esac
+
+info "audio: ${AUDIO_HAT} (from ${AUDIO_HAT_SOURCE})"
+info "lamps: $([[ "${NO_LEDS}" == true ]] && echo 'none wired' || echo 'wired') (from ${NO_LEDS_SOURCE})"
+
+# Refuse the silent downgrade. Everything above makes the right thing happen when nobody
+# passes a flag; this catches the case where someone passes the wrong one, or where a
+# profile file was removed but the box is still plainly a wm8960 build.
+if [[ "${AUDIO_HAT}" == usb ]]; then
+  DOWNGRADE_EVIDENCE=
+  if [[ "${RECORDED_AUDIO_HAT}" == wm8960 ]]; then
+    DOWNGRADE_EVIDENCE="${PROFILE_FILE} records AUDIO_HAT=wm8960"
+  elif [[ -f "${ETC_DIR}/environment" ]] \
+       && grep -q 'wm8960soundcard' "${ETC_DIR}/environment"; then
+    DOWNGRADE_EVIDENCE="${ETC_DIR}/environment points the daemon at wm8960soundcard"
+  fi
+  if [[ -n "${DOWNGRADE_EVIDENCE}" ]]; then
+    if [[ "${FORCE}" == true ]]; then
+      warn "--force: recording a usb profile on what looks like a wm8960 box"
+      warn "${DOWNGRADE_EVIDENCE}"
+    else
+      warn "${DOWNGRADE_EVIDENCE}"
+      warn "writing a usb profile here would regenerate config.txt without the codec overlay,"
+      warn "and the box would boot silent with every other indicator healthy. That is exactly"
+      warn "how the 2026-09-07 upgrade broke this device."
+      die "refusing to change the audio profile to usb. Re-run with --audio-hat wm8960, or --force if the HAT really has been removed."
+    fi
+  fi
+fi
 
 step "checking the target"
 if [[ -f "${SOURCE_DIR}/release.env" ]]; then
@@ -256,8 +360,11 @@ install -d -m 0755 "${ETC_DIR}"
 if [[ -f "${ETC_DIR}/environment" ]]; then
   info "kept the existing file (it holds the bridge token both daemons agree on)"
   # The file is authored once on purpose, so flags that write into it do nothing on an
-  # upgrade. Say so rather than let someone believe --audio-hat took effect.
-  if [[ "${AUDIO_HAT}" == wm8960 || "${NO_LEDS}" == true ]]; then
+  # upgrade. Say so rather than let someone believe --audio-hat took effect. Keyed on the
+  # flag actually being PASSED: now that the profile is remembered, testing the resolved
+  # value would fire this on every ordinary upgrade of a wm8960 box and teach the operator
+  # to skim past it.
+  if [[ "${AUDIO_HAT_GIVEN}" == true || "${NO_LEDS_GIVEN}" == true ]]; then
     warn "--audio-hat/--no-leds write to this file and it already exists — the firmware"
     warn "half was still applied, but edit ${ETC_DIR}/environment by hand for the rest"
   fi
@@ -334,6 +441,20 @@ else
 fi
 chown "root:${SERVICE_USER}" "${ETC_DIR}/environment"
 chmod 0640 "${ETC_DIR}/environment"
+
+step "recording the hardware profile"
+# Machine-written and world-readable: doctor reads it unprivileged to check that the
+# firmware block still matches what the box is supposed to be.
+{
+  echo '# What this box IS. Written by install.sh, read back by the next upgrade so that'
+  echo '# --audio-hat and --no-leds do not have to be remembered by a human.'
+  echo '#'
+  echo '# Machine-written — settings go in environment, next to this file, not here.'
+  echo "AUDIO_HAT=${AUDIO_HAT}"
+  echo "NO_LEDS=${NO_LEDS}"
+} > "${PROFILE_FILE}"
+chmod 0644 "${PROFILE_FILE}"
+info "AUDIO_HAT=${AUDIO_HAT}, NO_LEDS=${NO_LEDS} -> ${PROFILE_FILE}"
 
 step "installing systemd units"
 for unit in "${SOURCE_DIR}"/systemd/*.service; do

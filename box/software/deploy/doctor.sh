@@ -46,6 +46,10 @@ RECORDING_DIR=/run/bloopbox
 # module's NET_STATE_MAX_AGE_MS; keep the two in step.
 NET_STATE_FILE=/run/bloopbox-net/net-state.json
 NET_STATE_MAX_AGE_SECONDS=30
+BOOT_CONFIG=
+for candidate in /boot/firmware/config.txt /boot/config.txt; do
+  [[ -f "${candidate}" ]] && { BOOT_CONFIG="${candidate}"; break; }
+done
 if [[ -r "${ETC_DIR}/environment" ]]; then
   # shellcheck disable=SC1091
   source "${ETC_DIR}/environment"
@@ -173,6 +177,28 @@ if command -v amixer >/dev/null 2>&1; then
   fi
 fi
 
+# What this box is recorded as, and what the firmware was actually told, have to agree.
+# They are written by the same installer run but have very different lifetimes — the profile
+# persists, the config.txt block is deleted and regenerated on EVERY install — so an install
+# that resolved the wrong profile leaves precisely this mismatch. It is invisible until the
+# next reboot, and then the sound card simply is not there. 2026-09-07, on this device.
+if [[ -n "${BOOT_CONFIG}" ]]; then
+  expect_wm8960_from=
+  if [[ -f "${ETC_DIR}/profile" ]] && grep -q '^AUDIO_HAT=wm8960$' "${ETC_DIR}/profile"; then
+    expect_wm8960_from="${ETC_DIR}/profile"
+  elif [[ -f "${ETC_DIR}/environment" ]] && grep -q 'wm8960soundcard' "${ETC_DIR}/environment"; then
+    # No profile file yet — a box installed before install.sh started recording one.
+    expect_wm8960_from="${ETC_DIR}/environment"
+  fi
+  if [[ -n "${expect_wm8960_from}" ]]; then
+    if grep -q '^dtoverlay=wm8960-soundcard' "${BOOT_CONFIG}"; then
+      pass "firmware audio profile" "wm8960 overlay in ${BOOT_CONFIG}"
+    else
+      fail "firmware audio profile" "${expect_wm8960_from} says wm8960, but ${BOOT_CONFIG} has no 'dtoverlay=wm8960-soundcard' — there will be no sound card at all after the next reboot. Re-run install.sh (it now remembers the profile), or add the overlay by hand"
+    fi
+  fi
+fi
+
 section "gpio"
 if compgen -G "/dev/gpiochip*" >/dev/null; then
   pass "gpio character devices" "$(echo /dev/gpiochip* | tr ' ' ',')"
@@ -186,10 +212,6 @@ else
   warn "gpio character devices" "none (not a Pi, or simulator mode)"
 fi
 
-BOOT_CONFIG=
-for candidate in /boot/firmware/config.txt /boot/config.txt; do
-  [[ -f "${candidate}" ]] && { BOOT_CONFIG="${candidate}"; break; }
-done
 if [[ -n "${BOOT_CONFIG}" ]]; then
   if grep -q '^gpio=17,27,22=ip,pu' "${BOOT_CONFIG}"; then
     pass "firmware pull-ups" "${BOOT_CONFIG}"

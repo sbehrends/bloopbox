@@ -80,8 +80,9 @@ Useful flags: `--skip-deps`, `--no-boot-config`, `--no-watchdog`, `--no-start`, 
 (runs the browser simulator HAL on a box with no buttons), `--prefix`, `--data-dir`, `--user`.
 
 Two describe the hardware rather than the install, and both write into
-`/etc/bloopbox/environment` — which means they **only take effect on a first install**, since an
-upgrade deliberately keeps that file. Passing them to an upgrade warns and tells you to edit it:
+`/etc/bloopbox/environment` — which means their **environment half only takes effect on a first
+install**, since an upgrade deliberately keeps that file. Passing them to an upgrade warns and
+tells you to edit it:
 
 | Flag | Effect |
 | ---- | ------ |
@@ -90,6 +91,42 @@ upgrade deliberately keeps that file. Passing them to an upgrade warns and tells
 
 Together they are the MVP board (`docs/hardware.md`): a Pi 3B+, the HAT, the HAT's own button as
 button 1, no lamps.
+
+### The box remembers which board it is
+
+Both flags are recorded in **`/etc/bloopbox/profile`**, and an upgrade that passes neither reads
+them back. Give them once, on the first install; after that `sudo ./install.sh` on its own is
+correct and keeps the board it finds.
+
+```
+AUDIO_HAT=wm8960
+NO_LEDS=true
+```
+
+Machine-written, world-readable, and not the place for settings — those go in `environment` next
+to it. The resolution order is:
+
+    explicit flag  >  /etc/bloopbox/profile  >  inferred from an existing environment  >  usb
+
+The third step is a migration for boxes installed before the file existed: an environment naming
+`wm8960soundcard` means a wm8960 board, and an empty `LED_PINS=` means no lamps.
+
+**Why it exists.** `environment` is written once and never rewritten, but the `# >>> bloopbox >>>`
+block in `config.txt` is deleted and regenerated on *every* install. A profile that lived only in
+the command line was therefore lost the first time anyone re-ran the installer without the flags,
+leaving the environment pointing at a codec whose overlay had just been removed. That is exactly
+what happened on 2026-09-07: the box booted, joined Wi-Fi, connected to WhatsApp, reported
+`READY` — and had no sound card at all. See `PENDING.md`.
+
+Two guards stand behind the record:
+
+- **The installer refuses to downgrade.** Resolving to `usb` on a box whose profile or environment
+  says `wm8960` is an error, not a rewrite. `--force` overrides it, for a HAT that really has been
+  removed.
+- **`bloopbox-doctor` checks that the two still agree.** A profile saying `wm8960` while
+  `config.txt` carries no `dtoverlay=wm8960-soundcard` is a failed check *before* the reboot that
+  would make it audible, and the admin panel's health card says the same thing in words a parent
+  can act on.
 
 ```bash
 sudo ./install.sh --audio-hat wm8960 --no-leds

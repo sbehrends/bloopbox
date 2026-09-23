@@ -92,6 +92,10 @@ its own setup hotspot on first boot (below).
 overlay and its ALSA settings; add `--no-leds` for a board with no lamps wired. Both are baked into
 the image, so an image for one board is not an image for another.
 
+You only give them once. They are recorded in `/etc/bloopbox/profile`, and a later
+`sudo ./install.sh` with no flags keeps the board it finds rather than reverting to the default —
+see [`docs/deployment.md`](docs/deployment.md) § The box remembers which board it is.
+
 If the Pi is already running Raspberry Pi OS Trixie and reachable over ssh, install a release
 tarball instead:
 

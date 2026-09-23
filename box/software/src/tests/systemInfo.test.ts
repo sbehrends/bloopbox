@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CpuUsageTracker,
+  parseAlsaCardName,
+  readAudioInfo,
   readModel,
+  readSoundCards,
   readStorage,
   readSystemInfo,
   readTemperatureC,
@@ -96,6 +99,77 @@ describe('CpuUsageTracker', () => {
   });
 });
 
+/**
+ * The reading that would have caught the 2026-09-07 outage.
+ *
+ * A box configured for `wm8960soundcard` after an upgrade had removed the overlay that creates
+ * it: `aplay` exited 0, the daemon reported READY, and no sound came out. Everything below is
+ * about telling "the card is gone" apart from "this machine has no such list", because only
+ * the first is a fault and reporting the second as one makes the check worthless.
+ */
+describe('parseAlsaCardName', () => {
+  it('takes the name out of the form the installer writes', () => {
+    expect(parseAlsaCardName('plughw:CARD=wm8960soundcard,DEV=0')).toBe('wm8960soundcard');
+  });
+
+  it('is null for a device that names no card, rather than inventing one', () => {
+    // A number is not a name, and `default` is a promise about nothing in particular.
+    expect(parseAlsaCardName('plughw:1,0')).toBeNull();
+    expect(parseAlsaCardName('default')).toBeNull();
+  });
+});
+
+describe('readSoundCards', () => {
+  it('reads the card names out of /proc/asound/cards', async () => {
+    const path = join(workDir, 'cards');
+    await writeFile(
+      path,
+      ' 0 [wm8960soundcard]: simple-card - wm8960-soundcard\n' +
+        '                      wm8960-soundcard\n' +
+        ' 1 [vc4hdmi        ]: vc4-hdmi - vc4-hdmi\n' +
+        '                      vc4-hdmi\n',
+      'utf8',
+    );
+    await expect(readSoundCards(path)).resolves.toEqual(['wm8960soundcard', 'vc4hdmi']);
+  });
+
+  it('is null where there is no such file, not an empty list', async () => {
+    // "no cards at all" is a fault; "this machine does not keep such a list" is a laptop.
+    await expect(readSoundCards(join(workDir, 'absent'))).resolves.toBeNull();
+  });
+});
+
+describe('readAudioInfo', () => {
+  it('spots the configured card being gone — the 2026-09-07 failure', async () => {
+    const path = join(workDir, 'cards');
+    await writeFile(path, ' 0 [Headphones     ]: bcm2835_headpho - bcm2835 Headphones\n', 'utf8');
+    const audio = await readAudioInfo('plughw:CARD=wm8960soundcard,DEV=0', path);
+    expect(audio.configuredCard).toBe('wm8960soundcard');
+    expect(audio.configuredCardPresent).toBe(false);
+    expect(audio.cards).toEqual(['Headphones']);
+  });
+
+  it('is content when the card is there', async () => {
+    const path = join(workDir, 'cards');
+    await writeFile(path, ' 0 [wm8960soundcard]: simple-card - wm8960-soundcard\n', 'utf8');
+    const audio = await readAudioInfo('plughw:CARD=wm8960soundcard,DEV=0', path);
+    expect(audio.configuredCardPresent).toBe(true);
+  });
+
+  it('withholds a verdict when either half is unknown', async () => {
+    const path = join(workDir, 'cards');
+    await writeFile(path, ' 0 [wm8960soundcard]: simple-card - wm8960-soundcard\n', 'utf8');
+    // No card named, so there is nothing to look for — not a fault.
+    await expect(readAudioInfo('default', path)).resolves.toMatchObject({
+      configuredCardPresent: null,
+    });
+    // No list to look in — every development machine.
+    await expect(
+      readAudioInfo('plughw:CARD=wm8960soundcard,DEV=0', join(workDir, 'absent')),
+    ).resolves.toMatchObject({ configuredCardPresent: null });
+  });
+});
+
 describe('readSystemInfo', () => {
   it('answers with every field the panel renders, on a machine that is not a Pi', async () => {
     const info = await readSystemInfo({
@@ -112,6 +186,8 @@ describe('readSystemInfo', () => {
     // The two that a laptop cannot answer. Present as keys, null as values.
     expect(info).toHaveProperty('temperatureC');
     expect(info.host).toHaveProperty('model');
+    // Same again for the audio reading: a machine with no /proc/asound must not read as broken.
+    expect(info.audio.configuredCardPresent).toBeNull();
   });
 
   it('drops a volume it cannot stat instead of reporting it as full', async () => {

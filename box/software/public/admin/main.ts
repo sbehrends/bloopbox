@@ -92,6 +92,11 @@ type SystemView = {
   cpu: { usagePercent: number | null; loadAverage: readonly number[]; cores: number };
   memory: { totalBytes: number; availableBytes: number; usedPercent: number; source: string };
   storage: readonly StorageView[];
+  audio: {
+    configuredCard: string | null;
+    cards: readonly string[] | null;
+    configuredCardPresent: boolean | null;
+  };
   host: {
     hostname: string;
     platform: string;
@@ -1312,6 +1317,19 @@ function describeSignal(signal: number | null): string {
 }
 
 /**
+ * Whether the box can make a sound, in one line.
+ *
+ * "Missing" here is the whole reason this reading exists: a box configured for a card that is
+ * not there plays everything perfectly into nothing, and every other indicator stays green.
+ */
+function describeAudio(audio: SystemView['audio']): string {
+  if (audio.configuredCardPresent === null) {
+    return audio.configuredCard ?? 'whatever ALSA calls default';
+  }
+  return `${audio.configuredCard ?? ''} — ${audio.configuredCardPresent ? 'present' : 'MISSING'}`;
+}
+
+/**
  * The diagnostics card: temperature, uptime, load, memory, card space and signal.
  *
  * All of this is already in `bloopbox-doctor`, which needs SSH — the tool a parent does not
@@ -1353,8 +1371,29 @@ function renderHealth(): HTMLElement {
         'Memory',
         `${info.memory.usedPercent.toFixed(0)}% used · ${formatBytes(info.memory.availableBytes)} free of ${formatBytes(info.memory.totalBytes)}`,
       ),
+      readout('Sound card', describeAudio(info.audio)),
     );
     body.append(vitals);
+
+    /*
+     * Said in full, in words, and not left to the reader of a one-line readout. This is the
+     * state the box was in on 2026-09-07: playing, blinking, online, connected to WhatsApp,
+     * reporting READY, and completely silent. The parent has no other way to find out.
+     */
+    if (info.audio.configuredCardPresent === false) {
+      body.append(
+        element(
+          'p',
+          'field-hint is-bad',
+          `This box plays sound through a card called “${info.audio.configuredCard ?? ''}”, and ` +
+            'that card is not there — so nothing it plays can be heard, however healthy the ' +
+            'rest of this page looks. ' +
+            (info.audio.cards === null || info.audio.cards.length === 0
+              ? 'It can see no sound cards at all.'
+              : `The cards it can see are ${info.audio.cards.join(', ')}.`),
+        ),
+      );
+    }
 
     /*
      * The device answers from `/proc/meminfo`, which counts reclaimable cache as free. Anything

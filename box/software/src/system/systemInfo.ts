@@ -31,6 +31,18 @@ export const THERMAL_ZONE_PATH =
 /** Where the kernel names the board. Absent on anything that is not a device tree platform. */
 export const MODEL_PATH = process.env['DEVICE_MODEL_PATH'] ?? '/sys/firmware/devicetree/base/model';
 
+/** Where the kernel lists the sound cards it has. Absent off Linux. */
+export const SOUND_CARDS_PATH = process.env['SOUND_CARDS_PATH'] ?? '/proc/asound/cards';
+
+/**
+ * The playback device the HAL will actually open.
+ *
+ * Read from the environment here rather than imported: `src/hal/gpioDriver.ts` is the other
+ * reader, and `src/system/` observing the HAL would be a layer pointing the wrong way for a
+ * module whose whole job is read-only observation.
+ */
+const ALSA_PLAYBACK_DEVICE = process.env['ALSA_PLAYBACK_DEVICE'] ?? 'default';
+
 /** One mounted filesystem worth reporting. */
 export type StorageInfo = {
   /** What this volume is *for*, in the panel's words — "Card (settings and notes)". */
@@ -39,6 +51,24 @@ export type StorageInfo = {
   readonly totalBytes: number;
   readonly freeBytes: number;
   readonly usedPercent: number;
+};
+
+/**
+ * Whether this box can actually make a sound.
+ *
+ * Worth its own reading because the failure it catches is invisible everywhere else. On
+ * 2026-09-07 an upgrade regenerated `config.txt` without the codec overlay while
+ * `/etc/bloopbox/environment` kept pointing at the card that overlay creates. The box booted,
+ * joined Wi-Fi, connected to WhatsApp and reported `READY` — and had no sound card at all. The
+ * only trace anywhere was a failed systemd unit, which is not a thing a parent can look at.
+ */
+export type AudioInfo = {
+  /** The card the daemon is configured to play through, or null when it just says `default`. */
+  readonly configuredCard: string | null;
+  /** The cards the kernel actually has. Null where this box cannot say — anything but Linux. */
+  readonly cards: readonly string[] | null;
+  /** Whether the configured card is one of them. Null when either side is unknown. */
+  readonly configuredCardPresent: boolean | null;
 };
 
 export type SystemInfo = {
@@ -65,6 +95,7 @@ export type SystemInfo = {
     readonly source: 'meminfo' | 'os';
   };
   readonly storage: readonly StorageInfo[];
+  readonly audio: AudioInfo;
   readonly host: {
     readonly hostname: string;
     readonly platform: string;
@@ -162,6 +193,56 @@ export async function readModel(path: string = MODEL_PATH): Promise<string | nul
 }
 
 /**
+ * The card name out of an ALSA device string, or null when the string does not name one.
+ *
+ * `plughw:CARD=wm8960soundcard,DEV=0` is the form the installer writes, and it is addressed by
+ * name precisely so a card that changes number cannot send audio somewhere else. `plughw:1,0`
+ * and `default` name no card, so there is nothing here that could be checked — null, not a
+ * guess, because the panel renders a guess as a fact.
+ */
+export function parseAlsaCardName(device: string): string | null {
+  const named = /(?:^|[:,])CARD=([^,\s]+)/.exec(device);
+  return named?.[1] ?? null;
+}
+
+/**
+ * The card names in `/proc/asound/cards`, whose rows look like:
+ *
+ * ```
+ *  0 [wm8960soundcard]: simple-card - wm8960-soundcard
+ *                       wm8960-soundcard
+ * ```
+ *
+ * Null, not `[]`, when the file is missing: "no cards at all" and "this machine does not keep
+ * such a list" are different answers, and only the first is a fault.
+ */
+export async function readSoundCards(path: string = SOUND_CARDS_PATH): Promise<string[] | null> {
+  try {
+    const raw = await readFile(path, 'utf8');
+    return [...raw.matchAll(/^\s*\d+\s+\[([^\]]+)\]/gm)].map((match) => (match[1] ?? '').trim());
+  } catch {
+    return null;
+  }
+}
+
+/** One reading of whether the configured playback card is really there. */
+export async function readAudioInfo(
+  device: string = ALSA_PLAYBACK_DEVICE,
+  path: string = SOUND_CARDS_PATH,
+): Promise<AudioInfo> {
+  const configuredCard = parseAlsaCardName(device);
+  const cards = await readSoundCards(path);
+  return {
+    configuredCard,
+    cards,
+    // Both halves have to be known before this can mean anything. A dev machine has no
+    // /proc/asound and an unnamed device has nothing to look for; neither is a broken box.
+    configuredCardPresent:
+      configuredCard === null || cards === null ? null : cards.includes(configuredCard),
+  };
+}
+
+/**
  * Memory the kernel would actually give a process.
  *
  * `os.freemem()` is `MemFree`, which on Linux excludes the page cache and so reports a healthy
@@ -218,11 +299,12 @@ export type SystemInfoOptions = {
  */
 export async function readSystemInfo(options: SystemInfoOptions): Promise<SystemInfo> {
   const now = options.now ?? Date.now;
-  const [temperatureC, model, available, storage] = await Promise.all([
+  const [temperatureC, model, available, storage, audio] = await Promise.all([
     readTemperatureC(),
     readModel(),
     readAvailableMemory(),
     Promise.all(options.storage.map(readStorage)),
+    readAudioInfo(),
   ]);
 
   const totalBytes = totalmem();
@@ -248,6 +330,7 @@ export async function readSystemInfo(options: SystemInfoOptions): Promise<System
     // A volume that would not stat is dropped rather than reported as empty: "0 bytes free"
     // is a fire alarm, and a missing row is the truth.
     storage: storage.filter((entry): entry is StorageInfo => entry !== null),
+    audio,
     host: {
       hostname: hostname(),
       platform: platform(),

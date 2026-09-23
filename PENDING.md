@@ -702,24 +702,76 @@ in `failed` with `no mixer on card 'wm8960soundcard' — is the overlay loaded?`
 deliberately not a `Requires=` of the hardware service, so nothing propagated it.
 
 Fixed on the device by restoring the three lines by hand and rebooting; `bloopbox-doctor` is green
-again apart from the known `Name=Value` false failures below. **The repository fix is still open**,
-and the box will lose its audio again on the next upgrade installed without the flag. Options,
-roughly in order of preference:
+again apart from the known `Name=Value` false failures below. **The repository fix is still open.**
 
-1. **Persist the profile.** Have the first install record `AUDIO_HAT` (and `NO_LEDS`) in
-   `/etc/bloopbox/environment` or beside `release.env`, and have later installs default to what the
-   box already is rather than to `usb`. A re-install should not need the operator to remember a flag
-   the device already knows.
-2. **Refuse the downgrade.** If the environment names a `wm8960soundcard` device and the install is
-   `--audio-hat usb`, `die` with the mismatch instead of quietly rewriting `config.txt`.
-3. **Make the failure loud.** `bloopbox-audio-init.service` is the one thing that noticed. Its
-   failure should reach the health card and the LED language, not just `systemctl status` — a
-   screenless box cannot show a red cross to anyone.
+#### What is actually detectable — measured on the device, 2026-09-08
 
-Worth doing all three: (1) removes the trap, (2) catches the operator who bypasses it, (3) shortens
-the next diagnosis from an SSH session to a glance. Note also that this is exactly the silence
-`docs/audio-quality.md` and the `audio-init` unit comment already warn about — "completely silent
-while every other indicator looks healthy" — arriving through a new door.
+| Question | Answer | How |
+| -------- | ------ | --- |
+| Does the HAT have an ID EEPROM, so the firmware self-configures? | **No** | `/proc/device-tree/hat/` does not exist |
+| Can the codec be probed without the overlay? | **Yes** | SMBus quick-write at `0x1a` on `/dev/i2c-1` ACKs; `0x1b`, `0x50`, `0x60` all give `Remote I/O error` |
+| Is the probe available in every profile? | **Yes** | `dtparam=i2c_arm=on` uses GPIO 2/3; buttons are 17/27/22 and lamps 23/24/25, so it can be unconditional — no chicken-and-egg |
+| Can the overlay load at runtime, without a reboot? | **Yes** | `dtoverlay wm8960-soundcard` on a box booted without it: card enumerates with playback **and** capture, `wm8960 1-001a` binds, `bloopbox-audio-init` passes, `aplay` plays |
+
+The runtime-loaded card lands as **card 1**, because onboard audio is still present. That costs
+nothing here — the environment addresses it as `plughw:CARD=wm8960soundcard`, which is exactly the
+reason that decision was made.
+
+The WM8960's control interface is write-only, so the probe must be a quick-write; a read-byte probe
+would miss a codec that is present. `I2C_SLAVE_FORCE` is needed once the driver has claimed `0x1a`.
+
+#### What shipped, 2026-09-08
+
+Autodetection is the **fallback, not the fix**. An install that ran while the HAT was unseated
+would still wipe `config.txt`, and `--no-leds` has the identical shape with nothing to detect at
+all. So `install.sh` now resolves the profile by precedence instead:
+
+    explicit flag  >  /etc/bloopbox/profile  >  inferred from an existing environment  >  usb
+
+1. **The profile is persisted.** `/etc/bloopbox/profile` records `AUDIO_HAT` and `NO_LEDS`,
+   machine-written and separate from the hand-edited `environment`, and is rewritten only when a
+   flag is explicit. The third step of the chain is the migration for every box already in the
+   field: an environment naming `wm8960soundcard` means a wm8960 board, an empty `LED_PINS=` means
+   no lamps. Verified against the live device — an upgrade with no flags now resolves
+   `AUDIO_HAT=wm8960` out of its environment, where before it resolved `usb`.
+2. **The installer refuses to downgrade.** Resolving to `usb` while the profile or the environment
+   says `wm8960` is an error, not a rewrite. `--force` overrides, for a HAT that really is gone.
+3. **`bloopbox-doctor` checks the two still agree.** A profile saying `wm8960` while `config.txt`
+   carries no `dtoverlay=wm8960-soundcard` fails *before* the reboot that would make it audible.
+4. **The health card says it in words.** `readAudioInfo()` in `src/system/systemInfo.ts` compares
+   the configured card against `/proc/asound/cards`; the admin panel names the missing card and
+   says plainly that nothing can be heard. Nullable like every other reading — a dev machine with
+   no `/proc/asound` reads as "cannot tell", never as broken.
+
+The resolution logic and the doctor check were each exercised against fixtures covering both
+branches, including the exact 2026-09-07 state.
+
+#### Still open
+
+- **Autodetect the codec.** Quick-write `0x1a` to pick the default on a *first* install, where
+  there is no record to read. Measured to work (table above); not wired up, because the precedence
+  chain already covers every box that exists today.
+- **Self-heal at boot.** `bloopbox-audio-init.service` already runs at the right moment and already
+  detects exactly this. When the configured card is missing *and* `0x1a` ACKs, it could
+  `dtoverlay wm8960-soundcard`, wait for the card, and carry on — measured above to work and to
+  produce real audio — then repair `config.txt` for next boot. No reboot means no reboot loop,
+  which is the thing that usually makes auto-repair a bad trade. The rule would have to be **heal,
+  repair, and still report**: self-healing that hides a misconfiguration only moves the silence
+  somewhere harder to find.
+- **The LED language says nothing about this.** The health card is the parent-facing surface and
+  now covers it, but a box in a child's room is not being looked at through a browser. Adding an
+  LED pattern is a product decision — a new `docs/PRODUCT.md` section, and that file's sections are
+  cited by 39 source files — so it was deliberately not taken unilaterally.
+
+#### Unverified, found while measuring the above
+
+`dtparam=audio=off` is written **after** `dtoverlay=wm8960-soundcard`, and in `config.txt` a
+`dtparam` following a `dtoverlay` is a parameter *of that overlay*, not of the base DTB. With the
+overlay commented out, that line did not disable onboard audio — the Headphones card came back. So
+the single-card outcome on a normal boot probably comes from the overlay itself and the comment
+above the line ("One card, so ALSA `default` cannot land on the wrong one") may be claiming
+something that line does not do. Harmless while everything is addressed by name. Not chased down.
+
 
 ### `bloopbox-doctor` fails two checks that are actually fine — it cannot read a `Name=Value` switch
 

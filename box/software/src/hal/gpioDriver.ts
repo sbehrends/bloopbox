@@ -148,8 +148,11 @@ export function wavDurationMs(sizeBytes: number, format = CAPTURE_FORMAT): numbe
   return Math.round((Math.max(0, sizeBytes - WAV_HEADER_BYTES) / bytesPerSecond) * 1000);
 }
 
-/** Grace period for arecord to finalise its WAV header before we SIGKILL. */
-const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
+/** Grace period for arecord to finalise its WAV header before we SIGKILL. Exported for tests. */
+export const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
+
+/** How much of arecord's stderr is kept for the log line when it exits on its own. */
+const CAPTURE_STDERR_TAIL_CHARS = 2048;
 
 /**
  * How long a stopped aplay gets to exit before SIGKILL. It has nothing to finalise, so this only
@@ -206,6 +209,13 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   #captureProcess: ChildProcess | null = null;
   #captureId: string | null = null;
+  /**
+   * Settles when {@link #captureProcess} has exited. Created at spawn, not at stop: arecord can
+   * exit on its own — the device went away, a format it refused — and a `'close'` listener
+   * attached after that has already fired waits forever. That is what used to make every
+   * commit after such an exit sit out the whole flush timeout.
+   */
+  #captureExited: Promise<void> | null = null;
   #playbackProcess: ChildProcess | null = null;
   /** Settles when {@link #playbackProcess} has exited, so a stop can wait for the device. */
   #playbackExited: Promise<void> | null = null;
@@ -334,14 +344,43 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
       { stdio: ['ignore', 'ignore', 'pipe'] },
     );
 
+    let markExited: (() => void) | undefined;
+    const exited = new Promise<void>((resolve) => {
+      markExited = resolve;
+    });
+
+    /*
+     * Read, not just piped: an unread pipe fills and blocks the writer, and arecord reports
+     * every overrun there. Kept short, and only for the one log line below.
+     */
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString('utf8')).slice(-CAPTURE_STDERR_TAIL_CHARS);
+    });
+
     child.on('error', (error) => {
+      markExited?.();
+      if (this.#captureProcess !== child) return;
       this.#captureProcess = null;
       this.#captureId = null;
+      this.#captureExited = null;
       this.emit('unavailable', { reason: `arecord failed: ${error.message}` });
+    });
+
+    child.on('close', (code, signal) => {
+      markExited?.();
+      // Still the active capture means nobody stopped it: it gave up by itself.
+      if (this.#captureProcess === child) {
+        logWarn(
+          { code, signal, stderr: stderr.trim() },
+          'arecord exited before the recording was stopped',
+        );
+      }
     });
 
     this.#captureProcess = child;
     this.#captureId = handle.id;
+    this.#captureExited = exited;
     return Promise.resolve(handle);
   }
 
@@ -517,31 +556,29 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   /** SIGTERM first so arecord writes a valid WAV header; SIGKILL only as a fallback. */
   async #stopCapture(): Promise<void> {
     const child = this.#captureProcess;
+    const exited = this.#captureExited;
     this.#captureProcess = null;
     this.#captureId = null;
-    if (!child) return;
+    this.#captureExited = null;
+    if (!child || !exited) return;
 
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = (): void => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
+    // Already gone by itself: nothing to signal, and the WAV is whatever it managed to write.
+    if (child.exitCode !== null || child.signalCode !== null) {
+      await exited;
+      return;
+    }
 
-      const timer = setTimeout(() => {
+    child.kill('SIGTERM');
+    let timer: NodeJS.Timeout | undefined;
+    const escalated = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
         child.kill('SIGKILL');
-        finish();
+        resolve();
       }, CAPTURE_FLUSH_TIMEOUT_MS);
       timer.unref();
-
-      child.once('close', () => {
-        clearTimeout(timer);
-        finish();
-      });
-
-      child.kill('SIGTERM');
     });
+    await Promise.race([exited, escalated]);
+    clearTimeout(timer);
   }
 
   async #spawnPlayback(path: string): Promise<PlaybackOutcome> {
@@ -733,6 +770,14 @@ async function runQuiet(command: string, args: readonly string[]): Promise<void>
 }
 
 let cachedLogger: Logger | undefined;
+
+/** Fire-and-forget warning, for event handlers that cannot await. Never rejects. */
+function logWarn(detail: object, message: string): void {
+  halLogger().then(
+    (log) => log.warn(detail, message),
+    () => undefined,
+  );
+}
 
 /**
  * The driver's logger, loaded on first use rather than at import. Importing the logger starts

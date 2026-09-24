@@ -21,6 +21,9 @@ type FakeChild = EventEmitter & {
 
 const spawned: { command: string; args: readonly string[]; child: FakeChild }[] = [];
 
+/** `stubborn` makes arecord ignore SIGTERM, as a capture wedged in the driver would. */
+const recorder = { stubborn: false };
+
 /** Closes a fake child the way a real one does: exit state first, then the event. */
 function close(child: FakeChild, code: number | null, signal: string | null): void {
   child.exitCode = code;
@@ -31,14 +34,17 @@ function close(child: FakeChild, code: number | null, signal: string | null): vo
 vi.mock('node:child_process', () => ({
   spawn: (command: string, args: readonly string[]) => {
     const child: FakeChild = Object.assign(new EventEmitter(), {
-      stderr: null,
+      // A piped stream, as spawn gives arecord: the driver reads its stderr unconditionally.
+      stderr: new EventEmitter(),
       kills: [] as string[],
       exitCode: null,
       signalCode: null,
     });
+    const stubborn = recorder.stubborn;
     Object.assign(child, {
       kill: (signal: string) => {
         child.kills.push(signal);
+        if (stubborn && signal !== 'SIGKILL') return true;
         // arecord finalises its header on SIGTERM and exits; no timer involved.
         setImmediate(() => close(child, null, signal));
         return true;
@@ -66,7 +72,11 @@ vi.mock('../audio/ffmpeg.ts', () => ({
   PLAYBACK_FILTER_CHAIN: 'loudnorm=I=-16:TP=-1.5:LRA=11',
 }));
 
-const { GpioHal, CAPTURE_FORMAT, wavDurationMs } = await import('../hal/gpioDriver.ts');
+const warned = vi.fn<(detail: object, message: string) => void>();
+vi.mock('../logger.ts', () => ({ childLogger: () => ({ warn: warned }) }));
+
+const { GpioHal, CAPTURE_FLUSH_TIMEOUT_MS, CAPTURE_FORMAT, wavDurationMs } =
+  await import('../hal/gpioDriver.ts');
 const { SimulatorHal } = await import('../hal/simulatorDriver.ts');
 
 let directory: string;
@@ -83,6 +93,12 @@ function capturePath(): string {
   return path;
 }
 
+function captureChild(): FakeChild {
+  const entry = spawned.find(({ command }) => command === 'arecord');
+  if (!entry) throw new Error('arecord was not spawned');
+  return entry.child;
+}
+
 /** A WAV of exactly `ms` of silence at the capture format, header included. */
 function wavOf(ms: number): Buffer {
   const bytesPerSecond = CAPTURE_FORMAT.rate * CAPTURE_FORMAT.channels * 2;
@@ -91,6 +107,8 @@ function wavOf(ms: number): Buffer {
 
 beforeEach(async () => {
   spawned.length = 0;
+  recorder.stubborn = false;
+  warned.mockClear();
   encoded.mockClear();
   probed.mockReset();
   directory = await mkdtemp(join(tmpdir(), 'bloopbox-capture-'));
@@ -158,6 +176,53 @@ function transport(): SimulatorTransport {
     sendStopPlayback: () => undefined,
   };
 }
+
+describe('stopping arecord', () => {
+  it('asks it to finish, so the WAV header is written', async () => {
+    const hal = makeHal();
+    const handle = await hal.startRecording(0);
+    await writeFile(capturePath(), wavOf(500));
+
+    await hal.stopRecording(handle);
+
+    expect(captureChild().kills).toEqual(['SIGTERM']);
+    expect(warned).not.toHaveBeenCalled();
+  });
+
+  it('notices when it already exited by itself, instead of waiting out the flush timeout', async () => {
+    /*
+     * The close listener used to be attached at stop, after this close had already fired, so
+     * every commit that followed such an exit waited the whole flush timeout for nothing. On
+     * fake timers the old code never resolves at all.
+     */
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const hal = makeHal();
+    const handle = await hal.startRecording(0);
+    await writeFile(capturePath(), wavOf(800));
+    close(captureChild(), 1, null);
+
+    await expect(hal.stopRecording(handle)).resolves.toMatchObject({ durationMs: 800 });
+
+    expect(captureChild().kills).toEqual([]);
+    // And it says so: nobody asked it to stop.
+    await vi.waitFor(() => expect(warned).toHaveBeenCalledOnce());
+    expect(warned.mock.calls[0]?.[0]).toMatchObject({ code: 1 });
+  });
+
+  it('SIGKILLs one that will not stop, after the flush timeout', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    recorder.stubborn = true;
+    const hal = makeHal();
+    const handle = await hal.startRecording(2);
+    await writeFile(capturePath(), wavOf(300));
+
+    const stopped = hal.stopRecording(handle);
+    await vi.advanceTimersByTimeAsync(CAPTURE_FLUSH_TIMEOUT_MS);
+    await stopped;
+
+    expect(captureChild().kills).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+});
 
 describe('the simulator', () => {
   it('reports the duration of the encoded file, not the time the browser took to flush', async () => {

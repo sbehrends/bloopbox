@@ -717,7 +717,11 @@ a malformed file silently stopped every later note from being decoded.
   powered up.
 
 `arecord` and `aplay` are not run through it. A button stops them, not a clock, and each has its own
-stop path with its own escalation.
+stop path with its own escalation. Both track their exit **from spawn**. `arecord` can exit by itself
+(the device went away, or the codec refused the rate), and the `'close'` listener used to be attached
+only at stop, after the event had already fired, so every commit after such an exit waited the full
+`CAPTURE_FLUSH_TIMEOUT_MS`. The stop now checks `exitCode`/`signalCode` first and the early exit is
+logged at `warn` with arecord's stderr.
 
 ### Nothing plays over a note
 

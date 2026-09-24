@@ -1576,6 +1576,26 @@ things: tapping a blinking button, then pressing **Test speaker** in the panel m
 lamp blinking and the note on the card; and a second note sent while the first plays neither chimes
 nor cuts the first off.
 
+### The capture and helper-process hardening is tested against fake children only
+
+Added 2026-09-24. Each of these was written against a mocked `child_process` and none has run on a
+Pi. `docs/architecture.md` § Audio has the reasoning.
+
+- **`arecord` exiting by itself.** The driver now tracks the exit from spawn, so a stop after
+  arecord has died returns at once and logs `arecord exited before the recording was stopped` with
+  its stderr. Nobody has seen what a real early exit looks like, for example a USB adapter pulled
+  mid-take or a rate the codec refuses. Check that the take is refused with the "oops" (its WAV is
+  short, so its duration is short) and that the warning reaches the journal.
+- **Duration from the WAV size.** `(size − 44) / (rate × 2 × channels)` assumes `arecord -t wav`
+  writes the canonical 44-byte header. Check that a take's reported duration matches `soxi`/
+  `ffprobe` on the capture, at both `CAPTURE_RATE=16000` and `48000`.
+- **Deadlines.** ffmpeg gets 30 s + 2× the audio (5 min when the length is unknown) and amixer 5 s.
+  The margins come from desk measurements, not from a loaded Zero 2 W decoding with `loudnorm`
+  beside a capture.
+- **amixer warnings.** A wrong control name now logs at `warn` with amixer's stderr. Check that a
+  deliberately wrong `ALSA_MIXER_CONTROL` logs the warning, and that a correctly configured box logs
+  nothing at boot.
+
 ### The first-boot ssh password has only run in a container
 
 `deploy/ssh-password.sh` was exercised on Debian Trixie in Docker, 2026-09-23: no marker, a user not

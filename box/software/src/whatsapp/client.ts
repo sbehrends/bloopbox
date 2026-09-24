@@ -35,8 +35,65 @@ import type { WhatsAppConnectionState } from '../ipc/events.ts';
  */
 
 /** Backoff bounds for reconnecting. A device in a cupboard must not hammer WhatsApp. */
-const RECONNECT_BASE_MS = 2_000;
-const RECONNECT_MAX_MS = 60_000;
+export const RECONNECT_BASE_MS = 2_000;
+export const RECONNECT_MAX_MS = 60_000;
+/**
+ * Each delay is moved up to this fraction either way at random.
+ *
+ * Every box on a home router loses WhatsApp at the same instant when the line drops, and without
+ * jitter they all come back on the same schedule too.
+ */
+export const RECONNECT_JITTER = 0.2;
+/**
+ * How long a connection has to stay up before the backoff forgets earlier failures.
+ *
+ * Resetting on `open` alone let anything that opens and is then thrown off — a second box
+ * running a cloned card, answered with `connectionReplaced` — reconnect every two seconds
+ * for ever, each time knocking the other one off in turn.
+ */
+export const STABLE_CONNECTION_MS = 60_000;
+/**
+ * How long to wait to learn which WhatsApp Web version is current.
+ *
+ * `fetchLatestBaileysVersion` has no timeout of its own and takes no signal, and it sits in
+ * front of every connect: an unanswered fetch would leave the box not even trying. Past this
+ * the socket is opened with the version Baileys ships with, which is what a failed fetch
+ * already did.
+ */
+export const VERSION_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Disconnect reasons that retrying cannot fix, with what the admin panel should say.
+ *
+ * - `connectionReplaced` (440): another client logged in with these same credentials. On this
+ *   device that means the card was copied into a second box, and two boxes reconnecting against
+ *   each other replace one another for ever.
+ * - `forbidden` (403): WhatsApp refused the account. Asking again every minute is how an
+ *   account that is merely restricted becomes one that is banned.
+ *
+ * Both stay down until the daemon restarts — a reboot, or saving any setting.
+ */
+const TERMINAL_REASONS: ReadonlyMap<number, string> = new Map([
+  [
+    DisconnectReason.connectionReplaced,
+    'another device took over this WhatsApp session — if this card was copied into a second box, switch that one off, then restart this one',
+  ],
+  [
+    DisconnectReason.forbidden,
+    'WhatsApp refused this account — unlink and link again, or check the account on the phone',
+  ],
+]);
+
+/**
+ * The delay before reconnect attempt `attempt` (0-based): exponential from
+ * `RECONNECT_BASE_MS`, capped at `RECONNECT_MAX_MS`, then jittered by ±`RECONNECT_JITTER`.
+ *
+ * `random` is in [0, 1), as `Math.random` returns; 0.5 is no jitter at all.
+ */
+export function reconnectDelayMs(attempt: number, random: number): number {
+  const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
+  return Math.round(base * (1 + (random * 2 - 1) * RECONNECT_JITTER));
+}
 
 /** Voice notes longer than this are almost certainly not for a toddler; skip the download. */
 const MAX_INBOUND_SECONDS = 300;
@@ -196,6 +253,10 @@ export type WhatsAppClientOptions = {
   readonly download?: MediaDownloader;
   /** The protocol version to announce, or undefined for the one Baileys ships with. */
   readonly versionProvider?: () => Promise<WAVersion | undefined>;
+  /** Injectable so a test can say how long a connection stayed up without waiting for it. */
+  readonly now?: () => number;
+  /** Injectable so a test can pin the reconnect jitter. */
+  readonly random?: () => number;
 };
 
 const defaultDownload: MediaDownloader = (message, context) =>
@@ -204,6 +265,20 @@ const defaultDownload: MediaDownloader = (message, context) =>
 const defaultVersionProvider = async (): Promise<WAVersion | undefined> =>
   (await fetchLatestBaileysVersion()).version;
 
+/** `promise`, or `fallback` if it has not settled within `ms`. Never rejects. */
+async function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([promise.catch(() => fallback), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   readonly #authDirectory: string;
   readonly #log: Logger;
@@ -211,12 +286,32 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   readonly #authStateFactory: AuthStateFactory;
   readonly #download: MediaDownloader;
   readonly #versionProvider: () => Promise<WAVersion | undefined>;
+  readonly #now: () => number;
+  readonly #random: () => number;
 
   #socket: ClientSocket | null = null;
   #reconnectAttempts = 0;
   #reconnectTimer: NodeJS.Timeout | null = null;
   #stopping = false;
   #state: WhatsAppConnectionState = 'connecting';
+  /**
+   * Bumped by everything that decides which socket should exist: each `#connect`, `stop()` and
+   * `unlink()`.
+   *
+   * `#connect` awaits three things before it has a socket to show for it, and anything can
+   * happen in between — a second click on "link", an unlink, a shutdown. Each await is followed
+   * by a check that this is still the newest decision, and a connect that has been overtaken
+   * gives up rather than opening a second socket onto the same `creds.json`.
+   */
+  #generation = 0;
+  /** When the current socket reached `open`, or null while it has not. */
+  #openedAt: number | null = null;
+  /**
+   * Bumped whenever the auth directory is deleted. A socket opened before that must not write
+   * its credentials back afterwards: `saveCreds` recreates the directory, and the next boot
+   * would restore a session WhatsApp has already been told is gone.
+   */
+  #credentialsEpoch = 0;
   /**
    * The in-flight `requestPairingCode` call, if any.
    *
@@ -236,6 +331,8 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     this.#authStateFactory = options.authStateFactory ?? useMultiFileAuthState;
     this.#download = options.download ?? defaultDownload;
     this.#versionProvider = options.versionProvider ?? defaultVersionProvider;
+    this.#now = options.now ?? Date.now;
+    this.#random = options.random ?? Math.random;
   }
 
   get state(): WhatsAppConnectionState {
@@ -274,20 +371,9 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
 
   async stop(): Promise<void> {
     this.#stopping = true;
-    if (this.#reconnectTimer) {
-      clearTimeout(this.#reconnectTimer);
-      this.#reconnectTimer = null;
-    }
-    const socket = this.#socket;
-    this.#socket = null;
-    if (socket) {
-      /*
-       * `end` closes the socket without logging out, so credentials survive a restart. It is
-       * typed as returning a promise in this version but resolves synchronously in practice;
-       * voided rather than awaited so shutdown cannot hang on a socket that is already gone.
-       */
-      void socket.end(undefined);
-    }
+    this.#generation += 1;
+    this.#clearReconnectTimer();
+    this.#endSocket();
     await Promise.resolve();
   }
 
@@ -300,14 +386,23 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
    * nothing asks Baileys for a QR, without a parent choosing a method first.
    */
   async unlink(): Promise<void> {
+    // Overtakes any connect in flight and any reconnect waiting to fire: either would otherwise
+    // open a socket onto credentials this is about to delete.
+    this.#generation += 1;
+    const generation = this.#generation;
+    this.#credentialsEpoch += 1;
+    this.#clearReconnectTimer();
     const socket = this.#socket;
     this.#socket = null;
+    this.#openedAt = null;
     try {
       await socket?.logout();
     } catch (error: unknown) {
       this.#log.warn({ err: error }, 'logout failed; clearing credentials anyway');
     }
     await rm(this.#authDirectory, { recursive: true, force: true });
+    // A parent who clicked "link" while this was logging out has already moved on from it.
+    if (generation !== this.#generation) return;
     this.#setState('notLinked', 'unlinked — choose a method in the admin panel to link again');
   }
 
@@ -376,15 +471,32 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
 
   /* ---- internals ---- */
 
+  /**
+   * Opens a socket, replacing any there is.
+   *
+   * The state goes to `connecting` **before** the first await, not after the last: `beginLinking`
+   * is guarded on `notLinked`, and with the state still `notLinked` across the awaits a
+   * double-click on "link" ran this twice and opened two sockets writing one `creds.json`.
+   */
   async #connect(): Promise<void> {
-    await mkdir(this.#authDirectory, { recursive: true });
-    const { state, saveCreds } = await this.#authStateFactory(this.#authDirectory);
-    // A pinned protocol version is better than none, but a fetch failure must not block boot.
-    const version = await this.#versionProvider().catch(() => undefined);
+    this.#generation += 1;
+    const generation = this.#generation;
+    const current = (): boolean => generation === this.#generation;
 
+    this.#clearReconnectTimer();
+    this.#endSocket();
     this.#setState('connecting');
     // A stale lock from the superseded socket must not block pairing on the new one.
     this.#pairingCodeRequest = null;
+
+    await mkdir(this.#authDirectory, { recursive: true });
+    if (!current()) return;
+    const { state, saveCreds } = await this.#authStateFactory(this.#authDirectory);
+    if (!current()) return;
+    // A pinned protocol version is better than none, but neither a failed nor a hung fetch may
+    // stop the box connecting.
+    const version = await within(this.#versionProvider(), VERSION_FETCH_TIMEOUT_MS, undefined);
+    if (!current()) return;
 
     const socket = this.#socketFactory({
       auth: state,
@@ -404,9 +516,13 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     });
     this.#socket = socket;
 
-    socket.ev.on('creds.update', () => {
+    const epoch = this.#credentialsEpoch;
+    const persist = (): void => {
+      if (epoch !== this.#credentialsEpoch) return;
       void saveCreds();
-    });
+    };
+
+    socket.ev.on('creds.update', persist);
 
     socket.ev.on('connection.update', (update) => {
       /*
@@ -417,9 +533,9 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
        */
       if (update.connection === 'open' && !state.creds.registered) {
         state.creds.registered = true;
-        void saveCreds();
+        persist();
       }
-      this.#handleConnectionUpdate(update, socket);
+      this.#handleConnectionUpdate(update, socket, state.creds);
     });
 
     socket.ev.on('messages.upsert', ({ messages, type }) => {
@@ -431,7 +547,11 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     });
   }
 
-  #handleConnectionUpdate(update: Partial<ConnectionState>, socket: ClientSocket): void {
+  #handleConnectionUpdate(
+    update: Partial<ConnectionState>,
+    socket: ClientSocket,
+    creds: AuthenticationCreds,
+  ): void {
     if (this.#socket !== socket) return; // A superseded socket; ignore its events.
 
     if (update.qr) {
@@ -439,7 +559,8 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     }
 
     if (update.connection === 'open') {
-      this.#reconnectAttempts = 0;
+      // Not a reset of the backoff — see `STABLE_CONNECTION_MS`. That happens at the close.
+      this.#openedAt = this.#now();
       this.#setState('connected');
       return;
     }
@@ -448,9 +569,35 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
 
     const statusCode = extractStatusCode(update.lastDisconnect?.error);
     const loggedOut = statusCode === DisconnectReason.loggedOut;
+    const upForMs = this.#openedAt === null ? 0 : this.#now() - this.#openedAt;
 
-    this.#log.warn({ statusCode, loggedOut }, 'whatsapp connection closed');
+    this.#log.warn({ statusCode, loggedOut, upForMs }, 'whatsapp connection closed');
     this.#socket = null;
+    this.#openedAt = null;
+    if (upForMs >= STABLE_CONNECTION_MS) this.#reconnectAttempts = 0;
+
+    /*
+     * WhatsApp's "now reconnect": sent straight after a successful scan, before the new
+     * credentials have been used once. It is the pairing finishing, not a failure, so it goes
+     * first — before the unpaired check below, and without waiting out a backoff.
+     */
+    if (statusCode === DisconnectReason.restartRequired) {
+      this.#setState('connecting', describeStatus(statusCode));
+      if (!this.#stopping) this.#scheduleReconnect(true);
+      return;
+    }
+
+    /*
+     * Never paired, and closed for any other reason: nobody scanned the code. Baileys ends the
+     * socket itself once its QR refs run out, as `timedOut` (408) — which is also
+     * `connectionLost`, and so was retried, which opened a fresh socket, which started a new round
+     * of codes, for ever, with nobody at the panel to scan any of them. Back to where linking
+     * starts, and a parent picks a method again.
+     */
+    if (!isPaired(creds) && !loggedOut) {
+      this.#setState('notLinked', 'the code was not scanned in time — choose a method to link');
+      return;
+    }
 
     if (loggedOut) {
       // Credentials are dead. Clear them so a restored creds.json cannot be replayed against a
@@ -460,7 +607,15 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
         'notLinked',
         'this device was unlinked from WhatsApp — choose a method to link again',
       );
+      this.#credentialsEpoch += 1;
       void rm(this.#authDirectory, { recursive: true, force: true }).catch(() => undefined);
+      return;
+    }
+
+    const terminal = statusCode === undefined ? undefined : TERMINAL_REASONS.get(statusCode);
+    if (terminal !== undefined) {
+      this.#log.error({ statusCode }, 'not reconnecting: retrying cannot fix this');
+      this.#setState('disconnected', terminal);
       return;
     }
 
@@ -563,17 +718,19 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   }
 
   /**
-   * Reconnects with exponential backoff.
+   * Reconnects with jittered exponential backoff — see `reconnectDelayMs`.
    *
-   * `immediate` is used after a logout, where the point is to produce a fresh QR promptly
-   * rather than to back off from a failing server.
+   * `immediate` is for `restartRequired`, which is WhatsApp asking for a reconnect rather than
+   * failing one. Only the first in a row is immediate: the attempt still counts, so a server
+   * that answered every connect with it would still be backed off from.
    */
   #scheduleReconnect(immediate: boolean): void {
     if (this.#reconnectTimer) return;
 
-    const delay = immediate
-      ? RECONNECT_BASE_MS
-      : Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.#reconnectAttempts);
+    const delay =
+      immediate && this.#reconnectAttempts === 0
+        ? 0
+        : reconnectDelayMs(this.#reconnectAttempts, this.#random());
     this.#reconnectAttempts = Math.min(this.#reconnectAttempts + 1, 10);
 
     this.#log.info({ delayMs: delay, attempt: this.#reconnectAttempts }, 'reconnecting');
@@ -585,6 +742,31 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       });
     }, delay);
     this.#reconnectTimer.unref();
+  }
+
+  #clearReconnectTimer(): void {
+    if (this.#reconnectTimer === null) return;
+    clearTimeout(this.#reconnectTimer);
+    this.#reconnectTimer = null;
+  }
+
+  /**
+   * Closes the current socket, if any, and forgets it — so its own close event, when it comes,
+   * is recognised as a superseded socket's and ignored.
+   */
+  #endSocket(): void {
+    const socket = this.#socket;
+    this.#socket = null;
+    this.#openedAt = null;
+    if (!socket) return;
+    /*
+     * `end` closes the socket without logging out, so credentials survive a restart. It is
+     * typed as returning a promise in this version but resolves synchronously in practice;
+     * not awaited so shutdown cannot hang on a socket that is already gone.
+     */
+    socket.end(undefined).catch((error: unknown) => {
+      this.#log.debug({ err: error }, 'ending a superseded socket failed');
+    });
   }
 }
 

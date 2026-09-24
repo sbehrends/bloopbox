@@ -815,6 +815,44 @@ mode, so the amplifier stages can be judged by ear at any hour.
 
 ---
 
+## The WhatsApp connection
+
+[`src/whatsapp/client.ts`](../box/software/src/whatsapp/client.ts) owns the Baileys socket, its
+credentials and reconnection. Baileys reaches it through four injected functions — `socketFactory`,
+`authStateFactory`, `download`, `versionProvider` — whose defaults are the real library calls, so
+`src/tests/support/fakeWASocket.ts` can drive the whole lifecycle without an account.
+
+### One socket, and only when a decision says so
+
+Every call that decides which socket should exist — each connect, `stop()`, `unlink()` — bumps a
+**generation**, and a connect re-checks it after each of its awaits (the auth directory, the auth
+state, the version fetch). A connect that has been overtaken gives up instead of opening a second
+socket onto the same `creds.json`. The state goes to `connecting` *before* the first await, which is
+what makes `beginLinking()`'s `notLinked` guard hold against a double click. An existing socket is
+ended before its replacement opens, `unlink()` cancels a pending reconnect, and a socket from before
+an unlink may not write its credentials back into the directory the unlink deleted.
+
+`fetchLatestBaileysVersion` has no timeout and takes no signal, so it is raced against
+`VERSION_FETCH_TIMEOUT_MS`; past that, the socket opens with the version Baileys ships with.
+
+### What a close means
+
+| Reason | Paired? | Then |
+| ------ | ------- | ---- |
+| `restartRequired` (515) | either | reconnect at once — this is how a successful scan finishes |
+| anything else | **no** | `notLinked`. Baileys ends an unscanned QR with `timedOut` (408), which is also `connectionLost`; retrying it started a new round of codes for ever |
+| `loggedOut` (401) | yes | `notLinked`, credentials deleted |
+| `connectionReplaced` (440), `forbidden` (403) | yes | `disconnected` with a detail saying why, **no retry** until the daemon restarts |
+| anything else | yes | `disconnected`, reconnect on the ladder below |
+
+440 on this device means the card was copied into a second box: the two replace each other for as
+long as both keep retrying. 403 retried every minute is how a restricted account becomes a banned
+one.
+
+**The ladder** is `reconnectDelayMs`: 2 s doubling to a 60 s cap, ±20 % jitter so boxes behind one
+router do not come back in step. The attempt count resets only once a connection has stayed up
+`STABLE_CONNECTION_MS` (60 s) — resetting on `open` let an open-then-kicked loop run every 2 s.
+
 ## The whitelist is the safety boundary
 
 [`src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) is the most important file in the

@@ -251,6 +251,10 @@ examples most guides show:
   every outbound send, and a failure there arrives as an unhandled `'error'` event that kills the
   process. The unit sets `TMPDIR=/run/bloopbox-tmp`; under `ProtectSystem=strict`, `/tmp` is
   read-only. Keep it off `RECORDING_DIR` — `audio/recovery.ts` treats files there as unread notes.
+- **`DisconnectReason.timedOut` and `connectionLost` are both 408**, and 408 is how Baileys ends an
+  unscanned QR. An unpaired close other than 515 settles in `notLinked`; never retry it. Every
+  await in `#connect` is followed by a generation check — keep it that way when adding one
+  (`docs/architecture.md`, "The WhatsApp connection").
 - `messages.upsert` must handle **both** `notify` and `append`. Baileys picks the type with
   `node.attrs.offline ? 'append' : 'notify'`, so everything queued while disconnected arrives as
   `append`. `messageTimestamp` is a protobuf Long — arithmetic straight on it yields `NaN`.

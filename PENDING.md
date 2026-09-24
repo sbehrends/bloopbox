@@ -1062,6 +1062,26 @@ worth ruling in or out first if this recurs. Worth wrapping `saveCreds` with an 
 keeping one last-good copy to fall back on; `WhatsAppClient` already owns the auth directory, so
 it is the natural place.
 
+### The connection lifecycle fixes of 2026-09-24 are verified against a fake socket only
+
+From `docs/review-2026-09.md` Phase 1: an unscanned QR now settles in `notLinked` instead of
+looping, `#connect` is generation-guarded, and 440 / 403 are terminal. All of it is locked by
+`whatsappLifecycle.test.ts` against `FakeWASocket`, and none of it has met a real account. Worth
+checking on hardware, cheapest first:
+
+- Leave a QR unscanned for the ~3 minutes Baileys' refs last and confirm the panel lands back on
+  the method picker, with one `whatsapp connection closed` at 408 and no `reconnecting` after it.
+- Scan a QR and confirm the 515 that follows reconnects at once (`delayMs: 0`) and ends
+  `connected`. That the in-memory `creds` are already paired at that 515 is not relied on — 515 is
+  checked first — but it is the assumption to question if a scan ever lands in `notLinked`.
+- Boot a copy of a linked card in a second box and confirm one side stops at 440 with the detail
+  string instead of both flapping.
+
+**The detail string does not reach the panel yet.** The bridge sends it on `wa:status`, and the
+hardware server logs it, but `onStatus` keeps only `state` and `qr`, and `GET /api/whatsapp` has no
+field for it. A parent sees `disconnected` with nothing saying that retrying will not help.
+Surfacing it is a hardware-server + routes + admin change, left out of this one.
+
 ### Read receipts do not survive a bridge restart
 
 `pendingReads` in `whatsapp-bridge.ts` is an in-memory `Map` from message id to the Baileys key

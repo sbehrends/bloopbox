@@ -257,13 +257,13 @@ async function main(): Promise<void> {
   link.current = registerBridgeNamespace({
     namespace: io.of(BRIDGE_NAMESPACE),
     token: process.env['BRIDGE_TOKEN'] ?? '',
-    onStatus: ({ state, qr }) => {
+    onStatus: ({ state, detail, qr }) => {
       whatsappState = state;
       const next = qr ?? null;
       // Only a genuinely new code restarts the clock: a status repeat is not a rotation.
       if (next !== null && next !== whatsappQr) whatsappQrAt = Date.now();
       whatsappQr = next;
-      log.info({ state }, 'whatsapp status');
+      log.info({ state, detail }, 'whatsapp status');
       refreshStatus();
     },
     onIncoming: (payload) => {

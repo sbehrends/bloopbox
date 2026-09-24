@@ -1,6 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
-import { initAuthCreds, type AuthenticationState, type BaileysEventMap } from 'baileys';
+import {
+  initAuthCreds,
+  type AuthenticationState,
+  type BaileysEventMap,
+  type UserFacingSocketConfig,
+} from 'baileys';
 import { vi } from 'vitest';
 import type { AuthStateFactory, ClientSocket, MediaDownloader } from '../../whatsapp/client.ts';
 
@@ -79,7 +84,9 @@ export class FakeWASocket implements ClientSocket {
  */
 export function fakeBaileys(options: { paired?: boolean } = {}): {
   readonly sockets: FakeWASocket[];
-  readonly socketFactory: () => FakeWASocket;
+  /** The config each socket was opened with, index-aligned with `sockets`. */
+  readonly configs: UserFacingSocketConfig[];
+  readonly socketFactory: (config: UserFacingSocketConfig) => FakeWASocket;
   readonly authStateFactory: AuthStateFactory;
   readonly versionProvider: () => Promise<undefined>;
   readonly download: ReturnType<typeof vi.fn<MediaDownloader>>;
@@ -87,6 +94,7 @@ export function fakeBaileys(options: { paired?: boolean } = {}): {
   readonly creds: AuthenticationState['creds'];
 } {
   const sockets: FakeWASocket[] = [];
+  const configs: UserFacingSocketConfig[] = [];
   const creds = initAuthCreds();
   if (options.paired === true) creds.registered = true;
   const saveCreds = vi.fn<() => Promise<void>>(() => Promise.resolve());
@@ -96,9 +104,11 @@ export function fakeBaileys(options: { paired?: boolean } = {}): {
   };
   return {
     sockets,
-    socketFactory: () => {
+    configs,
+    socketFactory: (config) => {
       const socket = new FakeWASocket();
       sockets.push(socket);
+      configs.push(config);
       return socket;
     },
     authStateFactory: () => Promise.resolve({ state, saveCreds }),

@@ -228,7 +228,7 @@ function pick<T>(patched: T | undefined, base: T): T {
  *
  * Written out field by field rather than with object spread on purpose: spreading a patch
  * whose key is explicitly `undefined` *overwrites* the base value with undefined, which on
- * this device would silently erase a phone number or a volume cap. `pick` treats an
+ * this device would silently erase a phone number or a volume. `pick` treats an
  * explicit undefined as "not supplied", which is what every caller means.
  */
 export function mergeConfig(base: DeviceConfig, patch: ConfigPatch): DeviceConfig {

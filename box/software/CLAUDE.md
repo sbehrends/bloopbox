@@ -176,9 +176,9 @@ separately with `BRIDGE_TOKEN` on the `x-bridge-token` header, compared in const
 ### Config
 
 `PUT /api/config` accepts **any subset of any section, to any depth**. Cross-field rules
-(volume ≤ cap, debounce < threshold, an enabled contact has a target) are checked by
-`ConfigManager.save()` against the **merged** config — the only place they can be, since a patch
-raising the volume does not carry the cap. Sections with a refinement are a plain `…Shape` object
+(debounce < threshold, an enabled contact has a target) are checked by `ConfigManager.save()`
+against the **merged** config — the only place they can be, since a patch raising `debounceMs`
+does not carry `recordThresholdMs`. Sections with a refinement are a plain `…Shape` object
 plus a refined `…Schema`, because `.partial()` exists only on a `ZodObject`.
 
 **Adding a section touches four places:** `configSchema`, `configUpdateSchema`, `ConfigPatch` and

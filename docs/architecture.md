@@ -475,12 +475,12 @@ switch the device off.
 ### Patches are partial all the way down
 
 `PUT /api/config` accepts **any subset of any section, to any depth**. `configUpdateSchema` is
-partial throughout, `mergeConfig` merges field by field, and the cross-field rules (volume ≤ cap,
-debounce < threshold, an enabled contact has a target) are enforced by `ConfigManager.save()`
-against the **merged** config.
+partial throughout, `mergeConfig` merges field by field, and the cross-field rules (debounce <
+threshold, an enabled contact has a target) are enforced by `ConfigManager.save()` against the
+**merged** config.
 
-That last part is load-bearing: a patch raising the volume does not carry the cap, so the rule can
-only be checked after merging. Sections with a refinement are written as a plain `…Shape` object
+That last part is load-bearing: a patch raising `debounceMs` does not carry `recordThresholdMs`,
+so the rule can only be checked after merging. Sections with a refinement are written as a plain `…Shape` object
 plus a refined `…Schema`, because `.partial()` exists only on a `ZodObject`.
 
 ### Adding a section without breaking existing devices

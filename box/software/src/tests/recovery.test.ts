@@ -127,6 +127,26 @@ describe('recovering unread notes', () => {
     expect(result.unattributable).toBe(0);
   });
 
+  it('does not restore an empty file as a note', async () => {
+    const path = join(directory, recordingName(0, 'EMPTY01'));
+    await writeFile(path, '');
+    const seconds = (NOW - HOUR) / 1000;
+    await utimes(path, seconds, seconds);
+
+    const result = await recoverUnplayedNotes({ directory, ...options });
+
+    expect(result.notes).toEqual([]);
+  });
+
+  it('does not restore a download that never finished', async () => {
+    // Downloads are written as `<name>.part` and renamed only once complete and synced.
+    await writeNote(`${recordingName(0, 'PARTIAL1')}.part`, HOUR);
+
+    const result = await recoverUnplayedNotes({ directory, ...options });
+
+    expect(result).toMatchObject({ notes: [], unattributable: 0 });
+  });
+
   it('survives a directory that is not there', async () => {
     const result = await recoverUnplayedNotes({
       directory: join(directory, 'gone'),

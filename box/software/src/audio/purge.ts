@@ -15,8 +15,13 @@ export const AUDIO_TTL_MS = 48 * 60 * 60 * 1000;
 /** How often the sweep runs. Frequent enough to bound growth, cheap enough to ignore. */
 export const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
-/** Only audio artefacts are eligible; anything else in the directory is left alone. */
-const PURGEABLE_EXTENSIONS = ['.ogg', '.wav', '.webm', '.m4a', '.opus'] as const;
+/**
+ * Only audio artefacts are eligible; anything else in the directory is left alone.
+ *
+ * `.ogg.part` is a download a power cut interrupted (`whatsapp/mediaDownload.ts`): nothing else
+ * ever finishes it, and nothing else would ever delete it.
+ */
+const PURGEABLE_EXTENSIONS = ['.ogg', '.wav', '.webm', '.m4a', '.opus', '.ogg.part'] as const;
 
 export type PurgeResult = {
   readonly scanned: number;

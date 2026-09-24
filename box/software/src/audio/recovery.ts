@@ -136,7 +136,12 @@ export async function recoverUnplayedNotes(options: RecoveryOptions): Promise<Re
     let receivedAt: number;
     try {
       const info = await stat(path);
-      if (!info.isFile()) continue;
+      /*
+       * Empty is not a note. Downloads are renamed into place only once complete and synced, so
+       * this should not happen — but a file from before that rule, or a card that lost blocks,
+       * would otherwise light a lamp for a tap that plays nothing. Left for the purge.
+       */
+      if (!info.isFile() || info.size === 0) continue;
       // mtime is when the download finished, which is when the note arrived.
       receivedAt = info.mtimeMs;
     } catch {

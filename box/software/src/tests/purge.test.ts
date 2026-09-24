@@ -82,13 +82,14 @@ describe('TTL enforcement', () => {
 
 describe('file selection', () => {
   it('purges every audio artefact the pipeline can leave behind', async () => {
-    for (const name of ['a.ogg', 'b.wav', 'c.webm', 'd.m4a', 'e.opus']) {
+    // `.ogg.part` is a download a power cut interrupted, which nothing else would ever remove.
+    for (const name of ['a.ogg', 'b.wav', 'c.webm', 'd.m4a', 'e.opus', 'wa-0-ABC.ogg.part']) {
       await writeAged(name, AUDIO_TTL_MS + 1000);
     }
 
     const result = await purgeExpiredAudio({ directory: workDir, now });
 
-    expect(result.deleted).toHaveLength(5);
+    expect(result.deleted).toHaveLength(6);
   });
 
   it('leaves non-audio files alone, however old', async () => {

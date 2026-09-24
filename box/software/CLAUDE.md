@@ -402,6 +402,8 @@ work around it locally. Full reasoning for each is in
   unheard note survives someone unplugging the box, which used to lose it outright. Unread audio is
   purged after **48 h** whether heard or not; playback deletes a note immediately, which is what
   makes *present on disk* mean *unread* — and is why losing the directory lost the unread flag too.
+- **Nothing writes a note under its final name except the rename** in `whatsapp/mediaDownload.ts`
+  (`.part` → `fsync` → `rename`). Recovery treats every `wa-<i>-<id>.ogg` as unread audio.
 - **`notesDirectory()` must never fall back to `RECORDING_DIR`.** `/etc/bloopbox/environment` sets
   that variable and an upgrade *keeps the file*, so a fallback silently puts every already-installed
   box back in RAM while the tests stay green. Pinned by `purge.test.ts`.

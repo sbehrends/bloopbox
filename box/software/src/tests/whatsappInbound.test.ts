@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino from 'pino';
 import type { WAMessage } from 'baileys';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { voiceNoteContent, WhatsAppClient, type VoiceNote } from '../whatsapp/client.ts';
+import { MAX_INBOUND_BYTES } from '../whatsapp/mediaDownload.ts';
 import { fakeBaileys } from './support/fakeWASocket.ts';
 
 /**
@@ -120,5 +121,37 @@ describe('WhatsAppClient inbound', () => {
 
     await settle(() => notes.length === 1, 'the plain note to be emitted');
     expect(notes.map((note) => note.messageId)).toEqual(['PLAIN']);
+  });
+
+  it('refuses a note whose declared size is over the cap, before downloading anything', async () => {
+    const { baileys, notes } = await connected();
+
+    baileys.sockets[0]?.ev.emit('messages.upsert', {
+      type: 'notify',
+      messages: [
+        message({ audioMessage: { ...PTT, fileLength: MAX_INBOUND_BYTES + 1 } }, 'HUGE'),
+        message({ audioMessage: PTT }, 'SMALL'),
+      ],
+    });
+
+    await settle(() => notes.length === 1, 'the small note to be emitted');
+    expect(notes.map((note) => note.messageId)).toEqual(['SMALL']);
+    expect(baileys.download).not.toHaveBeenCalled();
+  });
+
+  it('downloads to the name recovery reads, through the injected downloader', async () => {
+    const { baileys, notes } = await connected();
+    baileys.sockets[0]?.ev.emit('messages.upsert', {
+      type: 'notify',
+      messages: [message({ audioMessage: PTT }, 'DL01')],
+    });
+    await settle(() => notes.length === 1, 'the note to be emitted');
+    const notesDir = join(authDirectory, 'notes');
+
+    const result = await notes[0]!.download(notesDir, 2);
+
+    expect(result).toEqual({ path: join(notesDir, 'wa-2-DL01.ogg'), byteLength: 3 });
+    expect(await readdir(notesDir)).toEqual(['wa-2-DL01.ogg']);
+    expect(baileys.download).toHaveBeenCalledTimes(1);
   });
 });

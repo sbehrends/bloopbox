@@ -861,6 +861,20 @@ name and **never uses `normalizeMessageContent`**, which also opens view-once, e
 document-with-caption: each is another shape a group member could put on a child's button, and
 widening that is a decision, not a helper's side effect. View-once stays ignored until it is made.
 
+### Downloads onto the card
+
+[`src/whatsapp/mediaDownload.ts`](../box/software/src/whatsapp/mediaDownload.ts). The notes directory
+is on the card that holds `config.json` and the credentials, and a note's size is whatever the
+sender's client says. So: refused before download when the declared `fileLength` is over
+`MAX_INBOUND_BYTES` (2 MB, about twice the longest note the 300 s cap admits); a byte-counting
+`Transform` in the pipeline that fails it if the delivered bytes go over anyway;
+`DOWNLOAD_TIMEOUT_MS` (60 s) per attempt, raced against Baileys' own request since it takes no
+signal; and two retries on anything that is not a 4xx or an oversized note.
+
+A download is written to `<name>.part`, fsynced, then renamed. Boot recovery treats every
+`wa-<i>-<id>.ogg` as an unread note, so the final name must only ever point at a complete file;
+recovery also skips a zero-length one, and the purge sweeps an abandoned `.ogg.part` by age.
+
 ## The whitelist is the safety boundary
 
 [`src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) is the most important file in the

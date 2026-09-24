@@ -1,7 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdir, rm, stat } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
-import { pipeline } from 'node:stream/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import {
@@ -23,6 +21,10 @@ import type { Logger } from 'pino';
 import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
 import { normalisePhone, type ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
+import { downloadToFile, MAX_INBOUND_BYTES, MediaTooLargeError } from './mediaDownload.ts';
+import { extractStatusCode } from './statusCode.ts';
+
+export { extractStatusCode };
 
 /**
  * Baileys connection lifecycle (PRODUCT.md §4, Process 2).
@@ -282,6 +284,11 @@ export type WhatsAppClientOptions = {
   readonly now?: () => number;
   /** Injectable so a test can pin the reconnect jitter. */
   readonly random?: () => number;
+  /** Injectable so a test can time a download out, or retry one, without waiting. */
+  readonly downloadTiming?: {
+    readonly timeoutSignal?: () => AbortSignal;
+    readonly sleep?: (ms: number) => Promise<void>;
+  };
 };
 
 const defaultDownload: MediaDownloader = (message, context) =>
@@ -313,6 +320,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   readonly #versionProvider: () => Promise<WAVersion | undefined>;
   readonly #now: () => number;
   readonly #random: () => number;
+  readonly #downloadTiming: NonNullable<WhatsAppClientOptions['downloadTiming']>;
 
   #socket: ClientSocket | null = null;
   #reconnectAttempts = 0;
@@ -358,6 +366,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     this.#versionProvider = options.versionProvider ?? defaultVersionProvider;
     this.#now = options.now ?? Date.now;
     this.#random = options.random ?? Math.random;
+    this.#downloadTiming = options.downloadTiming ?? {};
   }
 
   get state(): WhatsAppConnectionState {
@@ -694,6 +703,16 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       return;
     }
 
+    // Refused before a byte is fetched. The count in the pipeline catches a sender that lies.
+    const declaredBytes = byteCount(audio.fileLength);
+    if (declaredBytes !== null && declaredBytes > MAX_INBOUND_BYTES) {
+      this.#log.warn(
+        { messageId, err: new MediaTooLargeError(declaredBytes) },
+        'skipping an oversized voice note',
+      );
+      return;
+    }
+
     this.emit('voiceNote', {
       messageId,
       chatJid,
@@ -705,29 +724,23 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       download: async (directory: string, index: ButtonIndex) => {
         await mkdir(directory, { recursive: true });
         const path = join(directory, recordingName(index, messageId));
-        // Streamed rather than buffered: this runs on a 512MB Pi.
-        const stream = await this.#download(message, {
-          logger: this.#log.child({ lib: 'baileys-media' }),
-          reuploadRequest: (msg) => {
-            const socket = this.#socket;
-            if (!socket) throw new Error('cannot re-request media while disconnected');
-            return socket.updateMediaMessage(msg);
-          },
+        // Streamed rather than buffered: this runs on a 512MB Pi. Capped, timed out, retried
+        // and renamed into place — see `mediaDownload.ts`.
+        const byteLength = await downloadToFile({
+          path,
+          log: this.#log,
+          ...this.#downloadTiming,
+          openStream: () =>
+            this.#download(message, {
+              logger: this.#log.child({ lib: 'baileys-media' }),
+              reuploadRequest: (msg) => {
+                const socket = this.#socket;
+                if (!socket) throw new Error('cannot re-request media while disconnected');
+                return socket.updateMediaMessage(msg);
+              },
+            }),
         });
-
-        try {
-          await pipeline(stream, createWriteStream(path));
-        } catch (error: unknown) {
-          await rm(path, { force: true });
-          throw error;
-        }
-
-        const { size } = await stat(path);
-        if (size === 0) {
-          await rm(path, { force: true });
-          throw new Error('downloaded voice note was empty');
-        }
-        return { path, byteLength: size };
+        return { path, byteLength };
       },
     });
   }
@@ -794,15 +807,6 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   }
 }
 
-/** Baileys wraps disconnect causes in a Boom error whose status code says why. */
-export function extractStatusCode(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null || !('output' in error)) return undefined;
-  const output = error.output;
-  if (typeof output !== 'object' || output === null || !('statusCode' in output)) return undefined;
-  const code = output.statusCode;
-  return typeof code === 'number' ? code : undefined;
-}
-
 function describeStatus(statusCode: number | undefined): string {
   switch (statusCode) {
     case DisconnectReason.connectionClosed:
@@ -824,4 +828,11 @@ function describeStatus(statusCode: number | undefined): string {
     default:
       return statusCode === undefined ? 'unknown reason' : `status ${String(statusCode)}`;
   }
+}
+
+/** A protobuf size field as a number: `fileLength` is `number | Long`, and `Number(long)` is NaN. */
+function byteCount(value: number | { toNumber(): number } | null | undefined): number | null {
+  if (typeof value === 'number') return value;
+  if (value === null || value === undefined) return null;
+  return value.toNumber();
 }

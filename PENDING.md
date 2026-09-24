@@ -1082,6 +1082,20 @@ hardware server logs it, but `onStatus` keeps only `state` and `qr`, and `GET /a
 field for it. A parent sees `disconnected` with nothing saying that retrying will not help.
 Surfacing it is a hardware-server + routes + admin change, left out of this one.
 
+### View-once voice notes are ignored — a product decision nobody has made
+
+`voiceNoteContent` in `whatsapp/client.ts` unwraps `ephemeralMessage` (disappearing chats) and
+nothing else, so a note a grandparent sends as **view once** never reaches the box, and the sender
+is told nothing. Options: keep ignoring it (today, and the safe default); accept it and play it
+once, deleting it even if the child stops half-way, which breaks the "interrupted goes back to the
+front" rule; or accept it as an ordinary note, which quietly ignores what the sender asked for.
+Not `normalizeMessageContent` either way — it unwraps edits and more besides, each a new shape a
+group member could put on a child's button.
+
+Also unverified with a real account: that a note from a disappearing chat arrives as
+`ephemeralMessage` at this layer at all, rather than already unwrapped by Baileys. The unwrap is
+harmless if it is — a plain `audioMessage` still matches.
+
 ### Read receipts do not survive a bridge restart
 
 `pendingReads` in `whatsapp-bridge.ts` is an in-memory `Map` from message id to the Baileys key

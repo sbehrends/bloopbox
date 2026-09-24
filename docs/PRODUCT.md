@@ -100,7 +100,9 @@ Bounds:
 ### Receiving a message
 
 1. A voice note arrives from a **whitelisted** contact (§4). Anything else is dropped before it is
-   downloaded.
+   downloaded. A chat with **disappearing messages** on is an ordinary chat here — its notes arrive
+   like any other. A **view-once** note is ignored: whether a box that replays until the queue
+   drains may take one at all is an open question (`PENDING.md`).
 2. In audible mode a soft **"notify"** chime plays — **unless a note is already playing**, when it
    is held back. The assigned lamp starts **blinking slowly** (0.8 s on / 0.8 s off).
 

@@ -853,6 +853,14 @@ one.
 router do not come back in step. The attempt count resets only once a connection has stayed up
 `STABLE_CONNECTION_MS` (60 s) — resetting on `open` let an open-then-kicked loop run every 2 s.
 
+### Which messages are voice notes
+
+`voiceNoteContent` accepts a PTT `audioMessage`, at the top level or inside `ephemeralMessage` —
+the wrapper a chat with disappearing messages puts round everything. It opens that one wrapper by
+name and **never uses `normalizeMessageContent`**, which also opens view-once, edits and
+document-with-caption: each is another shape a group member could put on a child's button, and
+widening that is a decision, not a helper's side effect. View-once stays ignored until it is made.
+
 ## The whitelist is the safety boundary
 
 [`src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) is the most important file in the

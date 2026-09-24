@@ -17,6 +17,7 @@ import {
   type WAMessage,
   type WASocket,
   type WAVersion,
+  type proto,
 } from 'baileys';
 import type { Logger } from 'pino';
 import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
@@ -192,6 +193,30 @@ export function isPaired(
   if (creds.registered) return true;
   const id = creds.me?.id;
   return typeof id === 'string' && id.length > 0 && creds.account !== undefined;
+}
+
+/**
+ * The voice note a message carries, or null if it is not one.
+ *
+ * A chat with disappearing messages turned on wraps every message in `ephemeralMessage`, so
+ * reading `audioMessage` off the top level ignored every note from such a chat, in silence — and
+ * turning disappearing messages on is a privacy setting a careful parent is exactly the person to
+ * choose. That one wrapper is unwrapped here, by name.
+ *
+ * **Deliberately not `normalizeMessageContent`**, which also unwraps view-once, edits,
+ * document-with-caption and more. Every wrapper it opens is another shape of message a group
+ * member can put on a child's button, and each one should be a decision, not a side effect of a
+ * helper. View-once in particular is an open product question — a note meant to be heard once,
+ * on a box that replays until the queue drains — so it stays ignored (PENDING.md).
+ *
+ * Only a PTT counts: a music file or an audio attachment is not what this device is for.
+ */
+export function voiceNoteContent(
+  content: WAMessage['message'],
+): proto.Message.IAudioMessage | null {
+  const unwrapped = content?.ephemeralMessage?.message ?? content;
+  const audio = unwrapped?.audioMessage;
+  return audio?.ptt === true ? audio : null;
 }
 
 export type GroupSummary = { readonly id: string; readonly subject: string };
@@ -650,9 +675,8 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   }
 
   async #handleMessage(message: WAMessage): Promise<void> {
-    const audio = message.message?.audioMessage;
-    // Only voice notes. A music file or a video note is not what this device is for.
-    if (!audio?.ptt) return;
+    const audio = voiceNoteContent(message.message);
+    if (audio === null) return;
 
     const messageId = message.key.id;
     const chatJid = message.key.remoteJid;

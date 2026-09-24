@@ -1,0 +1,124 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import pino from 'pino';
+import type { WAMessage } from 'baileys';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { voiceNoteContent, WhatsAppClient, type VoiceNote } from '../whatsapp/client.ts';
+import { fakeBaileys } from './support/fakeWASocket.ts';
+
+/**
+ * What the client makes of an inbound message: which shapes count as a voice note, and what
+ * reaches the bridge. The whitelist decides who may be heard; this decides what can be.
+ */
+
+const silentLogger = pino({ level: 'silent' });
+
+const PTT = { ptt: true, seconds: 3, fileLength: 4_000 };
+
+function message(content: NonNullable<WAMessage['message']>, id = 'ABC123'): WAMessage {
+  return {
+    key: { id, remoteJid: '15551234567@s.whatsapp.net', fromMe: false },
+    message: content,
+    messageTimestamp: Math.floor(Date.now() / 1000),
+  };
+}
+
+async function settle(predicate: () => boolean, label: string): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`settle timed out waiting for: ${label}`);
+}
+
+describe('voiceNoteContent', () => {
+  it('accepts a plain voice note', () => {
+    expect(voiceNoteContent({ audioMessage: PTT })).toMatchObject({ ptt: true });
+  });
+
+  it('accepts one from a chat with disappearing messages on', () => {
+    // The regression: every note from such a chat was ignored without a word in the log.
+    expect(
+      voiceNoteContent({ ephemeralMessage: { message: { audioMessage: PTT } } }),
+    ).toMatchObject({ ptt: true });
+  });
+
+  it('ignores a view-once note, which is an open product question rather than an oversight', () => {
+    expect(voiceNoteContent({ viewOnceMessage: { message: { audioMessage: PTT } } })).toBeNull();
+    expect(voiceNoteContent({ viewOnceMessageV2: { message: { audioMessage: PTT } } })).toBeNull();
+    expect(
+      voiceNoteContent({
+        ephemeralMessage: { message: { viewOnceMessage: { message: { audioMessage: PTT } } } },
+      }),
+    ).toBeNull();
+  });
+
+  it('ignores audio that is not a voice note, wrapped or not', () => {
+    expect(voiceNoteContent({ audioMessage: { ptt: false } })).toBeNull();
+    expect(voiceNoteContent({ ephemeralMessage: { message: { audioMessage: {} } } })).toBeNull();
+    expect(voiceNoteContent({ conversation: 'hello' })).toBeNull();
+    expect(voiceNoteContent(null)).toBeNull();
+    expect(voiceNoteContent(undefined)).toBeNull();
+  });
+});
+
+describe('WhatsAppClient inbound', () => {
+  let authDirectory: string;
+
+  beforeEach(async () => {
+    authDirectory = await mkdtemp(join(tmpdir(), 'bloopbox-wa-in-'));
+  });
+
+  afterEach(async () => {
+    await rm(authDirectory, { recursive: true, force: true });
+  });
+
+  async function connected(): Promise<{
+    baileys: ReturnType<typeof fakeBaileys>;
+    client: WhatsAppClient;
+    notes: VoiceNote[];
+  }> {
+    const baileys = fakeBaileys({ paired: true });
+    const client = new WhatsAppClient({
+      authDirectory,
+      logger: silentLogger,
+      socketFactory: baileys.socketFactory,
+      authStateFactory: baileys.authStateFactory,
+      versionProvider: baileys.versionProvider,
+      download: baileys.download,
+    });
+    const notes: VoiceNote[] = [];
+    client.on('voiceNote', (note) => notes.push(note));
+    await client.start();
+    baileys.sockets[0]?.open();
+    return { baileys, client, notes };
+  }
+
+  it('hands a disappearing-chat voice note to the bridge', async () => {
+    const { baileys, notes } = await connected();
+
+    baileys.sockets[0]?.ev.emit('messages.upsert', {
+      type: 'notify',
+      messages: [message({ ephemeralMessage: { message: { audioMessage: PTT } } })],
+    });
+
+    await settle(() => notes.length === 1, 'the note to be emitted');
+    expect(notes[0]).toMatchObject({ messageId: 'ABC123', seconds: 3 });
+  });
+
+  it('does not hand over a view-once note', async () => {
+    const { baileys, notes } = await connected();
+
+    baileys.sockets[0]?.ev.emit('messages.upsert', {
+      type: 'notify',
+      messages: [
+        message({ viewOnceMessage: { message: { audioMessage: PTT } } }, 'VIEWONCE'),
+        message({ audioMessage: PTT }, 'PLAIN'),
+      ],
+    });
+
+    await settle(() => notes.length === 1, 'the plain note to be emitted');
+    expect(notes.map((note) => note.messageId)).toEqual(['PLAIN']);
+  });
+});

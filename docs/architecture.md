@@ -623,6 +623,13 @@ serves has always been reachable on `:80`, and the address a parent is given is 
 development proxy and the smoke test use, and it is the fallback on a box where the privileged bind
 did not happen.
 
+**Socket.io answers on both.** It used to be attached to `:3000` only, so at `http://bloopbox.local/`
+the panel's live status never connected. `serveSocketsOn` (`src/server/socketListeners.ts`) attaches
+the one engine to the portal listener as well, rather than calling `io.attach()` a second time —
+that builds a second engine and repoints `io.close()` at it, stranding the first listener's
+clients. One engine is one set of namespaces and broadcasts, whichever port a client used; the
+bridge still connects to `:3000`, and the captive portal page still uses none of it.
+
 **`/` is the settings panel**, served (not redirected) from `dist/public/admin/index.html`; Vite
 emits absolute asset paths, so one file works at both `/` and `/admin/`, and the older path keeps
 answering. It used to be a plain 404 — there is no index.html at the static root — which is why the

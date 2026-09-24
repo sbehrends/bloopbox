@@ -45,6 +45,7 @@ import { CpuUsageTracker, readSystemInfo, type StorageTarget } from '../system/s
 import { portalRedirectTarget, shouldRedirectToPortal } from '../server/captivePortal.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
 import { denyFraming } from '../server/csrf.ts';
+import { serveSocketsOn } from '../server/socketListeners.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
 import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
 
@@ -648,6 +649,8 @@ async function main(): Promise<void> {
    */
   const portalServer = PORTAL_PORT > 0 ? createServer(app) : null;
   if (portalServer) {
+    // `http://bloopbox.local/` is this listener, so the panel's live status has to connect here.
+    serveSocketsOn(io, portalServer);
     portalServer.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EACCES' || error.code === 'EADDRINUSE') {
         // Expected off-device: binding 80 needs CAP_NET_BIND_SERVICE, which the systemd unit

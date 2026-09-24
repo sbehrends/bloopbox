@@ -14,8 +14,8 @@
 #      observable change, so you can replay what the lights did) and the raw button edges,
 #      including presses the debouncer discards — "the button did nothing" leaves no other
 #      trace.
-#   2. A persistent journal. Raspberry Pi OS keeps the journal in RAM by default, so **every
-#      log line is lost on reboot** — including the ones explaining the reboot. This is the
+#   2. A persistent journal. bloopbox keeps the journal in RAM (install.sh's 50-bloopbox.conf),
+#      so **every log line is lost on reboot** — including the ones explaining the reboot. This is the
 #      single most valuable thing here and the reason the mode exists.
 #   3. A sampler recording what the device *is*, every 10s, as JSON Lines: memory per unit,
 #      temperature, throttling, the network reading, the device's own status.
@@ -31,7 +31,13 @@ ETC_DIR="${ETC_DIR:-/etc/bloopbox}"
 ENVIRONMENT="${ETC_DIR}/environment"
 DEADLINE_FILE="${ETC_DIR}/debug-until"
 TRACE_DIR="${DEBUG_TRACE_DIR:-/var/log/bloopbox}"
-JOURNAL_DROPIN=/etc/systemd/journald.conf.d/10-bloopbox-debug.conf
+# 90-, so it sorts after install.sh's 50-bloopbox.conf (Storage=volatile) and wins: journald
+# applies every drop-in in file-name order and the last assignment stands. Neither file edits the
+# other — turning this mode on and off is adding and removing this one.
+JOURNAL_DROPIN=/etc/systemd/journald.conf.d/90-bloopbox-debug.conf
+# What releases before 2026-09-24 called it. It sorts before 50-bloopbox.conf and would lose to
+# it, so it is removed wherever it is found.
+LEGACY_JOURNAL_DROPIN=/etc/systemd/journald.conf.d/10-bloopbox-debug.conf
 SAMPLER=bloopbox-debug-sampler.service
 UNITS=(bloopbox-hardware.service bloopbox-whatsapp.service)
 
@@ -91,11 +97,13 @@ case "${ACTION}" in
     # Without this the journal lives in /run and dies with the boot. The cap matters as much
     # as the persistence: this is an SD card, and an uncapped journal fills it.
     install -d -m 0755 /etc/systemd/journald.conf.d
+    rm -f "${LEGACY_JOURNAL_DROPIN}"
     cat > "${JOURNAL_DROPIN}" <<'EOF'
 # Written by `bloopbox-debug on`. Removed by `bloopbox-debug off --purge`.
 #
-# Pi OS keeps the journal in RAM, so a reboot takes the evidence with it. During bring-up
-# that is exactly backwards: the reboot is usually the thing being investigated.
+# The journal normally lives in RAM (50-bloopbox.conf, from install.sh), so a reboot takes
+# the evidence with it. During bring-up that is exactly backwards: the reboot is usually the
+# thing being investigated. This file sorts after that one, so its Storage= wins.
 [Journal]
 Storage=persistent
 SystemMaxUse=128M
@@ -145,7 +153,9 @@ EOF
       # Only on request. Turning debug mode off is what you do *before* reading the history,
       # so deleting it here by default would throw away the entire point of having collected
       # it.
-      rm -f "${JOURNAL_DROPIN}" "${TRACE_DIR}"/trace.jsonl*
+      # Removing the drop-in is the whole of "back to RAM": install.sh's 50-bloopbox.conf,
+      # which this one was overriding, takes over again at the journald restart below.
+      rm -f "${JOURNAL_DROPIN}" "${LEGACY_JOURNAL_DROPIN}" "${TRACE_DIR}"/trace.jsonl*
       systemctl restart systemd-journald 2>/dev/null
       journalctl --vacuum-time=1s >/dev/null 2>&1
       rm -rf /var/log/journal
@@ -172,7 +182,9 @@ EOF
     else
       printf 'expires       (no deadline set)\n'
     fi
-    if [[ -d /var/log/journal ]]; then
+    # Asked of the drop-in, not of /var/log/journal: plain Debian creates that directory on its
+    # own, and with 50-bloopbox.conf's Storage=volatile its mere existence persists nothing.
+    if [[ -f "${JOURNAL_DROPIN}" || -f "${LEGACY_JOURNAL_DROPIN}" ]]; then
       printf 'journal       persistent, %s\n' "$(journalctl --disk-usage 2>/dev/null | sed 's/^.*take up //')"
     else
       printf 'journal       volatile (RAM) — lost on reboot\n'

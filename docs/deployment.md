@@ -366,7 +366,16 @@ that `nmcli` and dnsmasq are installed.
 
 ## When something is wrong
 
-`sudo bloopbox-debug on` makes the journal survive reboots (Pi OS keeps it in RAM by default,
+**The journal lives in RAM, on purpose.** `install.sh` pins it with
+`/etc/systemd/journald.conf.d/50-bloopbox.conf` (`Storage=volatile`, `RuntimeMaxUse=8M` — small
+because `/run` is one tmpfs and the recordings live there too) rather than trusting whatever the OS
+image defaults to: plain Debian's `auto` turns persistent the moment `/var/log/journal` exists, and
+this is an SD card. Debug mode's drop-in is `90-bloopbox-debug.conf`, so it sorts after that file and
+its `Storage=persistent` wins while it exists; removing it (`off --purge`) is the whole of "back to
+RAM". Neither file ever edits the other. Before 2026-09-24 debug mode wrote `10-bloopbox-debug.conf`,
+which would now lose to `50-`; `install.sh` renames a leftover one and `debug-mode.sh` deletes it.
+
+`sudo bloopbox-debug on` makes the journal survive reboots (normally it is in RAM, as above,
 which loses exactly the logs that explain a restart), raises both daemons to debug level, and
 starts a 10s sampler writing `/var/log/bloopbox/trace.jsonl`. It expires after 24h on its own.
 Then `sudo bloopbox-diagnostics` bundles all of it — journals, trace, every `nmcli` view, the

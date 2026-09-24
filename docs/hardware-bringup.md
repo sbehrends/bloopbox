@@ -123,6 +123,18 @@ must come back every time (`NRestarts` climbs, the state never reads `failed`), 
 sixth save on it should take about 5 s longer to return than the first — that is the backoff cap,
 and the counter only resets at boot.
 
+And the journal settings (also 2026-09-24):
+
+```bash
+ssh bloop@bloopbox.local 'systemd-analyze cat-config systemd/journald.conf | grep -E "^# /|^Storage|^RuntimeMaxUse"'
+```
+
+**Pass:** `50-bloopbox.conf` is listed with `Storage=volatile` and `RuntimeMaxUse=8M`, and — once
+`bloopbox-debug on` has run — `90-bloopbox-debug.conf` after it with `Storage=persistent`. Note
+whether any vendor drop-in appears (Pi OS has been said to ship one; nobody has looked on Trixie).
+If one sorts **after** `90-`, debug mode's persistent journal is silently overridden and has been all
+along, and the names need moving again.
+
 ---
 
 ## Gate 2 — the network agent (new, and the foundation for everything below)

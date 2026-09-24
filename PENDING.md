@@ -837,6 +837,18 @@ knowing more generally: the tripwire's "this bit three separate checks during br
 suggests a loud failure, but the dangerous version is this one — silent, passing, and waiting on
 a payload size.
 
+### A raw 64-hex Wi-Fi key gets through the agent, and nothing else lets it through yet
+
+Found 2026-09-24 (review Phase 1, Deploy). WPA2 takes either an 8-63 character passphrase or the
+64-hex-character key itself. `deploy/net-agent.sh` used to cut every `psk` at 63, turning a correct
+raw key into a wrong passphrase; it now passes exactly 64 hex characters through whole, and
+`scripts/test-onboarding.sh` step 9 proves it. But everything upstream still caps at 63 —
+`POST /api/wifi/join` in `src/server/routes.ts`, `wifiSchema.password` in `src/config/schema.ts`
+(so `wifi-apply.sh` never sees one either) and both `maxlength="63"` inputs in the portal and the
+admin panel — so today a raw key reaches the agent only in a hand-written request. Allowing it end to
+end is four small edits (accept `^[0-9A-Fa-f]{64}$` beside `.max(63)`), left for whoever next
+touches the join route rather than done blind across files another change is editing.
+
 ## Verification gaps
 
 These are things built but not proven. Not bugs — just claims that have not been tested.

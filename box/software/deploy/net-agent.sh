@@ -358,7 +358,10 @@ consume_request() {
       console.log(id);
       console.log(/^[a-z-]{1,16}$/.test(action) ? action : "");
       console.log(line(parsed?.ssid).slice(0, 32));
-      console.log(line(parsed?.psk).slice(0, 63));
+      // 8-63 characters is a passphrase; exactly 64 hex characters is the raw PSK itself,
+      // which NetworkManager takes as well. Truncating that to 63 made it a wrong passphrase.
+      const psk = line(parsed?.psk);
+      console.log(/^[0-9A-Fa-f]{64}$/.test(psk) ? psk : psk.slice(0, 63));
     } catch { blank(); }
   ' "${REQUEST_FILE}" 2>/dev/null)
   id="${parsed[0]:-}"
@@ -457,13 +460,41 @@ handled_json() {
   if [[ -n "${HANDLED_ID}" ]]; then json_string "${HANDLED_ID}"; else printf 'null'; fi
 }
 
+# The control characters JSON forbids raw inside a string, each beside its \u escape. Built
+# once rather than per call. U+0001 to U+001F only: NUL cannot be held in a bash string at all,
+# so it never reaches json_string.
+JSON_CONTROL_CHARS=()
+JSON_CONTROL_ESCAPES=()
+for code in {1..31}; do
+  # printf -v, not $(...): command substitution strips a trailing newline, which would turn
+  # U+000A into an empty pattern.
+  printf -v char '%b' "\\0$(printf '%03o' "${code}")"
+  printf -v escape '\\u%04x' "${code}"
+  JSON_CONTROL_CHARS+=("${char}")
+  JSON_CONTROL_ESCAPES+=("${escape}")
+done
+unset code char escape
+
+# A JSON string literal for any value bash can hold.
+#
+# Not just `\` and `"`, and this is not pedantry. An SSID is arbitrary bytes chosen by whoever
+# owns the router next door, and the scan list publishes every one in range. A single raw tab or
+# newline in one of them used to make the whole of net-state.json unparseable, which the daemon
+# reads as "unknown" — and unknown never raises the setup hotspot. A stranger's router name
+# could switch off this device's only recovery path. scripts/test-onboarding.sh scans an SSID
+# with a tab in it to keep this true.
+#
+# Bytes that are not valid UTF-8 are passed through: the daemon decodes the file as UTF-8,
+# which turns them into U+FFFD rather than failing the parse.
 json_string() {
-  # Escapes the two characters that can appear in an SSID and break JSON. SSIDs are
-  # arbitrary bytes; anything more exotic than this is not worth a shell JSON encoder,
-  # and the daemon treats an unparseable file as "unknown" rather than as an outage.
-  local value="$1"
+  local value="$1" i
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
+  for i in "${!JSON_CONTROL_CHARS[@]}"; do
+    # Replacement quoted: bash 5.2's patsub_replacement gives an unquoted one's backslashes
+    # and ampersands meaning.
+    value="${value//"${JSON_CONTROL_CHARS[i]}"/"${JSON_CONTROL_ESCAPES[i]}"}"
+  done
   printf '"%s"' "${value}"
 }
 

@@ -17,6 +17,7 @@ import { BRIDGE_AUTH_HEADER, BRIDGE_NAMESPACE } from '../ipc/events.ts';
 import { readButtonIndex, readString } from '../ipc/payload.ts';
 import { childLogger } from '../logger.ts';
 import { WhatsAppClient, type VoiceNote } from '../whatsapp/client.ts';
+import { HoldUntilReady } from '../whatsapp/holdUntilReady.ts';
 import { Whitelist, type AllowedTarget } from '../whatsapp/whitelist.ts';
 
 const log = childLogger('whatsapp');
@@ -36,6 +37,11 @@ const HARDWARE_URL = process.env['HARDWARE_URL'] ?? 'http://localhost:3000';
 
 /** Keys of messages played but not yet acknowledged upstream, so we can mark them read. */
 const MAX_TRACKED_MESSAGES = 200;
+/**
+ * Voice notes held until the first contact list arrives — see `whatsapp/holdUntilReady.ts`.
+ * Far above any real offline backlog for three buttons, and small enough not to matter in RAM.
+ */
+const MAX_NOTES_BEFORE_WHITELIST = 50;
 
 async function main(): Promise<void> {
   const whitelist = new Whitelist();
@@ -43,6 +49,23 @@ async function main(): Promise<void> {
   const pendingReads = new Map<string, VoiceNote['raw']['key']>();
 
   const client = new WhatsAppClient({ authDirectory: AUTH_DIRECTORY, logger: log });
+
+  /*
+   * Opened by the first contact list, and never closed again: after that the whitelist is only
+   * ever replaced, and an empty list is still a real answer ("nobody is assigned").
+   */
+  const inbound = new HoldUntilReady<VoiceNote>({
+    handle: (note) => {
+      void handleVoiceNote(note);
+    },
+    capacity: MAX_NOTES_BEFORE_WHITELIST,
+    onOverflow: (note) => {
+      log.warn(
+        { messageId: note.messageId },
+        'dropped a voice note: too many before the whitelist',
+      );
+    },
+  });
 
   const socket: Socket = io(`${HARDWARE_URL}${BRIDGE_NAMESPACE}`, {
     transports: ['websocket'],
@@ -69,6 +92,10 @@ async function main(): Promise<void> {
     const targets = readTargets(payload);
     whitelist.replace(targets);
     log.info({ count: targets.length, jids: whitelist.jids() }, 'whitelist updated');
+    if (!inbound.ready && inbound.heldCount > 0) {
+      log.info({ count: inbound.heldCount }, 'evaluating voice notes that arrived before it');
+    }
+    inbound.open();
   });
 
   socket.on('wa:send', (payload: unknown) => {
@@ -138,7 +165,7 @@ async function main(): Promise<void> {
   });
 
   client.on('voiceNote', (note) => {
-    void handleVoiceNote(note);
+    inbound.push(note);
   });
 
   /**

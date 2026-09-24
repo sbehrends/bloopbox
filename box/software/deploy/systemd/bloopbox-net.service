@@ -8,6 +8,8 @@ Wants=NetworkManager.service
 # Not Before= the hardware unit: the daemon treats a missing reading as "unknown" and boots
 # perfectly well without one, so making it wait would buy nothing and could hold up the
 # buttons.
+# Never give up; the backoff below paces it instead. See bloopbox-hardware.service.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -15,6 +17,10 @@ ExecStart=@PREFIX@/deploy/net-agent.sh
 
 Restart=always
 RestartSec=5
+# Capped at 15s, under the daemon's 30s NET_STATE_MAX_AGE_MS: past that its reading goes stale,
+# the daemon reads Wi-Fi as unknown, and unknown never raises the setup hotspot.
+RestartSteps=3
+RestartMaxDelaySec=15s
 
 # Its own directory, root-owned and world-readable, deliberately separate from the daemon's
 # /run/bloopbox: this unit must never end up owning the recordings tmpfs.

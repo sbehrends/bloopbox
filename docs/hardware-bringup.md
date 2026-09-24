@@ -107,6 +107,22 @@ If something fails with a permission error rather than wrong behaviour, comment 
 hardening block in `deploy/systemd/bloopbox-hardware.service` before suspecting the code —
 `ProtectSystem=strict` and friends have never run against real GPIO or ALSA either.
 
+Then the restart and OOM policy (added 2026-09-24; checked with `systemd-analyze verify` on
+Debian's systemd 257.13 in a container, never on the device):
+
+```bash
+ssh bloop@bloopbox.local 'systemctl show bloopbox-hardware bloopbox-whatsapp bloopbox-net \
+  -p Id -p StartLimitIntervalUSec -p RestartSteps -p RestartMaxDelayUSec -p NRestarts'
+ssh bloop@bloopbox.local 'for p in $(pgrep -f dist/processes); do echo "$(cat /proc/$p/oom_score_adj) $(tr "\0" " " < /proc/$p/cmdline)"; done'
+```
+
+**Pass:** `StartLimitIntervalUSec=0` on all three; `RestartSteps` 5/5/3 and
+`RestartMaxDelayUSec` 5s/1min/15s; `oom_score_adj` `-500` for `hardware-server.js` and `300` for
+`whatsapp-bridge.js`. Then save any setting six times in a row from the admin panel: the unit
+must come back every time (`NRestarts` climbs, the state never reads `failed`), and from the
+sixth save on it should take about 5 s longer to return than the first — that is the backoff cap,
+and the counter only resets at boot.
+
 ---
 
 ## Gate 2 — the network agent (new, and the foundation for everything below)

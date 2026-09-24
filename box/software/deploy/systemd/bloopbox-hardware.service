@@ -7,6 +7,11 @@ After=network.target sound.target
 # Not Requires=: the buttons and the LED error patterns are exactly what should still work
 # when the network is down.
 Wants=network-online.target
+# Never give up. The default start limit (5 starts in 10s) counts the deliberate exit-on-save
+# below exactly like a crash, so a parent saving a few settings in quick succession — or one
+# bad boot — could leave this unit `failed` until somebody power-cycled the box. The backoff
+# further down is what keeps a real crash loop from spinning instead.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -36,7 +41,23 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 # that clean exit back into a running device, and covers a crash identically.
 Restart=always
 RestartSec=1
+# Backed off, but only to 5s. systemd (254+) grows the delay from RestartSec to
+# RestartMaxDelaySec over RestartSteps restarts — and its counter only resets on a manual
+# start or `systemctl reset-failed`, never after a stretch of healthy running. Every settings
+# save is one of those restarts, so the cap is also what every save costs once a boot has seen
+# five of them. A long cap would make the admin panel slow for the rest of the boot; 5s keeps
+# a crash loop to a fraction of a core without that. The sd_notify RESTART_RESET=1 that would
+# let a healthy daemon reset the ladder is newer than Trixie's systemd 257 (checked: 257.13 has
+# no such string), so on this OS the ladder resets at boot and nowhere else.
+RestartSteps=5
+RestartMaxDelaySec=5s
 TimeoutStopSec=10
+
+# When the kernel has to kill something, it must not be this. A dead bridge is a device that
+# is offline for WhatsApp; a dead hardware daemon is three dark buttons in a child's room.
+# Relative to bloopbox-whatsapp's +300. Deliberately not -1000: the kernel must still be able
+# to kill a runaway leak in here rather than the rest of the system.
+OOMScoreAdjust=-500
 
 # Recordings live in RAM and must not survive a power cut. /run is already a tmpfs, so
 # this needs no mount unit: systemd creates /run/bloopbox owned by the service user.

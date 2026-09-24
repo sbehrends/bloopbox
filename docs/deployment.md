@@ -392,6 +392,18 @@ Decisions worth knowing:
 - **`Restart=always` is load-bearing.** Saving a setting makes the hardware server exit 0 on
   purpose so the new config is read at startup. Without `Restart=always` a settings save would
   simply switch the device off.
+- **No start limit, and a backed-off restart instead.** systemd's default gives up after 5 starts
+  in 10 s and counts a deliberate exit-on-save exactly like a crash, so a few quick saves could
+  leave the hardware unit `failed` until a power cycle. All three long-running units set
+  `StartLimitIntervalSec=0` and grow the delay with `RestartSteps=` / `RestartMaxDelaySec=`
+  (systemd 254+; Trixie ships 257). The caps differ on purpose: **5 s for the hardware unit**,
+  because systemd's restart counter never resets while the unit keeps coming back — only at boot or
+  on `reset-failed` — so the cap is what every settings save costs once a boot has seen five; a
+  minute for the bridge, which no save restarts; 15 s for the net agent, under the daemon's 30 s
+  staleness limit.
+- **`OOMScoreAdjust`: the bridge dies first.** `-500` on the hardware unit, `+300` on the bridge.
+  Their `MemoryMax` values add up to more than a 512 MB board has, so a real out-of-memory is
+  possible, and the process the box survives losing is the one that reconnects.
 - **Recordings go in `/run/bloopbox`**, via `RuntimeDirectory=` in both units. `/run` is
   already a tmpfs, so audio lives in RAM with no mount unit and no fstab entry, and cannot
   survive a power cut or fill the card. `RuntimeDirectoryPreserve=yes` keeps it across the

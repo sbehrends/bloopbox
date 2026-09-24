@@ -849,6 +849,56 @@ admin panel — so today a raw key reaches the agent only in a hand-written requ
 end is four small edits (accept `^[0-9A-Fa-f]{64}$` beside `.max(63)`), left for whoever next
 touches the join route rather than done blind across files another change is editing.
 
+### The units' `MemoryMax` values add up to more than the board has
+
+`MemoryMax` is 192M (hardware) + 288M (bridge) + 48M (net agent) + 48M (debug sampler) = 576M, on a
+Pi Zero 2 W with 512 MB — before the kernel, NetworkManager, journald and the page cache take theirs.
+So the caps cannot all be reached at once, and a real system-wide out-of-memory is possible below
+every one of them. Since 2026-09-24 the units say who dies first when that happens
+(`OOMScoreAdjust=-500` on the hardware unit, `+300` on the bridge — `docs/deployment.md` § The
+systemd units), but the values themselves are **unchanged on purpose**: they are guesses
+(`hardware-bringup.md` says so), and lowering them without a measurement would trade an unlikely
+OOM for a likely one. Measure first — debug mode's sampler records `memHardware` and `memWhatsapp`
+every 10 s, and the peak across a WhatsApp pairing plus a few inbound notes is the number to size
+from. Needs the memory cgroup controller actually on (`grep -o cgroup_enable=memory /proc/cmdline`),
+or none of this is enforced at all.
+
+### No liveness: a wedged daemon stays "active" forever
+
+Deliberately **not** done blind (review 2026-09, Phase 1, Deploy): switching a unit to
+`Type=notify` on a device that has never booted it risks a unit that never becomes active at all —
+if `READY=1` never arrives, systemd kills it at `TimeoutStartSec` and restarts it, forever. Today a
+daemon whose event loop is stuck (a sync loop, a wedged native call) keeps its unit `active`, the
+buttons dark, and nothing notices. `RuntimeWatchdogSec=15s` in `system.conf.d` covers a wedged
+kernel, not a wedged process.
+
+The design, for hardware bring-up (gate 1, once the plain units are proven):
+
+- **`Type=notify`, `NotifyAccess=all`, `WatchdogSec=30`** on `bloopbox-hardware` (and later the
+  bridge). `all` rather than `main` because of how the message is sent — next point.
+- **Sending it from Node with no native addon.** Node's `dgram` has no `AF_UNIX` datagram socket,
+  and every npm `sd-notify` is a native module, which this project avoids for anything that is not
+  opengpio. So spawn systemd's own `systemd-notify` (present on Trixie, 257):
+  `execFile('systemd-notify', ['--ready'])` and `execFile('systemd-notify', ['WATCHDOG=1'])`. The
+  child is not the main PID, hence `NotifyAccess=all`. 257's `systemd-notify` waits for the manager
+  to process the message by default (its `--help` offers `--no-block` to opt out), which is what
+  closes the old race where a short-lived sender exited before systemd could attribute it to the
+  unit — confirm that on the device, it is the assumption the whole design rests on. Guard every call on
+  `process.env.NOTIFY_SOCKET` so a dev machine and `npm run dev:hw` never spawn anything.
+- **`READY=1` after the HAL is initialised** and the HTTP server is listening — not at process
+  start — so "active" finally means "buttons answer".
+- **`WATCHDOG=1` from the event loop** on a `setInterval` of `WatchdogSec / 2` (read
+  `WATCHDOG_USEC` rather than hard-coding it), `unref()`'d. A timer is exactly the right probe: if it
+  cannot fire, the loop that times button presses cannot either. One spawn per 15 s is noise on this
+  board.
+- **Also wanted from it, not available on this OS:** `RESTART_RESET=1`, which would let a daemon that
+  has been healthy a while reset the `RestartSteps` ladder, so that settings saves late in a boot stop
+  paying the 5 s cap. It is newer than Trixie's systemd 257 — checked 2026-09-24: no
+  `RESTART_RESET` anywhere in 257.13's binaries.
+- **Verify on the device before trusting it:** `systemctl show bloopbox-hardware -p WatchdogUSec
+  -p NotifyAccess`, then `kill -STOP` the node process and watch systemd kill and restart it within
+  ~30 s (`journalctl -u bloopbox-hardware` shows `Watchdog timeout`).
+
 ## Verification gaps
 
 These are things built but not proven. Not bugs — just claims that have not been tested.

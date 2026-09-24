@@ -763,7 +763,14 @@ fresh delivery and one restored at boot, and it is not awaited. `GpioHal` writes
   it sweeps `.wav` by age and the decode is exactly as old as its note. `play()` therefore checks the
   file on disk, not just its own map.
 - **`release()` is called when the note's file is deleted**, from `#deletePlayed`, because the decode
-  is derived data with nothing left to derive from.
+  is derived data with nothing left to derive from. A release that lands while that note's decode is
+  still running is remembered, and the decode deletes its own output when it finishes. Before this,
+  the WAV of a note already heard stayed in the RAM disk.
+- **One decode per note at a time.** `prepare()` and `play()` write the same `play-<stem>.wav`, so
+  `GpioHal` keeps a map of which notes' files are in use (`#decoding`) and anyone who finds an entry
+  waits for it. A tap during the arrival decode waits for that decode rather than starting a second
+  ffmpeg over it, and an arrival decode waits for a tap's temporary copy to be played and deleted.
+  Before this, two writers shared one file and one could delete it under the other's `aplay`.
 - **16 kHz mono** (`PLAYBACK_DECODING`), not Opus's internal 48 kHz: the note arrived at 16 kHz, and
   three times the RAM disk for the same speech is not a trade worth making in a tmpfs measured in
   tens of megabytes.

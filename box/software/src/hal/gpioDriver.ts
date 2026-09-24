@@ -187,6 +187,22 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   readonly #decoded = new Map<string, string>();
   /** Serialises `prepare()`, so a boot's worth of notes is one decode at a time. */
   #prepareQueue: Promise<void> = Promise.resolve();
+  /**
+   * Note path -> settles when nothing is using its `play-<stem>.wav` any more.
+   *
+   * `prepare()` and `play()` decode a note into the **same** file, and nothing used to stop
+   * them doing it at once: a tap on a note whose arrival decode was still running started a
+   * second ffmpeg writing over the first, and one of them then deleted the file under the
+   * other's `aplay`. Whoever finds an entry here waits for it before touching that file. Never
+   * rejects.
+   */
+  readonly #decoding = new Map<string, Promise<void>>();
+  /**
+   * Notes released while their `prepare()` decode was still running. `release()` cannot remove
+   * a file that is still being written, so the decode removes its own output when it lands —
+   * otherwise the WAV of a note already heard and deleted stayed in the RAM disk.
+   */
+  readonly #releasedMidDecode = new Set<string>();
 
   #captureProcess: ChildProcess | null = null;
   #captureId: string | null = null;
@@ -263,7 +279,9 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     await this.#stopCapture();
 
     // Prepared decodes are derived data, and a restart re-derives them from the notes.
-    await Promise.all([...this.#decoded.keys()].map(async (path) => this.release(path)));
+    await Promise.all(
+      [...this.#decoded.keys(), ...this.#decoding.keys()].map(async (path) => this.release(path)),
+    );
 
     // Contract: dispose leaves every LED off — before releasing the lines.
     for (const index of [0, 1, 2] as const) this.setLed(index, false);
@@ -368,6 +386,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   async prepare(path: string): Promise<void> {
     if (APLAY_CONTAINERS.has(extname(path).toLowerCase())) return;
     if (this.#decoded.has(path)) return;
+    // Asked for again, so wanted again: a release that raced an earlier decode no longer holds.
+    this.#releasedMidDecode.delete(path);
 
     /*
      * One at a time. Boot recovery restores every unread note at once, and a dozen concurrent
@@ -380,6 +400,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   /** Drops a prepared decode. Never rejects (HAL contract). */
   async release(path: string): Promise<void> {
+    if (this.#decoding.has(path)) this.#releasedMidDecode.add(path);
     const decodedPath = this.#decoded.get(path);
     if (decodedPath === undefined) return;
     this.#decoded.delete(path);
@@ -398,6 +419,16 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
       return this.#spawnPlayback(path);
     }
 
+    const epoch = this.#playbackEpoch;
+
+    /*
+     * A decode already writing this note's WAV finishes first. Usually that is `prepare()`,
+     * still running because the tap came soon after the note arrived — and then waiting for it
+     * is also the fastest way to sound, since it is already partway through.
+     */
+    await this.#fileFree(path);
+    if (epoch !== this.#playbackEpoch) return 'interrupted';
+
     /*
      * Checked on disk, not just in the map: these live in a RAM disk the purge also sweeps,
      * so a note old enough to outlive its own decode still has to play.
@@ -415,7 +446,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
      * an unread message — and `audio/purge.ts` already sweeps `.wav` here.
      */
     const decodedPath = this.#decodedPath(path);
-    const epoch = this.#playbackEpoch;
+    // Held from the decode until the file is gone, so no prepare() writes it in between.
+    const done = this.#claimFile(path);
     try {
       await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter);
       /*
@@ -427,7 +459,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
       if (epoch !== this.#playbackEpoch) return 'interrupted';
       return await this.#spawnPlayback(decodedPath);
     } finally {
-      await rm(decodedPath, { force: true });
+      await rm(decodedPath, { force: true }).finally(done);
     }
   }
 
@@ -608,18 +640,50 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   /** One `prepare()`'s worth of work. Never throws: it is the tail of a shared chain. */
   async #decodeAhead(path: string): Promise<void> {
+    // A `play()` decoding on demand holds the file; its copy is temporary, so this one is not.
+    await this.#fileFree(path);
     // Re-checked here, not only in `prepare()`: two calls for the same note can queue before
     // either has run.
     if (this.#decoded.has(path)) return;
+    if (this.#releasedMidDecode.delete(path)) return;
 
     const decodedPath = this.#decodedPath(path);
+    const done = this.#claimFile(path);
     try {
       await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter);
+      if (this.#releasedMidDecode.delete(path)) {
+        // The note was heard and deleted while this ran; nothing is left to play it for.
+        await rm(decodedPath, { force: true }).catch(() => undefined);
+        return;
+      }
       this.#decoded.set(path, decodedPath);
     } catch {
       // `play()` falls back to decoding on demand, exactly as it did before.
       await rm(decodedPath, { force: true }).catch(() => undefined);
+    } finally {
+      done();
     }
+  }
+
+  /** Waits until nothing is writing or playing a temporary copy of this note's WAV. */
+  async #fileFree(path: string): Promise<void> {
+    // A loop, not one await: whoever was waiting alongside may have claimed it first.
+    for (let busy = this.#decoding.get(path); busy; busy = this.#decoding.get(path)) {
+      await busy;
+    }
+  }
+
+  /** Marks this note's WAV as in use. Call the result exactly once, when finished with it. */
+  #claimFile(path: string): () => void {
+    let free: (() => void) | undefined;
+    const busy = new Promise<void>((resolve) => {
+      free = resolve;
+    });
+    this.#decoding.set(path, busy);
+    return () => {
+      if (this.#decoding.get(path) === busy) this.#decoding.delete(path);
+      free?.();
+    };
   }
 
   #decodedPath(path: string): string {

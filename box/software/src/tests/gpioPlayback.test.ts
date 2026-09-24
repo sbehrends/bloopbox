@@ -270,6 +270,109 @@ describe('prepare', () => {
     expect(decoded).toHaveBeenCalledTimes(3);
   });
 
+  /** Makes the next decode wait until the returned function is called. */
+  function holdNextDecode(): { started: () => boolean; finish: () => void } {
+    let finish: (() => void) | undefined;
+    decoded.mockImplementationOnce(async (_input, output) => {
+      await writeFile(output, '');
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    return { started: () => finish !== undefined, finish: () => finish?.() };
+  }
+
+  describe('one decode per note at a time', () => {
+    /*
+     * prepare() and play() write the same play-<stem>.wav. A tap soon after an arrival used to
+     * start a second ffmpeg over the first, and one of them then deleted the file under the
+     * other's aplay.
+     */
+    it('a tap during the arrival decode waits for it instead of decoding again', async () => {
+      const note = join(directory, 'wa-0-RACE01.ogg');
+      await writeFile(note, '');
+      const hold = holdNextDecode();
+      const hal = await makeHal();
+
+      const preparing = hal.prepare(note);
+      await vi.waitFor(() => expect(hold.started()).toBe(true));
+      const playing = hal.play(note);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(decoded).toHaveBeenCalledOnce();
+      expect(spawned.some(({ command }) => command === 'aplay')).toBe(false);
+
+      hold.finish();
+      await preparing;
+
+      await expect(playing).resolves.toBe('completed');
+      expect(decoded).toHaveBeenCalledOnce();
+      const played = spawned.find(({ command }) => command === 'aplay');
+      expect(played?.args).toContain(join(directory, 'play-wa-0-RACE01.wav'));
+    });
+
+    it('an arrival decode waits for a tap that is already decoding the same note', async () => {
+      const note = join(directory, 'wa-1-RACE02.ogg');
+      await writeFile(note, '');
+      const hold = holdNextDecode();
+      const hal = await makeHal();
+
+      const playing = hal.play(note);
+      await vi.waitFor(() => expect(hold.started()).toBe(true));
+      const preparing = hal.prepare(note);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(decoded).toHaveBeenCalledOnce();
+
+      hold.finish();
+      await expect(playing).resolves.toBe('completed');
+      await preparing;
+
+      // The tap's copy was temporary and is gone; the arrival's is kept for the next listen.
+      expect(decoded).toHaveBeenCalledTimes(2);
+      const { readdir } = await import('node:fs/promises');
+      expect((await readdir(directory)).toSorted()).toEqual([
+        'play-wa-1-RACE02.wav',
+        'wa-1-RACE02.ogg',
+      ]);
+    });
+
+    it('a stop while the tap waits on the arrival decode still counts as interrupted', async () => {
+      const note = join(directory, 'wa-2-RACE03.ogg');
+      await writeFile(note, '');
+      const hold = holdNextDecode();
+      const hal = await makeHal();
+
+      const preparing = hal.prepare(note);
+      await vi.waitFor(() => expect(hold.started()).toBe(true));
+      const playing = hal.play(note);
+      // Past play()'s own opening stop, so this is the button press that interrupts the wait.
+      await new Promise((resolve) => setImmediate(resolve));
+      await hal.stopPlayback();
+      hold.finish();
+      await preparing;
+
+      await expect(playing).resolves.toBe('interrupted');
+      expect(spawned.some(({ command }) => command === 'aplay')).toBe(false);
+    });
+  });
+
+  it('release() during the decode still removes the WAV once the decode lands', async () => {
+    // The note was heard and deleted while its arrival decode was running; the decode used to
+    // land afterwards and leave its WAV in the RAM disk for good.
+    const note = join(directory, 'wa-0-LATE01.ogg');
+    await writeFile(note, '');
+    const hold = holdNextDecode();
+    const hal = await makeHal();
+
+    const preparing = hal.prepare(note);
+    await vi.waitFor(() => expect(hold.started()).toBe(true));
+    await hal.release(note);
+    hold.finish();
+    await preparing;
+
+    const { readdir } = await import('node:fs/promises');
+    expect(await readdir(directory)).toEqual(['wa-0-LATE01.ogg']);
+  });
+
   it('release() frees the decode once the note it came from is gone', async () => {
     const note = join(directory, 'wa-1-YZA567.ogg');
     await writeFile(note, '');

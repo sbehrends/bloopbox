@@ -571,6 +571,17 @@ make the device recoverable only by pulling the SD card. Both halves are pinned 
 [`src/tests/adminAuth.test.ts`](../box/software/src/tests/adminAuth.test.ts); the watch item in `PENDING.md` has
 the full reasoning.
 
+**bcrypt runs once per browser, not once per request.** A check costs ~300 ms on a Zero 2 W, on
+the same event loop that times the child's button presses, and the panel sends its saved
+credentials with every request — several at once on a page load. `AdminAuthenticator` in
+`src/server/auth.ts` remembers a success for `ADMIN_AUTH_CACHE_TTL_MS` (5 min), keyed on
+SHA-256 of the `Authorization` header and the stored hash, so a new password invalidates every
+entry without any explicit flush; identical headers in flight share one verification. Wrong
+passwords draw on a **global** token bucket (`ADMIN_AUTH_FAILURE_BURST` = 5, one back every 12 s):
+once it is spent an uncached header gets **429 with `Retry-After`** and no bcrypt at all. Global
+rather than per address because the LAN offers no identity worth trusting; the cache is consulted
+first, so a panel that is already signed in keeps working through somebody else's guessing.
+
 `GET /api/stats`, `POST /api/stats/reset`, `GET /api/system` and `POST /api/system/power` are all
 admin-gated, and each for a concrete reason rather than by default: the totals name the family's
 contacts, the health reading names the network the box sits on, and the last one can turn the device

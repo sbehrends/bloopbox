@@ -164,6 +164,10 @@ accepted risk**, because the guard cannot tell that state from mid-onboarding an
 would make the device recoverable only by pulling the SD card. Both halves are pinned by
 `src/tests/adminAuth.test.ts`; the watch item in `PENDING.md` has the reasoning.
 
+**Never call `verifyAdminPassword` per request.** bcrypt is ~300 ms on the Pi, on the loop that
+times button presses; `requireAdmin` goes through `AdminAuthenticator` (5 min success cache, global
+failure budget → 429). Its constants are exported and tested with an injected clock.
+
 **`/` is the settings panel and `:80` is the same app, not a second one.** The root route is
 `sendFile` of `dist/public/admin/index.html` and sits *after* the captive-portal middleware, so the
 hotspot still owns `/` during onboarding — that ordering is the safety property, and

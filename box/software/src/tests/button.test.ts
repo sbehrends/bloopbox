@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ButtonInterpreter, type CancelReason } from '../core/buttonInterpreter.ts';
+import { ButtonInterpreter, stuckPressMs, type CancelReason } from '../core/buttonInterpreter.ts';
 import { DEFAULT_BUTTON_TIMINGS, type ButtonIndex, type ButtonTimings } from '../config/schema.ts';
 
 /**
@@ -39,6 +39,7 @@ function setup(
     maxRecordingSeconds?: number;
     timings?: Partial<ButtonTimings>;
     readOnly?: boolean;
+    listeningTo?: () => ButtonIndex | null;
   } = {},
 ) {
   const unread = new Set(options.unread ?? []);
@@ -47,6 +48,7 @@ function setup(
     maxRecordingSeconds: options.maxRecordingSeconds ?? 30,
     hasUnread: (index) => unread.has(index),
     readOnly: options.readOnly ?? false,
+    ...(options.listeningTo ? { listeningTo: options.listeningTo } : {}),
   });
 
   const log: Recorded[] = [];
@@ -854,17 +856,9 @@ describe('lockout — one button owns the box', () => {
 
   it('ignores the other buttons while a queue is playing', () => {
     let listening: ButtonIndex | null = 0;
-    const interpreter = new ButtonInterpreter({
-      timings: DEFAULT_BUTTON_TIMINGS,
-      maxRecordingSeconds: 30,
-      hasUnread: () => false,
-      listeningTo: () => listening,
-    });
-    const events: string[] = [];
-    interpreter.on('pressVisualOn', () => events.push('pressVisualOn'));
-    interpreter.on('captureConfirmed', () => events.push('captureConfirmed'));
-    interpreter.on('cancelBeep', () => events.push('cancelBeep'));
-    interpreter.on('toggleSilent', () => events.push('toggleSilent'));
+    // Through setup(), so the assertion below sees every event the interpreter can emit, not a
+    // hand-picked four: a stray recordBlocked or playQueue would slip past a partial list.
+    const { interpreter, names } = setup({ listeningTo: () => listening });
 
     interpreter.handleButtonDown(1);
     vi.advanceTimersByTime(HOLD_MS);
@@ -876,7 +870,7 @@ describe('lockout — one button owns the box', () => {
     listening = null;
     vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(2);
-    expect(events).toEqual([]);
+    expect(names()).toEqual([]);
 
     // Once it is over, every button is free again.
     interpreter.handleButtonDown(1);
@@ -884,12 +878,7 @@ describe('lockout — one button owns the box', () => {
   });
 
   it('leaves the playing button on its ordinary path', () => {
-    const interpreter = new ButtonInterpreter({
-      timings: DEFAULT_BUTTON_TIMINGS,
-      maxRecordingSeconds: 30,
-      hasUnread: () => true,
-      listeningTo: () => 0,
-    });
+    const { interpreter } = setup({ unread: [0], listeningTo: () => 0 });
 
     interpreter.handleButtonDown(0);
     expect(interpreter.isPressed(0)).toBe(true);
@@ -934,6 +923,79 @@ describe('robustness', () => {
 
     expect(names()).not.toContain('captureCommit');
     expect(interpreter.hasActivePress).toBe(false);
+  });
+
+  /*
+   * A lost release edge. Only a button-up ends a press that opened no microphone, and under the
+   * lockout that press silences the other two buttons — so one missed edge, on a GPIO driver that
+   * has never run on hardware, would freeze the whole box. The watchdog drops such a press once
+   * it has been down longer than any real press can be.
+   */
+  describe('a press whose release never arrives', () => {
+    const STUCK_MS = stuckPressMs(DEFAULT_BUTTON_TIMINGS, 30);
+
+    it('is dropped silently, and the other buttons work again', () => {
+      // Notes waiting on button 0: its hold withholds the microphone and has no ceiling.
+      const { interpreter, names, log } = setup({ unread: [0] });
+      interpreter.handleButtonDown(0);
+      vi.advanceTimersByTime(HOLD_MS);
+
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(false); // locked out, as it should be
+
+      vi.advanceTimersByTime(STUCK_MS);
+      expect(interpreter.isPressed(0)).toBe(false);
+      // No answer out of nowhere: the child let go long ago.
+      expect(names()).not.toContain('recordBlocked');
+      expect(names()).not.toContain('playQueue');
+      expect(log.at(-1)).toEqual({ event: 'pressVisualOff', payload: { index: 0 } });
+
+      interpreter.handleButtonUp(1);
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('frees a press refused in read-only mode', () => {
+      const { interpreter } = setup({ readOnly: true });
+      interpreter.handleButtonDown(0);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('frees a chord whose releases were lost', () => {
+      const { interpreter, names } = setup();
+      interpreter.handleButtonDown(0);
+      interpreter.handleButtonDown(2);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      expect(names()).toContain('toggleSilent'); // the chord itself still worked
+      expect(interpreter.hasActivePress).toBe(false);
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('lets an ignored button press again after its release was lost', () => {
+      const { interpreter } = setup({ unread: [0] });
+      interpreter.handleButtonDown(0);
+      interpreter.handleButtonDown(1); // ignored behind button 0; its up edge never comes
+      interpreter.handleButtonUp(0);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('never cuts a recording short: the ceiling ends it first and sends it', () => {
+      const { interpreter, find, names } = setup();
+      interpreter.handleButtonDown(1);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      expect(find('captureCommit')?.payload).toMatchObject({ index: 1, reachedMaxDuration: true });
+      expect(names().filter((name) => name === 'captureCommit')).toHaveLength(1);
+      expect(names()).not.toContain('captureCancel');
+    });
   });
 
   it('tracks per-button press state independently', () => {

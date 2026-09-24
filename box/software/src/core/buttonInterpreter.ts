@@ -19,6 +19,23 @@ import type { ButtonIndex, ButtonTimings } from '../config/schema.ts';
  */
 export const SILENT_COMBO_BUTTONS: readonly ButtonIndex[] = [0, 2];
 
+/**
+ * How long a press may stay down before it is presumed to have lost its release edge.
+ *
+ * Only a button-up ends a press that opened no microphone — one refused (read-only), withheld
+ * (notes waiting) or swallowed by the chord — and under the lockout that press also silences the
+ * other two buttons. A single missed up edge would therefore freeze the whole box until somebody
+ * happened to press the same button again. `gpioDriver.ts` has never run on real hardware and the
+ * debounce is in software, so a lost edge is not hypothetical.
+ *
+ * Past any real press: a recording ends at `maxRecordingSeconds` and a resumed one waits out one
+ * more window, so a press still down after both is a switch that stopped reporting, not a child.
+ * Derived rather than configured, because it follows from two values that already are.
+ */
+export function stuckPressMs(timings: ButtonTimings, maxRecordingSeconds: number): number {
+  return maxRecordingSeconds * 1000 + timings.resumeGraceMs;
+}
+
 /** Why a hold was refused instead of opening a capture. */
 export type BlockReason =
   /** `config.mode.readOnly`: this box never sends, so no hold ever does. */
@@ -121,6 +138,8 @@ type ActivePress = {
   confirmTimer: NodeJS.Timeout | null;
   /** Fires at maxRecordingSeconds to auto-commit. */
   maxTimer: NodeJS.Timeout | null;
+  /** Fires at {@link stuckPressMs} and drops the press, in case its release never arrives. */
+  stuckTimer: NodeJS.Timeout | null;
   confirmed: boolean;
   /** Set when the chord claimed this press, so release does nothing. */
   swallowed: boolean;
@@ -193,8 +212,13 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
   readonly #active = new Map<ButtonIndex, ActivePress>();
   /** Confirmed recordings waiting out their resume window. */
   readonly #pending = new Map<ButtonIndex, PendingCommit>();
-  /** Buttons that went down while another one owned the box, ignored until they come up. */
-  readonly #ignored = new Set<ButtonIndex>();
+  /**
+   * Buttons that went down while another one owned the box, ignored until they come up — or
+   * until {@link stuckPressMs} after they went down, so a lost release costs one press at most
+   * rather than every press on that button from then on. Keyed to when they went down.
+   */
+  readonly #ignored = new Map<ButtonIndex, number>();
+  readonly #stuckPressMs: number;
   #comboTimer: NodeJS.Timeout | null = null;
 
   constructor(options: ButtonInterpreterOptions) {
@@ -204,6 +228,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.#hasUnread = options.hasUnread;
     this.#readOnly = options.readOnly ?? false;
     this.#listeningTo = options.listeningTo ?? (() => null);
+    this.#stuckPressMs = stuckPressMs(options.timings, options.maxRecordingSeconds);
   }
 
   /** The active press windows. */
@@ -227,10 +252,16 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
 
   handleButtonDown(index: ButtonIndex): void {
     // Already down, or already being ignored; either way a repeat edge changes nothing.
-    if (this.#active.has(index) || this.#ignored.has(index)) return;
+    if (this.#active.has(index)) return;
+    const ignoredAt = this.#ignored.get(index);
+    if (ignoredAt !== undefined) {
+      if (Date.now() - ignoredAt < this.#stuckPressMs) return;
+      // Its release was lost long ago; this is a new press.
+      this.#ignored.delete(index);
+    }
 
     if (this.#isLockedOut(index)) {
-      this.#ignored.add(index);
+      this.#ignored.set(index, Date.now());
       return;
     }
 
@@ -245,12 +276,14 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       startedAt: Date.now(),
       confirmTimer: null,
       maxTimer: null,
+      stuckTimer: null,
       confirmed: false,
       swallowed: false,
       blocked: false,
       withheld: false,
     };
     this.#active.set(index, press);
+    this.#armStuckTimer(press);
 
     this.emit('pressVisualOn', { index });
 
@@ -374,6 +407,10 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       clearTimeout(press.confirmTimer);
       press.confirmTimer = null;
     }
+    if (press.stuckTimer !== null) {
+      clearTimeout(press.stuckTimer);
+      press.stuckTimer = null;
+    }
     this.#active.delete(index);
     this.emit('pressVisualOff', { index });
 
@@ -401,19 +438,22 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       pending.graceTimer = null;
     }
 
-    this.#active.set(index, {
+    const press: ActivePress = {
       index,
       // Carried forward, so the take is measured from the first press.
       startedAt: pending.startedAt,
       confirmTimer: null,
       // The ceiling is not restarted: pumping the button must not extend a recording.
       maxTimer: pending.maxTimer,
+      stuckTimer: null,
       confirmed: true,
       swallowed: false,
       blocked: false,
       // A resumed take had its microphone opened at the first press; nothing was withheld.
       withheld: false,
-    });
+    };
+    this.#active.set(index, press);
+    this.#armStuckTimer(press);
 
     this.emit('pressVisualOn', { index });
     this.emit('captureResumed', { index, gapMs: Date.now() - pending.releasedAt });
@@ -579,7 +619,9 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       const press = this.#active.get(index);
       if (!press || press.swallowed) continue;
       press.swallowed = true;
-      this.#clearTimers(press);
+      // Not the stuck-press timer: a swallowed press is ended only by its release, which is
+      // exactly the kind of press that needs one.
+      this.#clearCaptureTimers(press);
       // A press with no microphone behind it has nothing for the chord to cancel.
       if (this.#readOnly || press.blocked || press.withheld) continue;
       const durationMs = Date.now() - press.startedAt;
@@ -616,12 +658,37 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     return capturedMs >= this.#timings.minRecordingMs;
   }
 
+  /**
+   * Drops a press whose release never came, silently.
+   *
+   * A recording never gets here — the ceiling ends it first and commits what was said. What does
+   * is a press that opened no microphone, and for those silence is right: the child let go long
+   * ago, and any answer now would arrive out of nowhere.
+   */
+  #armStuckTimer(press: ActivePress): void {
+    press.stuckTimer = setTimeout(() => {
+      press.stuckTimer = null;
+      if (this.#active.get(press.index) !== press) return;
+      this.#clearPress(press);
+      this.emit('pressVisualOff', { index: press.index });
+    }, this.#stuckPressMs);
+  }
+
   #clearPress(press: ActivePress): void {
     this.#clearTimers(press);
     this.#active.delete(press.index);
   }
 
   #clearTimers(press: ActivePress): void {
+    this.#clearCaptureTimers(press);
+    if (press.stuckTimer !== null) {
+      clearTimeout(press.stuckTimer);
+      press.stuckTimer = null;
+    }
+  }
+
+  /** The timers that belong to a capture: the threshold and the ceiling. */
+  #clearCaptureTimers(press: ActivePress): void {
     if (press.confirmTimer !== null) {
       clearTimeout(press.confirmTimer);
       press.confirmTimer = null;

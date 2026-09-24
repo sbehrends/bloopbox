@@ -351,6 +351,13 @@ is ignored whole: down edge, release, everything between. Rules, locked by
   teardown `#playQueue` waits on, and a press in that gap would slip through. The playing button
   itself stays on its ordinary path, which is already inert while its queue plays.
 - `reset()` clears the ignored set with everything else.
+- **A press whose release never arrives is dropped** after `stuckPressMs()` —
+  `maxRecordingSeconds` plus one `resumeGraceMs`, longer than any real press. Only a button-up
+  ends a press that opened no microphone (refused, withheld or swallowed by the chord), and under
+  the lockout that press also silences the other two buttons, so one lost edge would freeze the
+  box. The drop is silent apart from `pressVisualOff`, because the child let go long ago. A
+  recording never reaches it: the ceiling ends it first and sends it. An ignored button's lost
+  release expires on the same clock, so it costs one press at most.
 
 ### The silent chord
 

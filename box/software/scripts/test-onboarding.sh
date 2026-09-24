@@ -99,6 +99,13 @@ docker run --rm \
     await "net-state.json" test -f /run/bloopbox-net/net-state.json
     await "a reading that says the agent is alive" state_says available true
     echo "net-state.json: $(cat /run/bloopbox-net/net-state.json)"
+    # Always published, as true, false or null. A container has no timedated to ask, so null
+    # (cannot tell) is the honest answer here — and false would be a lie.
+    /opt/bloopbox/node/bin/node -e "
+      const s = JSON.parse(require(\"node:fs\").readFileSync(\"/run/bloopbox-net/net-state.json\",\"utf8\"));
+      process.exit(\"timeSynced\" in s && (s.timeSynced === null || typeof s.timeSynced === \"boolean\") ? 0 : 1);
+    " || fail "the reading carries no timeSynced"
+    echo "timeSynced is published"
 
     echo
     echo "--- 2. it scans, so the portal has something to offer ---"

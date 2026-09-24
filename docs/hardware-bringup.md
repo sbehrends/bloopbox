@@ -147,7 +147,11 @@ ssh bloop@bloopbox.local 'cat /run/bloopbox-net/net-state.json; echo; systemctl 
 ```
 
 **Pass:** a JSON document with `"available":true`, `"online":true`, your SSID, and an
-`updatedAtMs` within the last few seconds. Read it twice — the timestamp must move.
+`updatedAtMs` within the last few seconds. Read it twice — the timestamp must move. It should also
+carry `"timeSynced":true` within a minute or so of the box getting online; `false` right after boot
+is normal. `null` for longer than that means the agent cannot reach `timedatectl` from inside its
+sandbox — never observed either way yet, so note which you see, and check that `bloopbox-doctor`'s
+"time sync service" line names `systemd-timesyncd`.
 
 Then make the device lose the network and watch it notice. This kills your ssh session — one
 radio — so the outage has to restore **itself**, or you will be walking over to the device with a

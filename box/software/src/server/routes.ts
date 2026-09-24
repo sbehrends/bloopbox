@@ -541,6 +541,11 @@ export function createApiRouter(context: RoutesContext): Router {
                 ageSeconds: Math.max(0, Math.round((Date.now() - net.updatedAtMs) / 1000)),
                 lastError: net.lastError,
               },
+        /*
+         * Whether the clock is trustworthy yet. From the same reading, because only the root agent
+         * can ask timedated; null — "cannot tell" — whenever there is no reading at all.
+         */
+        timeSynced: net?.timeSynced ?? null,
       });
     } catch {
       res.status(500).json({ error: 'could not read the device state' });

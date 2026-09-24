@@ -113,6 +113,8 @@ type SystemView = {
     ageSeconds: number;
     lastError: string | null;
   } | null;
+  /** Optional: a daemon older than this panel does not send it, which reads as unknown. */
+  timeSynced?: boolean | null;
 };
 
 type StatusView = {
@@ -1319,6 +1321,19 @@ function describeSignal(signal: number | null): string {
 }
 
 /**
+ * Whether the box's clock can be trusted yet.
+ *
+ * A Pi has no clock battery: until the network time answers, it runs on the time it last shut
+ * down with, and quiet hours read that clock. A reading, not a warning — "not synced yet" is the
+ * normal first minute of every boot. Unknown stays unknown: no answer is not a "no".
+ */
+function describeClock(synced: boolean | null | undefined): string {
+  if (synced === true) return 'synced';
+  if (synced === false) return 'not synced yet';
+  return 'unknown';
+}
+
+/**
  * Whether the box can make a sound, in one line.
  *
  * "Missing" here is the whole reason this reading exists: a box configured for a card that is
@@ -1374,6 +1389,7 @@ function renderHealth(): HTMLElement {
         `${info.memory.usedPercent.toFixed(0)}% used · ${formatBytes(info.memory.availableBytes)} free of ${formatBytes(info.memory.totalBytes)}`,
       ),
       readout('Sound card', describeAudio(info.audio)),
+      readout('Clock', describeClock(info.timeSynced)),
     );
     body.append(vitals);
 

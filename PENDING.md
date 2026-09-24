@@ -849,6 +849,21 @@ admin panel — so today a raw key reaches the agent only in a hand-written requ
 end is four small edits (accept `^[0-9A-Fa-f]{64}$` beside `.max(63)`), left for whoever next
 touches the join route rather than done blind across files another change is editing.
 
+### What quiet hours should do on a clock that has not synced — an open product decision
+
+A Pi has no real-time clock. Until NTP answers, it runs on the time its last shutdown saved, so a
+box unplugged overnight and plugged back in at 07:30 believes it is still 20:15, and quiet hours
+(`docs/PRODUCT.md` § Silence and quiet hours) keep it silent — or the reverse, audible at bedtime.
+The purge TTL and debug mode's deadline read the same clock. Since 2026-09-24 the root agent
+publishes `timeSynced` (`true` / `false` / `null` for cannot-tell) in `net-state.json`, `netState.ts`
+parses it, and the health card and `bloopbox-doctor` show it — **but nothing acts on it**, on
+purpose. The review (2026-09, Phase 1) proposed "treat quiet hours as unknown until synced", and
+"unknown" has no obvious meaning for a toddler's box: audible risks waking a sleeping child at
+night, silent risks a morning where Grandma's note never plays, and a box with no internet at all
+may never sync. Decide which failure is worse, and whether a box that has *ever* synced this boot
+(timesyncd keeps the clock running once set) should count, before writing code. Until then quiet
+hours behave exactly as before.
+
 ### The units' `MemoryMax` values add up to more than the board has
 
 `MemoryMax` is 192M (hardware) + 288M (bridge) + 48M (net agent) + 48M (debug sampler) = 576M, on a

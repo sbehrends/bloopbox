@@ -742,6 +742,21 @@ describe('GET /api/system', () => {
     const payload: unknown = await (await fetch(api.url('/api/system'))).json();
     expect(payload).toMatchObject({ wifi: null });
   });
+
+  it("reports the agent's view of the clock, and unknown where there is none", async () => {
+    api = await startApi({ configured: false });
+    const unknown: unknown = await (await fetch(api.url('/api/system'))).json();
+    // Present and null, not absent: the card says "unknown", never "not synced".
+    expect(unknown).toMatchObject({ timeSynced: null });
+
+    api.netState = netReading({ timeSynced: false });
+    const unsynced: unknown = await (await fetch(api.url('/api/system'))).json();
+    expect(unsynced).toMatchObject({ timeSynced: false });
+
+    api.netState = netReading({ timeSynced: true });
+    const synced: unknown = await (await fetch(api.url('/api/system'))).json();
+    expect(synced).toMatchObject({ timeSynced: true });
+  });
 });
 
 describe('POST /api/system/power', () => {

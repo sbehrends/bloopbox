@@ -77,6 +77,15 @@ export type NetState = {
    * file, deletes it once it sees its own id come back.
    */
   readonly handledRequestId: string | null;
+  /**
+   * Whether the wall clock has been set from the network (`timedatectl`'s `NTPSynchronized`).
+   *
+   * A Pi has no real-time clock, so until NTP answers it runs on whatever time the last shutdown
+   * saved — and quiet hours read that clock. **Null is "cannot tell", not "unsynced"**: no
+   * `timedatectl` on the box, an agent that predates this field, or an answer that was not yes or
+   * no. Observation only; nothing in the daemon acts on it yet (PENDING.md).
+   */
+  readonly timeSynced: boolean | null;
 };
 
 /**
@@ -129,6 +138,9 @@ const netStateSchema = z.object({
   scanAgeSeconds: z.number().min(0).catch(0),
   lastError: z.string().max(200).nullable().catch(null),
   handledRequestId: z.string().min(1).max(80).nullable().catch(null),
+  // Absent, or anything but a boolean, is unknown — never false, which would claim the agent had
+  // asked and been told no.
+  timeSynced: z.boolean().nullable().catch(null),
 });
 
 /** Parses a published reading, or returns null if it cannot be trusted. */
@@ -156,6 +168,7 @@ export function parseNetState(raw: string): NetState | null {
     lastError: result.data.lastError,
     // Absent from an agent that predates acknowledgements, which `.catch` reads as null.
     handledRequestId: result.data.handledRequestId,
+    timeSynced: result.data.timeSynced,
   };
 }
 

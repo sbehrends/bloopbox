@@ -498,6 +498,41 @@ json_string() {
   printf '"%s"' "${value}"
 }
 
+# Whether the wall clock has been set from the network, as a JSON literal: true, false, or null
+# for "cannot tell".
+#
+# A Pi has no real-time clock. Until NTP answers, it boots with the time the last shutdown saved
+# (fake-hwclock / timesyncd's clock file) — hours or days behind after a spell unplugged — and
+# quiet hours, the purge TTL and debug mode's deadline all read that clock. Published so the
+# daemon can at least say so; what quiet hours should *do* about it is an open product decision
+# (PENDING.md).
+#
+# Asked through timedatectl, which is a D-Bus call to systemd-timedated — a process activated on
+# demand — so it is refreshed on a slow cadence of its own, not every poll. null rather than false
+# when the tool or the answer is missing: unknown is not the same as unsynced.
+TIME_SYNC_INTERVAL_SECONDS="${NET_TIME_SYNC_INTERVAL_SECONDS:-30}"
+TIME_SYNCED_JSON=null
+TIME_SYNC_AT=0
+
+refresh_time_synced() {
+  local now elapsed
+  now="$(date +%s)"
+  elapsed=$(( now - TIME_SYNC_AT ))
+  # A negative gap is the clock itself being corrected backwards — the very event this reports
+  # on. Without this the next refresh would wait until the wall clock caught back up.
+  (( elapsed >= 0 && elapsed < TIME_SYNC_INTERVAL_SECONDS )) && return 0
+  TIME_SYNC_AT="${now}"
+  if ! command -v timedatectl >/dev/null 2>&1; then
+    TIME_SYNCED_JSON=null
+    return 0
+  fi
+  case "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" in
+    yes) TIME_SYNCED_JSON=true ;;
+    no) TIME_SYNCED_JSON=false ;;
+    *) TIME_SYNCED_JSON=null ;;
+  esac
+}
+
 # Initialised before either loop below can assign to it: the no-nmcli branch also consumes
 # requests now, and some of the handlers set this.
 LAST_ERROR=
@@ -510,7 +545,9 @@ if ! command -v nmcli >/dev/null 2>&1; then
     # Still read, because reboot and poweroff do not need NetworkManager and a box that cannot
     # be shut down from the panel is exactly the box somebody unplugs mid-write.
     consume_request
-    publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":false,\"online\":false,\"ssid\":null,\"signal\":null,\"apActive\":false,\"apSsid\":null,\"scan\":[],\"scanAgeSeconds\":0,\"lastError\":null,\"handledRequestId\":$(handled_json)}"
+    # The clock has nothing to do with NetworkManager, so it is still worth reporting here.
+    refresh_time_synced
+    publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":false,\"online\":false,\"ssid\":null,\"signal\":null,\"apActive\":false,\"apSsid\":null,\"scan\":[],\"scanAgeSeconds\":0,\"lastError\":null,\"handledRequestId\":$(handled_json),\"timeSynced\":${TIME_SYNCED_JSON}}"
     sleep "${POLL_SECONDS}" &
     wait $! 2>/dev/null || true
   done
@@ -577,7 +614,9 @@ while [[ "${running}" == true ]]; do
     scan_age=$(( $(date +%s) - SCAN_AT ))
   fi
 
-  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active},\"apSsid\":$(json_string "${AP_SSID}"),\"scan\":${SCAN_JSON},\"scanAgeSeconds\":${scan_age},\"lastError\":${last_error_json},\"handledRequestId\":$(handled_json)}"
+  refresh_time_synced
+
+  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active},\"apSsid\":$(json_string "${AP_SSID}"),\"scan\":${SCAN_JSON},\"scanAgeSeconds\":${scan_age},\"lastError\":${last_error_json},\"handledRequestId\":$(handled_json),\"timeSynced\":${TIME_SYNCED_JSON}}"
 
   # Backgrounded so a SIGTERM lands during the sleep rather than after it.
   sleep "${POLL_SECONDS}" &

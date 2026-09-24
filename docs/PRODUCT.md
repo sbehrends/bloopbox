@@ -330,8 +330,10 @@ An *Advanced* card, collapsed until asked for and polling only while it is open.
 board says about itself — SoC temperature, how long the machine has been powered on, how long the
 *software* has been running (the two diverge on a settings save, and a service uptime that keeps
 resetting is a crash loop), processor busy time and load, memory, free space on the card and in the
-RAM disk, and the Wi-Fi network and signal. Every reading is nullable: a value the box cannot obtain
-is a dash, never a zero.
+RAM disk, the Wi-Fi network and signal, and whether the **clock** has been set from the network yet
+("synced", "not synced yet", or "unknown" where the box cannot tell — a Pi has no clock battery, and
+quiet hours read that clock). Every reading is nullable: a value the box cannot obtain is a dash or
+"unknown", never a zero or a "no".
 
 The same information is in `bloopbox-doctor`, which needs SSH — a tool a parent should never need.
 

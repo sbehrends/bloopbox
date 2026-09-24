@@ -364,8 +364,17 @@ unconfigured device, 3 minutes on a configured one (a flat 30s would pop a hotsp
 every time the router reboots), then every 60s the hotspot steps aside for a 30s join attempt —
 unless the device was never configured, in which case there is nothing to rejoin and it stays up.
 
+The reading also carries **`timeSynced`**, which has nothing to do with Wi-Fi and is here because
+the agent is the only process that can ask `timedatectl show -p NTPSynchronized` (it goes over D-Bus
+to `systemd-timedated`, refreshed every 30 s rather than every poll). A Pi has no real-time clock, so
+until NTP answers it runs on the time its last shutdown saved. It is `true`, `false`, or `null` for
+"cannot tell" — no `timedatectl`, or no clear answer — and `netState.ts` keeps it that way, reading
+anything malformed as `null` and never as `false`. The health card shows it; nothing acts on it yet
+(`PENDING.md`).
+
 `sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user, and
-that `nmcli` and dnsmasq are installed.
+that `nmcli` and dnsmasq are installed. It also fails if no time-sync service is active (Pi OS ships
+`systemd-timesyncd`) and warns while the clock is not yet synced.
 
 ## When something is wrong
 

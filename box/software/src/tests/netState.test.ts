@@ -51,7 +51,19 @@ describe('parseNetState', () => {
       scanAgeSeconds: 0,
       lastError: null,
       handledRequestId: null,
+      timeSynced: null,
     });
+  });
+
+  it('reads whether the clock has been synced, and keeps unknown apart from no', () => {
+    expect(parseNetState(reading({ timeSynced: true }))?.timeSynced).toBe(true);
+    expect(parseNetState(reading({ timeSynced: false }))?.timeSynced).toBe(false);
+    expect(parseNetState(reading({ timeSynced: null }))?.timeSynced).toBeNull();
+    // An agent that predates the field, or garbage in it, is "cannot tell" — never false, and
+    // never a rejected reading.
+    expect(parseNetState(reading())?.timeSynced).toBeNull();
+    expect(parseNetState(reading({ timeSynced: 'yes' }))?.timeSynced).toBeNull();
+    expect(parseNetState(reading({ timeSynced: 'yes' }))?.online).toBe(true);
   });
 
   it("reads the agent's acknowledgement of the last request it acted on", () => {

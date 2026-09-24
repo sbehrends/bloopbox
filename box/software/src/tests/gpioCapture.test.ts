@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import type * as NodeOs from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -57,11 +58,31 @@ vi.mock('node:child_process', () => ({
   },
 }));
 
+type DecodeOptions = { onSpawn?: (child: { pid?: number }) => void };
+const arrivalDecodes = vi.fn<(input: string, options: DecodeOptions | undefined) => void>();
+
+const reniced = vi.fn<(pid: number, priority: number) => void>();
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeOs>()),
+  setPriority: (pid: number, priority: number) => {
+    reniced(pid, priority);
+  },
+}));
+
 const encoded = vi.fn<(input: string, output: string, durationMs: number | null) => void>();
 const probed = vi.fn<(path: string) => Promise<number | null>>();
 
 vi.mock('../audio/ffmpeg.ts', () => ({
-  toPlayableWav: () => Promise.resolve(),
+  toPlayableWav: async (
+    input: string,
+    output: string,
+    _format: unknown,
+    _filter: unknown,
+    options?: DecodeOptions,
+  ) => {
+    arrivalDecodes(input, options);
+    await writeFile(output, '');
+  },
   toVoiceNote: async (input: string, output: string, _filter: unknown, durationMs: number) => {
     encoded(input, output, durationMs);
     await writeFile(output, 'ogg');
@@ -75,8 +96,13 @@ vi.mock('../audio/ffmpeg.ts', () => ({
 const warned = vi.fn<(detail: object, message: string) => void>();
 vi.mock('../logger.ts', () => ({ childLogger: () => ({ warn: warned }) }));
 
-const { GpioHal, CAPTURE_FLUSH_TIMEOUT_MS, CAPTURE_FORMAT, wavDurationMs } =
-  await import('../hal/gpioDriver.ts');
+const {
+  GpioHal,
+  BACKGROUND_DECODE_NICENESS,
+  CAPTURE_FLUSH_TIMEOUT_MS,
+  CAPTURE_FORMAT,
+  wavDurationMs,
+} = await import('../hal/gpioDriver.ts');
 const { SimulatorHal } = await import('../hal/simulatorDriver.ts');
 
 let directory: string;
@@ -110,6 +136,8 @@ beforeEach(async () => {
   recorder.stubborn = false;
   warned.mockClear();
   encoded.mockClear();
+  arrivalDecodes.mockClear();
+  reniced.mockClear();
   probed.mockReset();
   directory = await mkdtemp(join(tmpdir(), 'bloopbox-capture-'));
 });
@@ -160,6 +188,61 @@ describe('stopRecording', () => {
     await writeFile(capturePath(), wavOf(0));
 
     await expect(hal.stopRecording(handle)).resolves.toMatchObject({ durationMs: 0 });
+  });
+});
+
+describe('arrival decodes beside a capture', () => {
+  /*
+   * A loudnorm decode is the heaviest thing the box does. Beside an open microphone on four slow
+   * cores it risks an overrun, which is a gap in the child's message.
+   */
+  it('waits for an open capture to end before starting', async () => {
+    const note = join(directory, 'wa-0-HUSH01.ogg');
+    await writeFile(note, '');
+    const hal = makeHal();
+    const handle = await hal.startRecording(0);
+
+    const preparing = hal.prepare(note);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(arrivalDecodes).not.toHaveBeenCalled();
+
+    await hal.cancelRecording(handle);
+    await preparing;
+
+    expect(arrivalDecodes).toHaveBeenCalledOnce();
+  });
+
+  it('carries on once arecord has died by itself, since nothing is left to protect', async () => {
+    const note = join(directory, 'wa-1-HUSH02.ogg');
+    await writeFile(note, '');
+    const hal = makeHal();
+    await hal.startRecording(1);
+
+    const preparing = hal.prepare(note);
+    close(captureChild(), 1, null);
+    await preparing;
+
+    expect(arrivalDecodes).toHaveBeenCalledOnce();
+  });
+
+  it('runs at a lowered priority, and a renice that fails does not fail the decode', async () => {
+    const note = join(directory, 'wa-2-HUSH03.ogg');
+    await writeFile(note, '');
+    const hal = makeHal();
+
+    await hal.prepare(note);
+
+    const options = arrivalDecodes.mock.calls[0]?.[1];
+    options?.onSpawn?.({ pid: 4321 });
+    expect(reniced).toHaveBeenCalledWith(4321, BACKGROUND_DECODE_NICENESS);
+
+    reniced.mockImplementationOnce(() => {
+      throw new Error('ESRCH');
+    });
+    expect(() => options?.onSpawn?.({ pid: 4322 })).not.toThrow();
+    // A child that never got a pid is simply left alone.
+    expect(() => options?.onSpawn?.({})).not.toThrow();
   });
 });
 

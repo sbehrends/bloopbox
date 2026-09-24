@@ -775,6 +775,13 @@ fresh delivery and one restored at boot, and it is not awaited. `GpioHal` writes
   waits for it. A tap during the arrival decode waits for that decode rather than starting a second
   ffmpeg over it, and an arrival decode waits for a tap's temporary copy to be played and deleted.
   Before this, two writers shared one file and one could delete it under the other's `aplay`.
+- **Never beside an open microphone.** A queued arrival decode waits while a capture is open
+  (it starts again when the capture is stopped, cancelled or dies by itself), and every arrival
+  decode runs at niceness `BACKGROUND_DECODE_NICENESS` (10). `loudnorm` is the heaviest thing the box
+  does, and on four slow cores it can starve `arecord` into an overrun, which is a gap in the child's
+  message. A decode already running when the capture opens is not killed. It carries on at the
+  lowered priority, since killing it would only mean doing it again. A tap's on-demand decode is not
+  held back, because someone is waiting for it.
 - **16 kHz mono** (`PLAYBACK_DECODING`), not Opus's internal 48 kHz: the note arrived at 16 kHz, and
   three times the RAM disk for the same speech is not a trade worth making in a tmpfs measured in
   tens of megabytes.

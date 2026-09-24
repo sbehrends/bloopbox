@@ -1592,6 +1592,11 @@ Pi. `docs/architecture.md` § Audio has the reasoning.
 - **Deadlines.** ffmpeg gets 30 s + 2× the audio (5 min when the length is unknown) and amixer 5 s.
   The margins come from desk measurements, not from a loaded Zero 2 W decoding with `loudnorm`
   beside a capture.
+- **Arrival decodes beside a capture.** They are held while `arecord` is open and reniced to 10.
+  Nobody has measured whether a `loudnorm` decode that is already running when a take starts
+  still causes overruns at that niceness (look for `overrun!!!` in the journal). If it does, hold
+  capture-side work instead, or pause the decode with SIGSTOP. `setPriority` on a pid that is
+  already gone is swallowed, and that has only been exercised against a mock.
 - **amixer warnings.** A wrong control name now logs at `warn` with amixer's stderr. Check that a
   deliberately wrong `ALSA_MIXER_CONTROL` logs the warning, and that a correctly configured box logs
   nothing at boot.

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, rm, stat } from 'node:fs/promises';
+import { setPriority } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import type { Device, Output, Watch } from 'opengpio';
 import type { AudioCue } from '../audio/cues.ts';
@@ -151,6 +152,15 @@ export function wavDurationMs(sizeBytes: number, format = CAPTURE_FORMAT): numbe
 /** Grace period for arecord to finalise its WAV header before we SIGKILL. Exported for tests. */
 export const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
 
+/**
+ * The niceness an arrival decode runs at: below the daemon, and below `arecord`.
+ *
+ * A `loudnorm` decode is the heaviest thing this box does, and on four slow cores it can starve
+ * a capture of the CPU it needs to drain the ALSA buffer — an overrun is a gap in the child's
+ * message. Nobody is waiting for an arrival decode, so it can wait for everything else.
+ */
+export const BACKGROUND_DECODE_NICENESS = 10;
+
 /** How much of arecord's stderr is kept for the log line when it exits on its own. */
 const CAPTURE_STDERR_TAIL_CHARS = 2048;
 
@@ -216,6 +226,12 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
    * commit after such an exit sit out the whole flush timeout.
    */
   #captureExited: Promise<void> | null = null;
+  /**
+   * Settles when the open capture has finished, so queued arrival decodes can wait for it.
+   * {@link #endCapture} is non-null exactly while a capture is open.
+   */
+  #captureEnded: Promise<void> = Promise.resolve();
+  #endCapture: (() => void) | null = null;
   #playbackProcess: ChildProcess | null = null;
   /** Settles when {@link #playbackProcess} has exited, so a stop can wait for the device. */
   #playbackExited: Promise<void> | null = null;
@@ -348,6 +364,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     const exited = new Promise<void>((resolve) => {
       markExited = resolve;
     });
+    this.#holdBackgroundDecodes();
 
     /*
      * Read, not just piped: an unread pipe fills and blocks the writer, and arecord reports
@@ -361,6 +378,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     child.on('error', (error) => {
       markExited?.();
       if (this.#captureProcess !== child) return;
+      this.#releaseBackgroundDecodes();
       this.#captureProcess = null;
       this.#captureId = null;
       this.#captureExited = null;
@@ -371,6 +389,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
       markExited?.();
       // Still the active capture means nobody stopped it: it gave up by itself.
       if (this.#captureProcess === child) {
+        // Nothing is capturing any more, so nothing is left to protect from a decode.
+        this.#releaseBackgroundDecodes();
         logWarn(
           { code, signal, stderr: stderr.trim() },
           'arecord exited before the recording was stopped',
@@ -561,7 +581,14 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     this.#captureId = null;
     this.#captureExited = null;
     if (!child || !exited) return;
+    try {
+      await this.#endCaptureProcess(child, exited);
+    } finally {
+      this.#releaseBackgroundDecodes();
+    }
+  }
 
+  async #endCaptureProcess(child: ChildProcess, exited: Promise<void>): Promise<void> {
     // Already gone by itself: nothing to signal, and the WAV is whatever it managed to write.
     if (child.exitCode !== null || child.signalCode !== null) {
       await exited;
@@ -579,6 +606,20 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     });
     await Promise.race([exited, escalated]);
     clearTimeout(timer);
+  }
+
+  /** Called as a capture opens: arrival decodes that have not started yet wait for it to end. */
+  #holdBackgroundDecodes(): void {
+    if (this.#endCapture) return;
+    this.#captureEnded = new Promise<void>((resolve) => {
+      this.#endCapture = resolve;
+    });
+  }
+
+  #releaseBackgroundDecodes(): void {
+    const end = this.#endCapture;
+    this.#endCapture = null;
+    end?.();
   }
 
   async #spawnPlayback(path: string): Promise<PlaybackOutcome> {
@@ -677,6 +718,12 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   /** One `prepare()`'s worth of work. Never throws: it is the tail of a shared chain. */
   async #decodeAhead(path: string): Promise<void> {
+    /*
+     * Not beside an open microphone — see `BACKGROUND_DECODE_NICENESS`. A loop, because the
+     * next take can open before this wakes. One already running when a capture opens carries
+     * on at its lowered priority; killing it would only mean doing it again.
+     */
+    while (this.#endCapture) await this.#captureEnded;
     // A `play()` decoding on demand holds the file; its copy is temporary, so this one is not.
     await this.#fileFree(path);
     // Re-checked here, not only in `prepare()`: two calls for the same note can queue before
@@ -687,7 +734,9 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     const decodedPath = this.#decodedPath(path);
     const done = this.#claimFile(path);
     try {
-      await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter);
+      await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter, {
+        onSpawn: lowerPriority,
+      });
       if (this.#releasedMidDecode.delete(path)) {
         // The note was heard and deleted while this ran; nothing is left to play it for.
         await rm(decodedPath, { force: true }).catch(() => undefined);
@@ -725,6 +774,20 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   #decodedPath(path: string): string {
     return join(this.#recordingDirectory, `play-${stem(path)}.wav`);
+  }
+}
+
+/**
+ * Drops a background child to {@link BACKGROUND_DECODE_NICENESS}. Best effort: raising niceness
+ * needs no privilege, but a child that has already exited has no pid to renice, and failing to
+ * lower a priority is no reason to fail the decode.
+ */
+function lowerPriority(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  try {
+    setPriority(child.pid, BACKGROUND_DECODE_NICENESS);
+  } catch {
+    // Already gone, or a platform that refuses; the decode runs either way.
   }
 }
 

@@ -189,9 +189,8 @@ export class DeviceController {
    * any other way. Silenced at night like every other courtesy cue.
    */
   announceBoot(): void {
-    if (!shouldPlayCue(AudioCue.Boot, this.state.silentMode)) return;
     // Not awaited: nothing about coming up should wait on a speaker.
-    void this.#safeCue(AudioCue.Boot);
+    void this.#courtesyCue(AudioCue.Boot);
   }
 
   /**
@@ -230,10 +229,12 @@ export class DeviceController {
      */
     this.#stats?.recordReceived(index, note.durationMs);
 
-    // A courtesy, and silenced at night.
-    if (shouldPlayCue(AudioCue.Notify, this.state.silentMode)) {
-      void this.#safeCue(AudioCue.Notify);
-    }
+    /*
+     * A courtesy, silenced at night — and held back while a note is playing. The speaker is one
+     * output, so this chime used to cut off the note being listened to, which was then counted as
+     * heard, deleted and reported read. The lamp already says something new is waiting.
+     */
+    void this.#courtesyCue(AudioCue.Notify);
   }
 
   /**
@@ -330,16 +331,13 @@ export class DeviceController {
      * be one more thing to learn for no extra information. The blinking lamp is what says
      * why, and it is already lit. Silenced during quiet hours exactly like the rest of them.
      */
-    this.#interpreter.on('recordBlocked', ({ reason }) => {
+    this.#interpreter.on('recordBlocked', () => {
       /*
-       * Except while one of those notes is actually playing. The child is being told to
-       * listen; an "oops" over the top would talk across the message mid-sentence, since
-       * cues interrupt playback. The lamp under their finger is the whole answer.
+       * Except while one of those notes is actually playing, which `#courtesyCue` holds back.
+       * The child is being told to listen; an "oops" over the top would cut the message off.
+       * The lamp under their finger is the whole answer.
        */
-      if (reason === 'unread' && this.state.playing !== null) return;
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        void this.#safeCue(AudioCue.Oops);
-      }
+      void this.#courtesyCue(AudioCue.Oops);
     });
 
     this.#interpreter.on('captureCommit', ({ index }) => {
@@ -358,9 +356,7 @@ export class DeviceController {
     });
 
     this.#interpreter.on('cancelBeep', () => {
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        void this.#safeCue(AudioCue.Oops);
-      }
+      void this.#courtesyCue(AudioCue.Oops);
     });
 
     this.#interpreter.on('toggleSilent', () => {
@@ -374,26 +370,42 @@ export class DeviceController {
     });
 
     this.queue.on('queueDrained', ({ index, messageIds }) => {
-      // Spec §1: the light goes out once the queue finishes.
-      this.state.clearUnread(index);
-      this.state.setPlaying(null);
       /*
-       * The receipt is the only way the sender learns a child heard them, and a parent can
-       * turn it off — playing a message should never depend on whether we are willing to
-       * report it, so the local half above happens either way.
+       * Spec §1: the light goes out once the queue finishes — unless a note arrived while it
+       * played. The count follows the queue rather than being zeroed: clearing it put that
+       * note's lamp out, and a tap on the dark button then got the "oops".
        */
-      if (this.#config.current.whatsapp.markPlayedAsRead) {
-        this.#markRead?.(index, messageIds);
-      }
-      // Local and unconditional, unlike the receipt above: what the child heard is this box's
-      // own business, and a parent who turned receipts off has not asked to stop counting.
-      this.#stats?.recordPlayed(index, messageIds.length);
-      void this.#deletePlayed(messageIds, index);
+      this.state.setUnread(index, this.queue.count(index));
+      this.state.setPlaying(null);
+      this.#notesHeard(index, messageIds);
     });
 
-    this.queue.on('playbackAborted', () => {
+    /*
+     * Stopped part-way. What was heard to the end is handled exactly like a drain; the rest,
+     * the cut-off note included, is back in the queue and still blinking.
+     */
+    this.queue.on('playbackAborted', ({ index, messageIds }) => {
+      this.state.setUnread(index, this.queue.count(index));
       this.state.setPlaying(null);
+      this.#notesHeard(index, messageIds);
     });
+  }
+
+  /** Notes the child listened to the end of: receipt, count, and delete. */
+  #notesHeard(index: ButtonIndex, messageIds: readonly string[]): void {
+    if (messageIds.length === 0) return;
+    /*
+     * The receipt is the only way the sender learns a child heard them, and a parent can turn
+     * it off — playing a message should never depend on whether we are willing to report it,
+     * so the local half happens either way.
+     */
+    if (this.#config.current.whatsapp.markPlayedAsRead) {
+      this.#markRead?.(index, messageIds);
+    }
+    // Local and unconditional, unlike the receipt above: what the child heard is this box's
+    // own business, and a parent who turned receipts off has not asked to stop counting.
+    this.#stats?.recordPlayed(index, messageIds.length);
+    void this.#deletePlayed(messageIds, index);
   }
 
   /* ---- capture lifecycle ---- */
@@ -447,9 +459,7 @@ export class DeviceController {
       durationMs = result.durationMs;
     } catch {
       // Capture failed after the fact — tell the child nothing was sent.
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        await this.#safeCue(AudioCue.Oops);
-      }
+      await this.#courtesyCue(AudioCue.Oops);
       return;
     }
 
@@ -462,9 +472,7 @@ export class DeviceController {
      */
     if (durationMs < MIN_USABLE_AUDIO_MS) {
       await rm(path, { force: true }).catch(() => undefined);
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        await this.#safeCue(AudioCue.Oops);
-      }
+      await this.#courtesyCue(AudioCue.Oops);
       return;
     }
 
@@ -476,9 +484,12 @@ export class DeviceController {
      * reported, visually: `reportMessageSent` flashes the lamp. Only a *failure* now adds a
      * second sound, which is the case actually worth interrupting a child for.
      */
-    if (shouldPlayCue(AudioCue.Whoosh, this.state.silentMode)) {
-      await this.#safeCue(AudioCue.Whoosh);
-    }
+    /*
+     * Held back if the child has already moved on to listening — finalising takes seconds on
+     * the Pi, and a whoosh then would cut off the note they tapped for. The lamp still flashes
+     * on delivery.
+     */
+    await this.#courtesyCue(AudioCue.Whoosh);
 
     try {
       await this.#send({ index, path, durationMs });
@@ -487,10 +498,9 @@ export class DeviceController {
       // would make the panel disagree with what the box actually did.
       this.#stats?.recordSent(index, durationMs);
     } catch {
-      // Delivery failed. The file stays for the purge to collect.
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        await this.#safeCue(AudioCue.Oops);
-      }
+      // Delivery failed. The file stays for the purge to collect. The "oops" can arrive up to a
+      // minute later, which is exactly when the child may be listening to something else.
+      await this.#courtesyCue(AudioCue.Oops);
     }
   }
 
@@ -590,6 +600,22 @@ export class DeviceController {
 
   #audio(): DeviceConfig['audio'] {
     return this.#config.current.audio;
+  }
+
+  /**
+   * Every cue that tells the child something, through one gate.
+   *
+   * Two rules, and this is the only place either is applied. Silent mode suppresses it
+   * (`shouldPlayCue`). And **nothing plays over a note**: the speaker is one output, a cue cuts
+   * off whatever is playing (`HalCore.playCue`), and a note cut off by a chime used to be counted
+   * as heard, deleted and reported read to its sender. While a queue plays, the lamp says
+   * everything these would. The bip, which the lockout keeps from ever coinciding with
+   * playback, and the admin panel's speaker test are the only cues that do not come through here.
+   */
+  async #courtesyCue(cue: AudioCue): Promise<void> {
+    if (!shouldPlayCue(cue, this.state.silentMode)) return;
+    if (this.#listeningTo !== null) return;
+    await this.#safeCue(cue);
   }
 
   async #safeCue(cue: AudioCue): Promise<void> {

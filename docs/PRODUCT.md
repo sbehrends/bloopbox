@@ -101,10 +101,16 @@ Bounds:
 
 1. A voice note arrives from a **whitelisted** contact (§4). Anything else is dropped before it is
    downloaded.
-2. In audible mode a soft **"notify"** chime plays. The assigned lamp starts **blinking slowly**
-   (0.8 s on / 0.8 s off).
+2. In audible mode a soft **"notify"** chime plays — **unless a note is already playing**, when it
+   is held back. The assigned lamp starts **blinking slowly** (0.8 s on / 0.8 s off).
+
+   > The speaker is one output, so a chime cuts off whatever is playing. It used to, and the note
+   > it cut off was counted as heard, deleted and reported read. Nothing plays over a note now —
+   > not the chime, the whoosh or the "oops" — and a note that is cut off anyway (the admin panel's
+   > speaker test is the one sound allowed to) goes back to the front of its queue, still unread.
 3. The child taps that button once. Every pending note from that sender plays **sequentially, oldest
-   first**, separated by a short soft chime, and the lamp goes out once the queue finishes.
+   first**, separated by a short soft chime, and the lamp goes out once the queue finishes — or
+   keeps blinking if another note arrived while it played.
 
    The note is **decoded to WAV when it arrives**, not when it is tapped. `aplay` reads no other
    container, and paying for an ffmpeg process at the tap put a visible pause between a child
@@ -688,7 +694,7 @@ else.
 | ------- | ------ |
 | **RAM disk for outbound audio (`tmpfs`)** | **Built.** Captures, ffmpeg conversion and decoded playback buffers live in `/run/bloopbox`, via `RuntimeDirectory=` in both units. `/run` is already a tmpfs, so **nothing the child records** ever touches the card or can fill it |
 | **Inbound notes on the card** | **Built 2026-09-06.** Arriving notes go to `/data/notes` so an unheard one survives a power cut — the most likely restart in a child's room. Bounded by the same 48 h purge, and deleted the moment they are played. See §1 |
-| **Automatic purge (TTL)** | **Built.** Audio is deleted 48 h after creation whether it has been heard or not, swept hourly. Playback deletes a note immediately |
+| **Automatic purge (TTL)** | **Built.** Audio is deleted 48 h after creation whether it has been heard or not, swept hourly — except a note still queued behind a blinking lamp, which waits for the tap rather than vanishing from under it (the queue itself does not outlive a restart past the 8 h recovery window). Playback deletes a note immediately |
 | **Atomic config writes** | **Built.** Temp file → `fsync` → `rename`. A half-written config during power loss would brick the device |
 | **Shut down without pulling the plug** | **Built 2026-09-06.** The box has no power button, and an unplug mid-write is what motivated the row above it. *Device health* → **Shut down** stops the units the ordinary way, which flushes the activity counters and finalises anything in flight. See §3 |
 | **Fallback on invalid config** | **Built.** A missing or corrupt `/data/config.json` falls back to `config.default.json` **in RAM** and boots into onboarding. It never crashes the daemon |

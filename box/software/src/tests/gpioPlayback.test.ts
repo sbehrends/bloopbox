@@ -16,20 +16,37 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * `opengpio` is never loaded here: only `init()` imports it, and playback does not need it.
  */
 
-const spawned: { command: string; args: readonly string[] }[] = [];
+type FakeChild = EventEmitter & { kills: string[] };
+
+const spawned: { command: string; args: readonly string[]; child: FakeChild }[] = [];
+
+/**
+ * How spawned players behave. `ends` plays to the end at once, which is what most tests want.
+ * `holds` keeps playing until killed — a real note is seconds long — and closes by signal when
+ * it is, as aplay does. `stubborn` ignores SIGTERM, so only SIGKILL ends it.
+ */
+const player = { mode: 'ends' as 'ends' | 'holds' | 'stubborn' };
 
 /** Just enough of a ChildProcess for the driver: it listens, and it kills. */
-function fakeChild(): EventEmitter {
-  const child = new EventEmitter();
-  return Object.assign(child, { stderr: null, kill: () => true });
+function fakeChild(): FakeChild {
+  const child = Object.assign(new EventEmitter(), { stderr: null, kills: [] as string[] });
+  const mode = player.mode;
+  return Object.assign(child, {
+    kill: (signal: string) => {
+      child.kills.push(signal);
+      if (mode === 'stubborn' && signal !== 'SIGKILL') return true;
+      setImmediate(() => child.emit('close', null, signal));
+      return true;
+    },
+  });
 }
 
 vi.mock('node:child_process', () => ({
   spawn: (command: string, args: readonly string[]) => {
-    spawned.push({ command, args });
     const child = fakeChild();
+    spawned.push({ command, args, child });
     // A real aplay exits when the file ends; nothing here awaits a timer.
-    setImmediate(() => child.emit('close', 0, null));
+    if (player.mode === 'ends') setImmediate(() => child.emit('close', 0, null));
     return child;
   },
 }));
@@ -62,6 +79,7 @@ async function makeHal() {
 
 beforeEach(async () => {
   spawned.length = 0;
+  player.mode = 'ends';
   decoded.mockClear();
   directory = await mkdtemp(join(tmpdir(), 'bloopbox-playback-'));
 });
@@ -123,8 +141,9 @@ describe('play', () => {
     // The interrupt a button press causes: there is no process to kill yet.
     await hal.stopPlayback();
     release?.();
-    await playing;
 
+    // Never heard, so never counted as played — it used to resolve as if it had been.
+    await expect(playing).resolves.toBe('interrupted');
     expect(spawned.some(({ command }) => command === 'aplay')).toBe(false);
   });
 
@@ -248,6 +267,82 @@ describe('prepare', () => {
 });
 
 describe('playCue', () => {
+  it('says a note played to the end was heard', async () => {
+    const wav = join(directory, 'rec-2.wav');
+    await writeFile(wav, '');
+    const hal = await makeHal();
+
+    await expect(hal.play(wav)).resolves.toBe('completed');
+  });
+
+  /*
+   * One speaker, one plughw device. A cue cuts a note off, and the driver has to say so: a note
+   * cut off by an arrival chime used to resolve as played and be deleted unheard.
+   */
+  describe('a cue over a note', () => {
+    it('reports the note as interrupted, and plays the cue only once it has let go', async () => {
+      player.mode = 'holds';
+      const wav = join(directory, 'rec-3.wav');
+      await writeFile(wav, '');
+      const hal = await makeHal();
+
+      const note = hal.play(wav);
+      await vi.waitFor(() => expect(spawned).toHaveLength(1));
+      const cue = hal.playCue('notify');
+
+      await expect(note).resolves.toBe('interrupted');
+      await vi.waitFor(() => expect(spawned).toHaveLength(2));
+      expect(spawned[0]?.child.kills).toEqual(['SIGTERM']);
+      expect(spawned[1]?.args.at(-1)).toMatch(/notify\.wav$/);
+
+      await hal.stopPlayback();
+      await cue;
+    });
+
+    it('still stops the cue afterwards: the dying note must not wipe the new player', async () => {
+      /*
+       * The note's close handler used to null the player field unconditionally — after the cue's
+       * aplay had been spawned. The next stop then killed nothing, and the device stayed busy.
+       */
+      player.mode = 'holds';
+      const wav = join(directory, 'rec-4.wav');
+      await writeFile(wav, '');
+      const hal = await makeHal();
+
+      const note = hal.play(wav);
+      await vi.waitFor(() => expect(spawned).toHaveLength(1));
+      const cue = hal.playCue('notify');
+      await note;
+      await vi.waitFor(() => expect(spawned).toHaveLength(2));
+
+      await hal.stopPlayback();
+      expect(spawned[1]?.child.kills).toEqual(['SIGTERM']);
+      await cue;
+    });
+
+    it('kills a player that will not stop, rather than waiting on it forever', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        player.mode = 'stubborn';
+        const { PLAYBACK_STOP_TIMEOUT_MS } = await import('../hal/gpioDriver.ts');
+        const wav = join(directory, 'rec-5.wav');
+        await writeFile(wav, '');
+        const hal = await makeHal();
+
+        const note = hal.play(wav);
+        await vi.waitFor(() => expect(spawned).toHaveLength(1));
+        const stopped = hal.stopPlayback();
+        await vi.advanceTimersByTimeAsync(PLAYBACK_STOP_TIMEOUT_MS);
+        await stopped;
+
+        expect(spawned[0]?.child.kills).toEqual(['SIGTERM', 'SIGKILL']);
+        await expect(note).resolves.toBe('interrupted');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('plays the cue WAV directly — cues are generated as WAV and never need ffmpeg', async () => {
     const hal = await makeHal();
 

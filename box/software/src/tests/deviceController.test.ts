@@ -358,16 +358,9 @@ describe('holds on a button with notes waiting', () => {
      * The child is being told to listen, so an "oops" here would cut across the message —
      * cues and playback share one output. The lamp under their finger is the whole answer.
      */
-    // Assigned synchronously by the executor below, which is why it is never undefined here.
-    let finishPlayback: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      finishPlayback = resolve;
-    });
     const path = queueNote();
-    hal.play = async (file: string): Promise<void> => {
-      hal.filesPlayed.push({ path: file, at: Date.now() });
-      await gate;
-    };
+    // The note stays playing until finishPlayback(), and a cue would cut it off, as on the device.
+    hal.holdPlayback = true;
 
     // A tap starts the queue, and it stays open until the gate is released.
     await press(0, 300);
@@ -385,8 +378,8 @@ describe('holds on a button with notes waiting', () => {
     expect(sent).toHaveLength(0);
 
     // And the message the hold interrupted nothing of finishes normally.
-    expect(finishPlayback).toBeTypeOf('function');
-    finishPlayback?.();
+    expect(hal.nowPlaying).toBe(path);
+    hal.finishPlayback();
     await waitFor(() => controller.state.unreadCount(0) === 0, 'the queue to drain');
   });
 
@@ -461,14 +454,7 @@ describe('taps', () => {
 describe('while a note is playing', () => {
   /** Queues a note on button 0, taps it, and holds playback open until the returned call. */
   async function startPlayback(): Promise<() => Promise<void>> {
-    let finish: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    hal.play = async (file: string): Promise<void> => {
-      hal.filesPlayed.push({ path: file, at: Date.now() });
-      await gate;
-    };
+    hal.holdPlayback = true;
     controller.handleIncoming(0, {
       messageId: 'm-playing',
       path: join(workDir, 'm-playing.ogg'),
@@ -481,7 +467,7 @@ describe('while a note is playing', () => {
     hal.clearHistory();
 
     return async () => {
-      finish?.();
+      hal.finishPlayback();
       await waitFor(() => controller.state.playing === null, 'playback to finish');
     };
   }
@@ -535,6 +521,89 @@ describe('while a note is playing', () => {
     await waitFor(() => sent.length > 0, 'the recording to be sent');
 
     expect(sent[0]).toMatchObject({ index: 1 });
+  });
+
+  /*
+   * The ordinary case that used to lose a message: a second note arrives while the child is
+   * listening to the first. The arrival chime cut the first note off — one speaker — and the cut
+   * note was counted as heard, deleted, and reported read. Then the drain zeroed the count, so
+   * the second note's lamp went dark as well.
+   */
+  it('does not let a note arriving mid-playback cut off the one being heard', async () => {
+    const finish = await startPlayback();
+
+    controller.handleIncoming(0, {
+      messageId: 'm-second',
+      path: join(workDir, 'm-second.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 1200,
+    });
+    await flush();
+
+    // No chime over the note: it is still playing, and nothing was deleted or marked read.
+    expect(hal.cueSequence()).toEqual([]);
+    expect(hal.nowPlaying).toBe(join(workDir, 'm-playing.ogg'));
+    expect(marked).toEqual([]);
+
+    await finish();
+    await flush();
+
+    // The first note was heard to the end, so it is the only one reported and counted.
+    expect(marked).toEqual([{ index: 0, messageIds: ['m-playing'] }]);
+    expect(counted.filter((entry) => entry.kind === 'played')).toEqual([
+      { kind: 'played', index: 0, value: 1 },
+    ]);
+    // And the second is still waiting, with its lamp still lit.
+    expect(controller.queue.count(0)).toBe(1);
+    expect(controller.state.unreadCount(0)).toBe(1);
+  });
+
+  it('puts a note that was cut off back in the queue, unheard', async () => {
+    /*
+     * The admin panel's speaker test is the one cue allowed to play over anything. Whatever it
+     * interrupts must survive it: back in the queue, lamp lit, not deleted, not reported read.
+     */
+    const path = join(workDir, 'm-playing.ogg');
+    await writeFile(path, 'note');
+    await startPlayback();
+
+    await controller.playTestCue();
+    await waitFor(() => controller.state.playing === null, 'playback to stop');
+    await flush();
+
+    expect(controller.queue.count(0)).toBe(1);
+    expect(controller.state.unreadCount(0)).toBe(1);
+    expect(marked).toEqual([]);
+    expect(counted.filter((entry) => entry.kind === 'played')).toEqual([]);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it('holds back the "oops" of a send that fails while the child is listening', async () => {
+    // A failed send answers up to a minute later, which is exactly when a queue may be playing.
+    hal.fixedDurationMs = 3000;
+    sendResult = 'fail';
+    let failSend: (() => void) | undefined;
+    const pendingSend = new Promise<void>((_resolve, reject) => {
+      failSend = () => reject(new Error('bridge offline'));
+    });
+    const deferred = new DeviceController({
+      hal,
+      config,
+      send: () => pendingSend,
+    });
+    await controller.stop();
+    controller = deferred;
+    controller.setStatus(DeviceStatus.Ready);
+
+    await press(1, HOLD_MS);
+    await waitFor(() => hal.cueSequence().includes(AudioCue.Whoosh), 'the send to start');
+    const finish = await startPlayback();
+
+    failSend?.();
+    await flush();
+    expect(hal.cueSequence()).not.toContain(AudioCue.Oops);
+    expect(hal.nowPlaying).toBe(join(workDir, 'm-playing.ogg'));
+    await finish();
   });
 
   it('keeps ignoring a button held down across the end of playback', async () => {

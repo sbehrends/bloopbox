@@ -18,6 +18,7 @@ import type {
   Hal,
   HalEvents,
   HalOptions,
+  PlaybackOutcome,
   RecordingHandle,
   RecordingResult,
 } from './types.ts';
@@ -131,6 +132,12 @@ export const CAPTURE_FORMAT = { rate: CAPTURE_RATE, channels: 1, format: 'S16_LE
 const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
 
 /**
+ * How long a stopped aplay gets to exit before SIGKILL. It has nothing to finalise, so this only
+ * bounds how long a hung player can hold the device the next sound needs. Exported for tests.
+ */
+export const PLAYBACK_STOP_TIMEOUT_MS = 500;
+
+/**
  * The container formats `aplay` can read by itself: WAV, AU/SND and VOC. It is not a
  * decoder — it hands PCM to ALSA.
  *
@@ -164,6 +171,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   #captureProcess: ChildProcess | null = null;
   #captureId: string | null = null;
   #playbackProcess: ChildProcess | null = null;
+  /** Settles when {@link #playbackProcess} has exited, so a stop can wait for the device. */
+  #playbackExited: Promise<void> | null = null;
   /** Bumped by every `stopPlayback()`, so a decode still in flight knows it was cancelled. */
   #playbackEpoch = 0;
 
@@ -356,12 +365,11 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
    * `APLAY_CONTAINERS`. `prepare()` will usually have done that already; when it has not, the
    * decode happens here and the file is cleaned up straight after.
    */
-  async play(path: string): Promise<void> {
+  async play(path: string): Promise<PlaybackOutcome> {
     await this.stopPlayback();
 
     if (APLAY_CONTAINERS.has(extname(path).toLowerCase())) {
-      await this.#spawnPlayback(path);
-      return;
+      return this.#spawnPlayback(path);
     }
 
     /*
@@ -370,8 +378,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
      */
     const prepared = this.#decoded.get(path);
     if (prepared !== undefined && (await exists(prepared))) {
-      await this.#spawnPlayback(prepared);
-      return;
+      return this.#spawnPlayback(prepared);
     }
     this.#decoded.delete(path);
 
@@ -388,28 +395,50 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
       /*
        * A `stopPlayback()` that lands mid-decode has no process to kill, so it is honoured
        * here instead. Without this, a button pressed to interrupt the queue would start the
-       * note playing a moment *after* the microphone opened.
+       * note playing a moment *after* the microphone opened. And it is an interruption, not a
+       * success: the note was never heard, so it must not be counted as played.
        */
-      if (epoch === this.#playbackEpoch) await this.#spawnPlayback(decodedPath);
+      if (epoch !== this.#playbackEpoch) return 'interrupted';
+      return await this.#spawnPlayback(decodedPath);
     } finally {
       await rm(decodedPath, { force: true });
     }
   }
 
   async playCue(cue: AudioCue): Promise<void> {
-    // Cues are short; letting them interrupt each other beats queueing them.
-    // Always WAV (scripts/generate-sounds.ts), so they never need decoding.
+    // Cues are short; letting them interrupt each other beats queueing them. That includes a
+    // note — see the contract in types.ts. Always WAV (scripts/generate-sounds.ts), so they
+    // never need decoding.
     await this.stopPlayback();
     await this.#spawnPlayback(cuePath(cue));
   }
 
+  /**
+   * Stops the player and waits until it has exited.
+   *
+   * Waiting is the point. The device is `plughw`, which only one process can open, so spawning
+   * the next `aplay` while the last is still dying makes the new one fail with "device busy" —
+   * and a failed note used to be counted as played and deleted. SIGKILL if it will not go.
+   */
   async stopPlayback(): Promise<void> {
     this.#playbackEpoch += 1;
     const child = this.#playbackProcess;
-    if (!child) return;
+    const exited = this.#playbackExited;
     this.#playbackProcess = null;
+    this.#playbackExited = null;
+    if (!child || !exited) return;
+
     child.kill('SIGTERM');
-    await Promise.resolve();
+    let timer: NodeJS.Timeout | undefined;
+    const escalated = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve();
+      }, PLAYBACK_STOP_TIMEOUT_MS);
+      timer.unref();
+    });
+    await Promise.race([exited, escalated]);
+    clearTimeout(timer);
   }
 
   /** Sets the ALSA mixer volume. Callers must clamp to the config cap first. */
@@ -457,28 +486,48 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     });
   }
 
-  async #spawnPlayback(path: string): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
+  async #spawnPlayback(path: string): Promise<PlaybackOutcome> {
+    const child = spawn('aplay', ['-D', ALSA_PLAYBACK_DEVICE, '-q', path], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let markExited: (() => void) | undefined;
+    const exited = new Promise<void>((resolve) => {
+      markExited = resolve;
+    });
+    this.#playbackProcess = child;
+    this.#playbackExited = exited;
+
+    /*
+     * Only ever clears its *own* child. The old code nulled the field unconditionally, so a
+     * note killed by a cue closed a moment after the cue's aplay had been spawned and wiped the
+     * reference to it — the next stop then killed nothing, and the device stayed busy.
+     */
+    const forget = (): void => {
+      if (this.#playbackProcess === child) {
+        this.#playbackProcess = null;
+        this.#playbackExited = null;
+      }
+      markExited?.();
+    };
+
+    return new Promise<PlaybackOutcome>((resolve, reject) => {
       let settled = false;
-      const child = spawn('aplay', ['-D', ALSA_PLAYBACK_DEVICE, '-q', path], {
-        stdio: ['ignore', 'ignore', 'pipe'],
-      });
-      this.#playbackProcess = child;
 
       child.on('error', (error) => {
+        forget();
         if (settled) return;
         settled = true;
-        this.#playbackProcess = null;
         reject(new Error(`aplay failed: ${error.message}`));
       });
 
       child.on('close', (code, signal) => {
+        forget();
         if (settled) return;
         settled = true;
-        this.#playbackProcess = null;
-        // A deliberate stopPlayback() arrives as a signal, which is not a failure.
-        if (code === 0 || signal !== null) resolve();
-        else reject(new Error(`aplay exited with code ${code}`));
+        // A stop arrives as a signal: not a failure, but not heard to the end either.
+        if (signal !== null) resolve('interrupted');
+        else if (code === 0) resolve('completed');
+        else reject(new Error(`aplay exited with code ${String(code)}`));
       });
     });
   }

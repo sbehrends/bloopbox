@@ -464,8 +464,9 @@ async function main(): Promise<void> {
 
   const purger = new AudioPurger({
     directory: RECORDING_DIRECTORY,
-    // Notes still waiting to be played must survive their own TTL.
-    keep: controller.protectedFiles(),
+    // Notes still waiting to be played must survive their own TTL. A function, so each sweep
+    // sees the queue as it is then rather than as it was at boot.
+    keep: () => controller.protectedFiles(),
     onResult: (result) => {
       log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'audio purged');
     },
@@ -479,7 +480,7 @@ async function main(): Promise<void> {
    */
   const notesPurger = new AudioPurger({
     directory: NOTES_DIRECTORY,
-    keep: controller.protectedFiles(),
+    keep: () => controller.protectedFiles(),
     onResult: (result) => {
       log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'notes purged');
     },

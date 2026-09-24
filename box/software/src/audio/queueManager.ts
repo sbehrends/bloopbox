@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { AudioCue } from './cues.ts';
 import type { ButtonIndex } from '../config/schema.ts';
-import type { Hal } from '../hal/types.ts';
+import type { Hal, PlaybackOutcome } from '../hal/types.ts';
 
 /**
  * Sequential playback of received voice notes (PRODUCT.md §1, §5).
@@ -34,8 +34,15 @@ export type QueueEvents = {
    * mark them read upstream and delete the files.
    */
   queueDrained: [{ index: ButtonIndex; messageIds: readonly string[] }];
-  /** Playback was interrupted before finishing. */
-  playbackAborted: [{ index: ButtonIndex; remaining: number }];
+  /**
+   * Playback stopped before the end — a `stop()`, or a sound that cut a note off.
+   *
+   * `messageIds` are the notes heard to the end before that, which the caller treats exactly as
+   * it treats a drained queue: they were heard. Everything else, the interrupted note included,
+   * is back at the front of the queue, still unread. Losing either half was a bug: heard notes
+   * reappeared as unread after a restart, and a cut-off note was deleted as if heard.
+   */
+  playbackAborted: [{ index: ButtonIndex; messageIds: readonly string[]; remaining: number }];
 };
 
 export type QueueManagerOptions = {
@@ -110,20 +117,29 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
     this.emit('playbackStarted', { index, count: batch.length });
 
     const played: string[] = [];
+    /** Puts `batch[position]` onward back at the front, in order, and reports the stop. */
+    const abortFrom = (position: number): void => {
+      const remaining = batch.slice(position);
+      this.#queues[index].unshift(...remaining);
+      this.emit('playbackAborted', { index, messageIds: played, remaining: remaining.length });
+    };
 
     try {
       for (const [position, note] of batch.entries()) {
         if (this.#shouldAbort()) {
-          // Put the unplayed remainder back at the front, preserving order.
-          const remaining = batch.slice(position);
-          this.#queues[index].unshift(...remaining);
-          this.emit('playbackAborted', { index, remaining: remaining.length });
+          abortFrom(position);
           return;
         }
 
         // A chime between notes so a child can tell one message from the next.
         if (position > 0 && this.#playCues()) {
           await this.#safePlayCue(AudioCue.Chime);
+          // Asked again: a stop that landed during the chime killed only the chime, and the
+          // next note would otherwise play in full over whatever the stop was for.
+          if (this.#shouldAbort()) {
+            abortFrom(position);
+            return;
+          }
         }
 
         this.emit('noteStarted', {
@@ -133,9 +149,15 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
           count: batch.length,
         });
 
-        const ok = await this.#safePlay(note.path);
+        const outcome = await this.#safePlay(note.path);
+        this.emit('noteFinished', { index, messageId: note.messageId, ok: outcome !== 'failed' });
+
+        // Cut off part-way: not heard, so back it goes, with everything after it.
+        if (outcome === 'interrupted') {
+          abortFrom(position);
+          return;
+        }
         played.push(note.messageId);
-        this.emit('noteFinished', { index, messageId: note.messageId, ok });
       }
 
       this.emit('queueDrained', { index, messageIds: played });
@@ -146,8 +168,7 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
   }
 
   /**
-   * Interrupts playback. The current note finishes its `play()` call, then the loop stops
-   * and returns the remainder to the queue.
+   * Interrupts playback. The current note is cut off, and it and the rest go back to the queue.
    */
   async stop(): Promise<void> {
     if (this.#playing === null) return;
@@ -176,14 +197,15 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
 
   /**
    * A failed clip must not strand the rest of the queue — a missing or corrupt file is
-   * skipped so the remaining messages still play.
+   * skipped so the remaining messages still play, and it is counted with the played ones: a file
+   * that cannot be played will not become playable by blinking at the child until the purge.
+   * An *interruption* is different, and is reported as one: the note was fine, it was cut off.
    */
-  async #safePlay(path: string): Promise<boolean> {
+  async #safePlay(path: string): Promise<PlaybackOutcome | 'failed'> {
     try {
-      await this.#hal.play(path);
-      return true;
+      return await this.#hal.play(path);
     } catch {
-      return false;
+      return 'failed';
     }
   }
 

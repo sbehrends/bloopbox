@@ -673,6 +673,33 @@ back, one from yesterday is a confusing thing to hand a small child.
 Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys' own docs, or some
 clients show the voice bubble but refuse to play it.
 
+### Nothing plays over a note
+
+There is one speaker and one `plughw` device, so `playCue` cuts off whatever is playing. Until
+2026-09-23 that included the note a child was listening to. A second note arriving played the
+notify chime, the chime killed `aplay`, the killed note resolved as a success, and the queue
+counted it as played, deleted it and reported it read. Then the drain zeroed the unread count, so
+the new note's lamp went dark too. Four rules now, each locked by a test:
+
+- **`hal.play()` says how it ended**: `'completed'` or `'interrupted'`. Only a completed note is
+  heard. An interrupted one goes back to the front of the queue with everything after it, and
+  `playbackAborted` carries the notes that *were* heard, so they are deleted and reported rather
+  than restored as unread at the next restart. A note that fails outright is still skipped and
+  counted, so a corrupt file cannot blink forever.
+- **Courtesy cues wait for the note**. Notify, whoosh, oops and boot all go through
+  `DeviceController.#courtesyCue`, which drops them while `#listeningTo` is set. The lamp says
+  everything they would. The admin panel's speaker test is the one sound allowed through, and what
+  it interrupts survives.
+- **Unread follows the queue**: `setUnread(index, queue.count(index))` after a drain or an abort,
+  never a clear.
+- **A stop waits for the player to exit** (SIGKILL after `PLAYBACK_STOP_TIMEOUT_MS`), and a dying
+  player clears only its *own* reference. The old handler nulled the field after the cue's `aplay`
+  had been spawned, so the next stop killed nothing and the device stayed busy.
+
+`MockHal.holdPlayback` keeps a note playing until something interrupts it, as the real speaker does.
+Without it the controller tests could not see any of this, because the mock's cues never cut
+anything off.
+
 ### Inbound notes are decoded on arrival, not on the tap
 
 `aplay` reads WAV, AU and VOC and nothing else, and a WhatsApp voice note is Ogg/Opus — so playing

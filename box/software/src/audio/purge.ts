@@ -28,8 +28,14 @@ export type PurgeResult = {
 export type PurgeOptions = {
   readonly directory: string;
   readonly ttlMs?: number;
-  /** Files to keep regardless of age — e.g. notes still queued for playback. */
-  readonly keep?: ReadonlySet<string>;
+  /**
+   * Files to keep regardless of age — notes still queued behind a blinking lamp.
+   *
+   * A function is asked afresh on every sweep. A plain set is a snapshot, which is what the
+   * daemon used to pass: taken once at boot, before any note had arrived, so it protected
+   * nothing and a note that was still blinking could be swept out from under the lamp.
+   */
+  readonly keep?: ReadonlySet<string> | (() => ReadonlySet<string>);
   /** Injectable clock, so tests need no real waiting. */
   readonly now?: () => number;
 };
@@ -48,7 +54,8 @@ function isPurgeable(name: string): boolean {
 export async function purgeExpiredAudio(options: PurgeOptions): Promise<PurgeResult> {
   const ttlMs = options.ttlMs ?? AUDIO_TTL_MS;
   const now = options.now ?? Date.now;
-  const keep = options.keep ?? new Set<string>();
+  const keep =
+    typeof options.keep === 'function' ? options.keep() : (options.keep ?? new Set<string>());
 
   let entries: string[];
   try {

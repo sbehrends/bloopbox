@@ -229,6 +229,69 @@ describe('interruption', () => {
     expect(queue.peek(0).map((n) => n.messageId)).toEqual([second.messageId, third.messageId]);
   });
 
+  it('reports the notes heard before the stop, so they are not restored as unread', async () => {
+    // Otherwise they are neither in the queue nor deleted, and the next restart — every
+    // settings save — puts heard notes back on the lamp.
+    const queue = manager();
+    const first = note();
+    const second = note();
+    queue.enqueue(0, first);
+    queue.enqueue(0, second);
+    queue.on('noteFinished', () => {
+      void queue.stop();
+    });
+
+    let heard: readonly string[] = [];
+    queue.on('playbackAborted', ({ messageIds }) => (heard = messageIds));
+    await queue.playQueue(0);
+
+    expect(heard).toEqual([first.messageId]);
+    expect(queue.peek(0).map((n) => n.messageId)).toEqual([second.messageId]);
+  });
+
+  it('puts a note that was cut off back at the front, unheard', async () => {
+    // One speaker: a cue or a stop cuts a note off, and a cut-off note was never listened to.
+    hal.holdPlayback = true;
+    const queue = manager();
+    const first = note();
+    const second = note();
+    queue.enqueue(0, first);
+    queue.enqueue(0, second);
+
+    let aborted: { messageIds: readonly string[]; remaining: number } | null = null;
+    let drained = false;
+    queue.on('playbackAborted', (event) => (aborted = event));
+    queue.on('queueDrained', () => (drained = true));
+
+    const playing = queue.playQueue(0);
+    await Promise.resolve();
+    await hal.playCue(AudioCue.Notify);
+    await playing;
+
+    expect(drained).toBe(false);
+    expect(aborted).toEqual({ index: 0, messageIds: [], remaining: 2 });
+    expect(queue.peek(0).map((n) => n.messageId)).toEqual([first.messageId, second.messageId]);
+  });
+
+  it('does not play the next note when the stop lands during the chime between two', async () => {
+    const queue = manager();
+    const first = note();
+    const second = note();
+    queue.enqueue(0, first);
+    queue.enqueue(0, second);
+
+    const playCue = hal.playCue.bind(hal);
+    hal.playCue = async (cue) => {
+      await playCue(cue);
+      // The stop arrives while the separator is playing.
+      if (cue === AudioCue.Chime) await queue.stop();
+    };
+    await queue.playQueue(0);
+
+    expect(hal.playSequence()).toEqual([first.path]);
+    expect(queue.peek(0).map((n) => n.messageId)).toEqual([second.messageId]);
+  });
+
   it('stop() is a no-op when nothing is playing', async () => {
     const queue = manager();
     await expect(queue.stop()).resolves.toBeUndefined();

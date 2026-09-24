@@ -192,6 +192,21 @@ export class DeviceController {
     this.#animator.blank();
   }
 
+  /**
+   * Stops, then lets go of the HAL for good: its button listeners are removed, so a press
+   * reaches nothing here any more.
+   *
+   * Separate from `stop()` because the listeners are attached at construction, not at
+   * `start()` — a stopped controller cannot get them back. Anything that builds a second
+   * controller on the same HAL must dispose of the first, or both answer every press: two bips,
+   * two microphones, two sends. The daemon never does, since a config save restarts the process.
+   */
+  async dispose(): Promise<void> {
+    this.#hal.off('buttonDown', this.#onButtonDown);
+    this.#hal.off('buttonUp', this.#onButtonUp);
+    await this.stop();
+  }
+
   /** Which HAL driver is active, for the admin panel and logs. */
   get driverName(): string {
     return this.#hal.name;
@@ -317,13 +332,17 @@ export class DeviceController {
     });
   }
 
+  // Fields rather than inline closures, so `dispose()` can hand the same functions to `off`.
+  readonly #onButtonDown = ({ index }: { index: ButtonIndex }): void => {
+    this.#interpreter.handleButtonDown(index);
+  };
+  readonly #onButtonUp = ({ index }: { index: ButtonIndex }): void => {
+    this.#interpreter.handleButtonUp(index);
+  };
+
   #wireButtons(): void {
-    this.#hal.on('buttonDown', ({ index }) => {
-      this.#interpreter.handleButtonDown(index);
-    });
-    this.#hal.on('buttonUp', ({ index }) => {
-      this.#interpreter.handleButtonUp(index);
-    });
+    this.#hal.on('buttonDown', this.#onButtonDown);
+    this.#hal.on('buttonUp', this.#onButtonUp);
   }
 
   #wireInterpreter(): void {

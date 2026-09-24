@@ -119,7 +119,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await controller.stop();
+  await controller.dispose();
   vi.useRealTimers();
   await rm(workDir, { recursive: true, force: true });
 });
@@ -619,7 +619,7 @@ describe('while a note is playing', () => {
       config,
       send: () => pendingSend,
     });
-    await controller.stop();
+    await controller.dispose();
     controller = deferred;
     controller.setStatus(DeviceStatus.Ready);
 
@@ -873,7 +873,7 @@ describe('silent mode', () => {
    * on every machine but Greenwich.
    */
   async function withQuietHours(now: Date): Promise<DeviceController> {
-    await controller.stop();
+    await controller.dispose();
     await config.update({
       quietHours: { enabled: true, startTime: '20:00', endTime: '07:00', timezone: 'UTC' },
     });
@@ -891,14 +891,14 @@ describe('silent mode', () => {
 
     expect(scheduled.state.silentMode).toBe(true);
     expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
-    await scheduled.stop();
+    await scheduled.dispose();
   });
 
   it('stays audible outside quiet hours', async () => {
     const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 12, 0, 0)));
 
     expect(scheduled.state.silentMode).toBe(false);
-    await scheduled.stop();
+    await scheduled.dispose();
   });
 
   it('falls silent on the boundary itself, not up to a minute after it', async () => {
@@ -908,7 +908,7 @@ describe('silent mode', () => {
 
     await vi.advanceTimersByTimeAsync(30 * 1000);
     expect(scheduled.state.silentMode).toBe(true);
-    await scheduled.stop();
+    await scheduled.dispose();
   });
 
   /*
@@ -947,11 +947,11 @@ describe('silent mode', () => {
     // The next night starts as scheduled — the override was for one night, not for good.
     expect(scheduled.state.silentMode).toBe(true);
     expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
-    await scheduled.stop();
+    await scheduled.dispose();
   });
 
   it('reads the window in the configured zone, not the device clock', async () => {
-    await controller.stop();
+    await controller.dispose();
     await config.update({
       quietHours: {
         enabled: true,
@@ -967,7 +967,7 @@ describe('silent mode', () => {
     await scheduled.start();
 
     expect(scheduled.state.silentMode).toBe(true);
-    await scheduled.stop();
+    await scheduled.dispose();
   });
 });
 
@@ -1087,6 +1087,45 @@ describe('volume', () => {
   });
 });
 
+describe('disposal', () => {
+  /*
+   * The listeners are attached at construction, so a controller that is only stopped keeps
+   * answering the HAL. Two on one HAL each bipped and opened a microphone for the same press.
+   */
+  it('lets go of the HAL, so a controller built after it is the only one answering', async () => {
+    await controller.dispose();
+    const start = vi.spyOn(hal, 'startRecording');
+    const rebuilt = new DeviceController({
+      hal,
+      config,
+      send: (request) => {
+        sent.push(request);
+        return Promise.resolve();
+      },
+    });
+    rebuilt.setStatus(DeviceStatus.Ready);
+    hal.fixedDurationMs = 3000;
+    hal.clearHistory();
+
+    await press(0, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
+    await flush();
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(1);
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop, AudioCue.Whoosh]);
+    expect(hal.listenerCount('buttonDown')).toBe(1);
+    await rebuilt.dispose();
+    expect(hal.listenerCount('buttonDown')).toBe(0);
+  });
+
+  it('is safe to call twice', async () => {
+    await controller.dispose();
+    await controller.dispose();
+    expect(hal.listenerCount('buttonUp')).toBe(0);
+  });
+});
+
 describe('config is snapshot, not watched', () => {
   it('ignores a config change until the process restarts', async () => {
     await config.update({ buttons: { recordThresholdMs: 1500 } });
@@ -1106,7 +1145,7 @@ describe('config is snapshot, not watched', () => {
     await config.update({ buttons: { recordThresholdMs: 1500 } });
 
     // Standing in for the restart.
-    await controller.stop();
+    await controller.dispose();
     const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
     rebuilt.setStatus(DeviceStatus.Ready);
 
@@ -1120,7 +1159,7 @@ describe('config is snapshot, not watched', () => {
     hal.releaseButton(0);
     await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
     await flush();
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 });
 
@@ -1135,12 +1174,12 @@ describe('read-only mode', () => {
   /**
    * Stands in for the restart a config save triggers, since config is snapshot at boot.
    *
-   * On a **fresh** HAL, not the shared one: `stop()` resets the interpreter but leaves the
-   * old controller's `buttonDown` listeners attached, so a press on the shared mock would be
-   * answered by the two-way controller as well and the cue log would carry both replies.
+   * On a **fresh** HAL, so the cue log starts empty. The two-way controller is disposed as
+   * well, not just stopped: `stop()` leaves its `buttonDown` listeners attached, and a press on
+   * a shared mock would be answered by both controllers.
    */
   async function readOnlyController(quietHours = false): Promise<DeviceController> {
-    await controller.stop();
+    await controller.dispose();
     await config.update({
       mode: { readOnly: true },
       ...(quietHours
@@ -1190,7 +1229,7 @@ describe('read-only mode', () => {
     // Releasing adds nothing: no bip, no whoosh, no second oops, and nothing sent.
     expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
     expect(sent).toHaveLength(0);
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 
   it('still plays a waiting note on a tap', async () => {
@@ -1210,7 +1249,7 @@ describe('read-only mode', () => {
 
     expect(hal.playSequence()).toEqual([join(workDir, 'm-ro.ogg')]);
     expect(hal.cueSequence()).not.toContain(AudioCue.Oops);
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 
   it('says nothing at all during quiet hours', async () => {
@@ -1228,7 +1267,7 @@ describe('read-only mode', () => {
     expect(hal.cueSequence()).toEqual([]);
     expect(hal.activeRecordings.size).toBe(0);
     expect(sent).toHaveLength(0);
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 });
 

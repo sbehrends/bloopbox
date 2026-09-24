@@ -350,6 +350,10 @@ run on **fake timers** — never add a real sleep. Where a code path awaits real
 `waitFor` condition rather than a fixed number of yields: fixed flushes passed in isolation and
 failed intermittently under parallel load.
 
+A test that builds a second `DeviceController` on the same `MockHal` must **`dispose()`** the first,
+not just `stop()` it: the HAL listeners are attached at construction and only `dispose()` removes
+them, so a stopped controller still answers every press.
+
 Server-layer tests drive a **real Express app on an ephemeral port with `fetch`**, assembled the way
 `hardware-server.ts` assembles it — see `src/tests/support/apiHarness.ts`. No supertest.
 `bridgeLink.test.ts` uses a real Socket.io server and client, because the token gate is handshake

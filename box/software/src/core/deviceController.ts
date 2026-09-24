@@ -306,6 +306,26 @@ export class DeviceController {
     return true;
   }
 
+  /**
+   * The sender deleted a note for everyone (PRODUCT.md §1): take it off the button and the card.
+   *
+   * Only a note this box is still holding for that button — an id it never queued, or queued on
+   * a different button, does nothing, so a revoke can only ever remove what its own chat sent.
+   * A note already playing is left to finish (see `AudioQueueManager.remove`) and is then deleted
+   * as heard, like any other. Never marked read: nothing was heard.
+   *
+   * Returns whether anything was removed.
+   */
+  revokeNote(index: ButtonIndex, messageId: string): boolean {
+    const note = this.queue.remove(index, messageId);
+    if (note === null) return false;
+    this.#pathsByMessageId.delete(messageId);
+    // The count follows the queue, as it does after playback: the lamp goes out if that was all.
+    this.state.setUnread(index, this.queue.count(index));
+    void this.#discard(note.path);
+    return true;
+  }
+
   /** Files still queued for playback, which the purge must not delete. */
   protectedFiles(): Set<string> {
     const paths = new Set<string>();
@@ -606,6 +626,12 @@ export class DeviceController {
           await this.#hal.release(path);
         }),
     );
+  }
+
+  /** Deletes one note's file and the decode `prepare()` made of it. Never rejects. */
+  async #discard(path: string): Promise<void> {
+    await rm(path, { force: true }).catch(() => undefined);
+    await this.#hal.release(path).catch(() => undefined);
   }
 
   #playedPaths(messageIds: readonly string[]): string[] {

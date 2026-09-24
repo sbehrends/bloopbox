@@ -883,6 +883,23 @@ still running then can deliver a note the child was told had failed, so the clie
 trying each in turn, and on Node it is the socket's idle timeout rather than a deadline — hence 20 s
 and not 45: two stalled hosts still answer inside the minute.
 
+### "Delete for everyone"
+
+Baileys 7.0.0-rc14 reports it on `messages.update` as `{ key: { …the revoker's key, id: <deleted
+id> }, update: { message: null, messageStubType: REVOKE } }` (`Utils/process-message.js`), and lets
+it through from other users on purpose. The client turns that into a `revoked` event addressed like a
+voice note; the bridge runs it through `whitelist.evaluate`, and only for an allowed chat sends
+`wa:revoked { index, messageId }` — the button the whitelist resolved, not just an id. The hardware
+server calls `DeviceController.revokeNote`, which removes the note only if **that button** holds
+that id (`AudioQueueManager.remove`), resets unread to `queue.count()`, deletes the file and
+`hal.release()`s its decode.
+
+Two races are covered. A revoke that arrives while its note is still downloading finds nothing in
+the queue, so the bridge also remembers revoked ids and throws the file away when the download
+lands. And revokes wait behind the same `HoldUntilReady` as notes, in one queue, so one is never
+judged before its own note. A note already playing is not interrupted; `remove` skips any later in
+the run it belongs to.
+
 ## The whitelist is the safety boundary
 
 [`src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) is the most important file in the

@@ -123,6 +123,14 @@ Bounds:
 
 A played note's file is deleted immediately, which is what makes *present on disk* mean *unread*.
 
+**"Delete for everyone" is honoured.** If the sender deletes a note the box is still holding, it
+comes off the button and off the card, and the lamp follows what is left — out if that was the only
+one. Nothing is marked read. Only the chat that sent it can take it back: the revoke goes through
+the same whitelist, and must name a note queued on that chat's own button. A note that has
+**already started playing is left to finish** — cutting a voice off mid-word is a stranger thing
+for a child than hearing the end of it — and is then deleted as heard, like any other. A note later
+in the same run is skipped.
+
 ### Listening comes first
 
 **A button with notes waiting takes no message until they have been heard.** While its lamp is

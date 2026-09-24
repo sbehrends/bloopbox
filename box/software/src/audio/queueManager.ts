@@ -58,6 +58,20 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
   readonly #queues: [QueuedNote[], QueuedNote[], QueuedNote[]] = [[], [], []];
   #playing: ButtonIndex | null = null;
   #abort = false;
+  /**
+   * The run `playQueue` took off the front of a queue, while it plays.
+   *
+   * Those notes are out of `#queues` for the duration, so `remove` has to look here too, or a
+   * note deleted for everyone would still be played if it was merely later in the same run.
+   * `started` is every note that has begun, which `remove` leaves alone; `removed` is what the
+   * loop skips.
+   */
+  #run: {
+    readonly index: ButtonIndex;
+    readonly notes: readonly QueuedNote[];
+    readonly started: Set<string>;
+    readonly removed: Set<string>;
+  } | null = null;
 
   constructor(options: QueueManagerOptions) {
     super();
@@ -114,12 +128,14 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
 
     this.#playing = index;
     this.#abort = false;
+    const run = { index, notes: batch, started: new Set<string>(), removed: new Set<string>() };
+    this.#run = run;
     this.emit('playbackStarted', { index, count: batch.length });
 
     const played: string[] = [];
     /** Puts `batch[position]` onward back at the front, in order, and reports the stop. */
     const abortFrom = (position: number): void => {
-      const remaining = batch.slice(position);
+      const remaining = batch.slice(position).filter((note) => !run.removed.has(note.messageId));
       this.#queues[index].unshift(...remaining);
       this.emit('playbackAborted', { index, messageIds: played, remaining: remaining.length });
     };
@@ -130,6 +146,8 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
           abortFrom(position);
           return;
         }
+        // Deleted by its sender while it waited its turn: not played, and no chime for it.
+        if (run.removed.has(note.messageId)) continue;
 
         // A chime between notes so a child can tell one message from the next.
         if (position > 0 && this.#playCues()) {
@@ -142,6 +160,9 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
           }
         }
 
+        // Asked a third time: a revoke can land during the chime too.
+        if (run.removed.has(note.messageId)) continue;
+        run.started.add(note.messageId);
         this.emit('noteStarted', {
           index,
           messageId: note.messageId,
@@ -164,6 +185,7 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
     } finally {
       this.#playing = null;
       this.#abort = false;
+      this.#run = null;
     }
   }
 
@@ -174,6 +196,30 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
     if (this.#playing === null) return;
     this.#abort = true;
     await this.#hal.stopPlayback();
+  }
+
+  /**
+   * Takes one note out of a contact's queue, returning it for cleanup, or null if it is not
+   * there to take.
+   *
+   * For "delete for everyone". A note still waiting — in the queue, or later in a run that is
+   * playing — is removed. **A note that has started playing is left alone**: it is already
+   * coming out of the speaker, cutting it off mid-word would be a stranger thing for a child
+   * than hearing the end of it, and once it finishes it is deleted as heard anyway.
+   */
+  remove(index: ButtonIndex, messageId: string): QueuedNote | null {
+    const queue = this.#queues[index];
+    const at = queue.findIndex((note) => note.messageId === messageId);
+    if (at !== -1) return queue.splice(at, 1)[0] ?? null;
+
+    const run = this.#run;
+    if (run?.index !== index || run.started.has(messageId) || run.removed.has(messageId)) {
+      return null;
+    }
+    const note = run.notes.find((candidate) => candidate.messageId === messageId);
+    if (note === undefined) return null;
+    run.removed.add(messageId);
+    return note;
   }
 
   /** Drops everything queued for a contact, returning the removed notes for cleanup. */

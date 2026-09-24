@@ -27,6 +27,7 @@ type Rig = {
   readonly link: BridgeLink;
   readonly statuses: { state: string; detail?: string; qr?: string }[];
   readonly incoming: IncomingNote[];
+  readonly revoked: { index: number; messageId: string }[];
   readonly connectionChanges: boolean[];
   /** Opens a bridge client. Rejects with the handshake error when the token is refused. */
   connect: (token?: string) => Promise<ClientSocket>;
@@ -38,6 +39,7 @@ async function startRig(token = ''): Promise<Rig> {
   const server = new IoServer(httpServer);
   const statuses: { state: string; detail?: string; qr?: string }[] = [];
   const incoming: IncomingNote[] = [];
+  const revoked: { index: number; messageId: string }[] = [];
   const connectionChanges: boolean[] = [];
 
   const link = registerBridgeNamespace({
@@ -45,6 +47,7 @@ async function startRig(token = ''): Promise<Rig> {
     token,
     onStatus: (payload) => statuses.push(payload),
     onIncoming: (note) => incoming.push(note),
+    onRevoked: (note) => revoked.push(note),
     onConnectionChange: (connected) => connectionChanges.push(connected),
   });
 
@@ -61,6 +64,7 @@ async function startRig(token = ''): Promise<Rig> {
     link,
     statuses,
     incoming,
+    revoked,
     connectionChanges,
     connect: (provided) =>
       new Promise<ClientSocket>((resolve, reject) => {
@@ -320,6 +324,22 @@ describe('an incoming voice note', () => {
 
     expect(rig.incoming).toEqual([]);
     expect(rig.link.connected).toBe(true);
+  });
+});
+
+describe('wa:revoked', () => {
+  it('hands a well-formed revoke to the hardware side, and drops a malformed one', async () => {
+    rig = await startRig();
+    const client = await rig.connect();
+    await waitFor(() => rig?.link.connected === true, 'connected');
+
+    for (const payload of [{ messageId: 'X' }, { index: 5, messageId: 'X' }, null]) {
+      client.emit('wa:revoked', payload);
+    }
+    client.emit('wa:revoked', { index: 1, messageId: 'ABC123' });
+    await waitFor(() => (rig?.revoked.length ?? 0) > 0, 'the revoke');
+
+    expect(rig.revoked).toEqual([{ index: 1, messageId: 'ABC123' }]);
   });
 });
 

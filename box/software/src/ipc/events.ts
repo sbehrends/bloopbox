@@ -137,6 +137,13 @@ export type BridgeToServerEvents = {
     durationMs: number | null;
     receivedAt: number;
   }) => void;
+  /**
+   * The sender deleted a note for everyone. The hardware server drops it from that button's
+   * queue and from disk — if it is still waiting there. Sent only for a chat the whitelist
+   * resolves to `index`; an id no queue holds is ignored at the other end, and a note already
+   * playing is left to finish.
+   */
+  'wa:revoked': (payload: { index: ButtonIndex; messageId: string }) => void;
   /** Answers `wa:requestPairingCode`. `code` is absent when pairing could not start. */
   'wa:pairingCode': (payload: { requestId: string; code?: string; error?: string }) => void;
   /** Groups the linked account belongs to, answering `wa:listGroups`. */

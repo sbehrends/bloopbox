@@ -255,6 +255,9 @@ examples most guides show:
   unscanned QR. An unpaired close other than 515 settles in `notLinked`; never retry it. Every
   await in `#connect` is followed by a generation check — keep it that way when adding one
   (`docs/architecture.md`, "The WhatsApp connection").
+- **"Delete for everyone" arrives on `messages.update`**, not `messages.upsert`, as a
+  `messageStubType: REVOKE` stub whose `key.id` is the deleted note. It goes through the whitelist
+  like a note, and `wa:revoked` carries the resolved button, never just an id.
 - `messages.upsert` must handle **both** `notify` and `append`. Baileys picks the type with
   `node.attrs.offline ? 'append' : 'notify'`, so everything queued while disconnected arrives as
   `append`. `messageTimestamp` is a protobuf Long — arithmetic straight on it yields `NaN`.

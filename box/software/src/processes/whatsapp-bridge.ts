@@ -16,7 +16,7 @@ import { probeDurationMs } from '../audio/ffmpeg.ts';
 import { BRIDGE_AUTH_HEADER, BRIDGE_NAMESPACE } from '../ipc/events.ts';
 import { readButtonIndex, readString } from '../ipc/payload.ts';
 import { childLogger } from '../logger.ts';
-import { WhatsAppClient, type VoiceNote } from '../whatsapp/client.ts';
+import { WhatsAppClient, type Revocation, type VoiceNote } from '../whatsapp/client.ts';
 import { HoldUntilReady } from '../whatsapp/holdUntilReady.ts';
 import { Whitelist, type AllowedTarget } from '../whatsapp/whitelist.ts';
 
@@ -42,11 +42,25 @@ const MAX_TRACKED_MESSAGES = 200;
  * Far above any real offline backlog for three buttons, and small enough not to matter in RAM.
  */
 const MAX_NOTES_BEFORE_WHITELIST = 50;
+/** Revoked ids remembered, so a note still downloading when its revoke lands is thrown away. */
+const MAX_TRACKED_REVOKES = 200;
+
+/**
+ * What waits for the whitelist, in one queue so a revoke is never judged before its own note.
+ */
+type Inbound = { readonly kind: 'note'; readonly note: VoiceNote } | Revoke;
+type Revoke = { readonly kind: 'revoke'; readonly revocation: Revocation };
 
 async function main(): Promise<void> {
   const whitelist = new Whitelist();
   /** messageId -> the WhatsApp key needed to mark it read once the child has heard it. */
   const pendingReads = new Map<string, VoiceNote['raw']['key']>();
+  /**
+   * Ids deleted for everyone by an assigned chat. A download takes seconds, and "oops, wrong
+   * chat" takes about as long: the revoke can arrive while the note is still on its way to disk,
+   * when the hardware server has nothing to remove yet.
+   */
+  const revokedIds = new Set<string>();
 
   const client = new WhatsAppClient({ authDirectory: AUTH_DIRECTORY, logger: log });
 
@@ -54,15 +68,17 @@ async function main(): Promise<void> {
    * Opened by the first contact list, and never closed again: after that the whitelist is only
    * ever replaced, and an empty list is still a real answer ("nobody is assigned").
    */
-  const inbound = new HoldUntilReady<VoiceNote>({
-    handle: (note) => {
-      void handleVoiceNote(note);
+  const inbound = new HoldUntilReady<Inbound>({
+    handle: (item) => {
+      if (item.kind === 'note') void handleVoiceNote(item.note);
+      else handleRevoke(item.revocation);
     },
     capacity: MAX_NOTES_BEFORE_WHITELIST,
-    onOverflow: (note) => {
+    onOverflow: (item) => {
+      const messageId = item.kind === 'note' ? item.note.messageId : item.revocation.messageId;
       log.warn(
-        { messageId: note.messageId },
-        'dropped a voice note: too many before the whitelist',
+        { messageId, kind: item.kind },
+        'dropped an inbound event: too many before the whitelist',
       );
     },
   });
@@ -165,8 +181,34 @@ async function main(): Promise<void> {
   });
 
   client.on('voiceNote', (note) => {
-    inbound.push(note);
+    inbound.push({ kind: 'note', note });
   });
+
+  client.on('revoked', (revocation) => {
+    inbound.push({ kind: 'revoke', revocation });
+  });
+
+  /**
+   * "Delete for everyone", from a chat the whitelist resolves to a button.
+   *
+   * The same check a note gets, so a revoke can only ever reach the button its own chat is on;
+   * the hardware server then removes the note only if that button is still holding that id.
+   */
+  function handleRevoke(revocation: Revocation): void {
+    const decision = whitelist.evaluate(revocation);
+    if (!decision.allowed) return;
+
+    revokedIds.add(revocation.messageId);
+    while (revokedIds.size > MAX_TRACKED_REVOKES) {
+      const oldest = revokedIds.values().next();
+      if (oldest.done === true) break;
+      revokedIds.delete(oldest.value);
+    }
+    pendingReads.delete(revocation.messageId);
+
+    log.info({ index: decision.target.index }, 'a voice note was deleted by its sender');
+    socket.emit('wa:revoked', { index: decision.target.index, messageId: revocation.messageId });
+  }
 
   /**
    * Applies the whitelist, then downloads.
@@ -192,8 +234,15 @@ async function main(): Promise<void> {
     }
 
     const { target } = decision;
+    if (revokedIds.has(note.messageId)) return;
     try {
       const { path, byteLength } = await note.download(NOTES_DIRECTORY, target.index);
+      if (revokedIds.has(note.messageId)) {
+        // Deleted while it downloaded. Nothing was announced, so nothing needs taking back.
+        await rm(path, { force: true });
+        log.info({ index: target.index }, 'discarded a voice note its sender deleted');
+        return;
+      }
       const durationMs = note.seconds !== null ? note.seconds * 1000 : await probeDurationMs(path);
 
       rememberRead(note.messageId, note.raw.key);

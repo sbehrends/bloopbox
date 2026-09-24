@@ -802,6 +802,59 @@ describe('receiving', () => {
   });
 });
 
+describe('a note deleted for everyone', () => {
+  async function arrive(index: 0 | 1 | 2, messageId: string): Promise<string> {
+    const path = join(workDir, `wa-${String(index)}-${messageId}.ogg`);
+    await writeFile(path, 'ogg');
+    controller.handleIncoming(index, { messageId, path, receivedAt: Date.now(), durationMs: 900 });
+    return path;
+  }
+
+  it('comes off its button and off the card, and the lamp follows the queue', async () => {
+    const kept = await arrive(1, 'KEEP');
+    const revoked = await arrive(1, 'GONE');
+
+    expect(controller.revokeNote(1, 'GONE')).toBe(true);
+
+    expect(controller.queue.peek(1).map((note) => note.path)).toEqual([kept]);
+    expect(controller.state.unreadCount(1)).toBe(1);
+    await waitFor(() => !existsSync(revoked), 'the revoked file to be deleted');
+    await waitFor(() => hal.released.includes(revoked), 'its decode to be released');
+    expect(existsSync(kept)).toBe(true);
+  });
+
+  it('puts the lamp out when it was the only note', async () => {
+    await arrive(0, 'ONLY');
+
+    controller.revokeNote(0, 'ONLY');
+
+    expect(controller.state.unreadCount(0)).toBe(0);
+  });
+
+  it('does nothing for an id no queue holds, or one queued on another button', async () => {
+    const path = await arrive(2, 'MINE');
+
+    expect(controller.revokeNote(2, 'UNKNOWN')).toBe(false);
+    expect(controller.revokeNote(0, 'MINE')).toBe(false);
+
+    expect(controller.state.unreadCount(2)).toBe(1);
+    await flush();
+    expect(existsSync(path)).toBe(true);
+    expect(hal.released).toEqual([]);
+  });
+
+  it('is never reported read — nothing was heard', async () => {
+    await arrive(1, 'KEEP');
+    await arrive(1, 'GONE');
+
+    controller.revokeNote(1, 'GONE');
+    await press(1, 100);
+    await waitFor(() => marked.length > 0, 'the queue to drain');
+
+    expect(marked).toEqual([{ index: 1, messageIds: ['KEEP'] }]);
+  });
+});
+
 describe('boot announcement', () => {
   it('plays the boot sound once when the boot window opens', async () => {
     hal.clearHistory();

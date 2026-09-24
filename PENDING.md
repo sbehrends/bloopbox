@@ -1082,6 +1082,20 @@ hardware server logs it, but `onStatus` keeps only `state` and `qr`, and `GET /a
 field for it. A parent sees `disconnected` with nothing saying that retrying will not help.
 Surfacing it is a hardware-server + routes + admin change, left out of this one.
 
+### "Delete for everyone" has only met a fake socket
+
+Built 2026-09-24 from the REVOKE shape in Baileys' source, and locked by unit tests on each hop.
+Not yet seen with a real account: that a revoke arrives on `messages.update` at all when the box
+is online, and — the more interesting one — when it was sent **while the box was off**, since the
+offline queue arrives as `append` and nobody has checked that `processMessage` runs the protocol
+message for it. Also unchecked: a group admin deleting someone else's note (it should work — the
+chat is what is whitelisted, not the revoker), and a revoke for a note older than the bridge's
+memory of revoked ids (200) while its download is still in flight, which cannot really happen.
+
+Not handled: the activity card's *received* total still counts a revoked note, and a revoke for a
+note that is mid-playback is dropped rather than applied once the note ends — it is deleted as
+heard at that point anyway.
+
 ### The upload bound assumes at most two media hosts
 
 `MEDIA_UPLOAD_TIMEOUT_MS` (20 s) is applied by Baileys per host, in turn (`getWAUploadToServer`

@@ -8,11 +8,13 @@ import {
   fetchLatestBaileysVersion,
   makeWASocket,
   useMultiFileAuthState,
+  WAMessageStubType,
   type AuthenticationCreds,
   type AuthenticationState,
   type ConnectionState,
   type UserFacingSocketConfig,
   type WAMessage,
+  type WAMessageUpdate,
   type WASocket,
   type WAVersion,
   type proto,
@@ -233,6 +235,29 @@ export function voiceNoteContent(
   return audio?.ptt === true ? audio : null;
 }
 
+/**
+ * The id of the message a `messages.update` entry says was deleted for everyone, or null.
+ *
+ * How Baileys 7.0.0-rc14 reports it (`Utils/process-message.js`, the `REVOKE` protocol message):
+ * `{ key: { ...the revoker's key, id: <the deleted message's id> }, update: { message: null,
+ * messageStubType: REVOKE } }`. So `key.remoteJid` is the chat, `key.participant` whoever
+ * deleted it in a group, and `key.id` the note to take back.
+ */
+export function revokedMessageId(entry: WAMessageUpdate): string | null {
+  if (entry.update.messageStubType !== WAMessageStubType.REVOKE) return null;
+  const id = entry.key.id;
+  return typeof id === 'string' && isSafeMessageId(id) ? id : null;
+}
+
+/** A sender deleted a message for everyone. Addressed like a `VoiceNote`, for the whitelist. */
+export type Revocation = {
+  readonly messageId: string;
+  readonly chatJid: string;
+  readonly chatJidAlt: string | undefined;
+  readonly participantJid: string | undefined;
+  readonly fromMe: boolean;
+};
+
 export type GroupSummary = { readonly id: string; readonly subject: string };
 
 export type WhatsAppClientEvents = {
@@ -240,6 +265,8 @@ export type WhatsAppClientEvents = {
   status: [{ state: WhatsAppConnectionState; detail?: string; qr?: string }];
   /** A voice note arrived. Filtering happens above — this fires for every chat. */
   voiceNote: [VoiceNote];
+  /** A message was deleted for everyone. Also unfiltered — the bridge decides if it matters. */
+  revoked: [Revocation];
 };
 
 /**
@@ -592,6 +619,13 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       this.#handleConnectionUpdate(update, socket, state.creds);
     });
 
+    socket.ev.on('messages.update', (updates) => {
+      for (const entry of updates) {
+        const messageId = revokedMessageId(entry);
+        if (messageId !== null) void this.#handleRevoke(entry.key, messageId);
+      }
+    });
+
     socket.ev.on('messages.upsert', ({ messages, type }) => {
       for (const message of messages) {
         if (!shouldHandleUpsert(type, messageAgeMs(message))) continue;
@@ -701,6 +735,18 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       this.#log.debug({ err: error, jid }, 'could not resolve a lid to a phone number');
       return undefined;
     }
+  }
+
+  async #handleRevoke(key: WAMessageUpdate['key'], messageId: string): Promise<void> {
+    const chatJid = key.remoteJid;
+    if (!chatJid) return;
+    this.emit('revoked', {
+      messageId,
+      chatJid,
+      chatJidAlt: await this.#resolveAlt(chatJid, key.remoteJidAlt),
+      participantJid: key.participant ?? undefined,
+      fromMe: key.fromMe === true,
+    });
   }
 
   async #handleMessage(message: WAMessage): Promise<void> {

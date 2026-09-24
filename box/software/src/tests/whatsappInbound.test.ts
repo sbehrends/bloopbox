@@ -2,12 +2,14 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino from 'pino';
-import type { WAMessage } from 'baileys';
+import { WAMessageStubType, type WAMessage, type WAMessageUpdate } from 'baileys';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SEND_TIMEOUT_MS } from '../server/bridgeLink.ts';
 import {
   MEDIA_UPLOAD_TIMEOUT_MS,
+  revokedMessageId,
   voiceNoteContent,
+  type Revocation,
   WhatsAppClient,
   type VoiceNote,
 } from '../whatsapp/client.ts';
@@ -67,6 +69,34 @@ describe('voiceNoteContent', () => {
     expect(voiceNoteContent({ conversation: 'hello' })).toBeNull();
     expect(voiceNoteContent(null)).toBeNull();
     expect(voiceNoteContent(undefined)).toBeNull();
+  });
+});
+
+/** The shape Baileys 7.0.0-rc14 emits for a REVOKE protocol message (`process-message.js`). */
+function revoke(id: string): WAMessageUpdate {
+  return {
+    key: { remoteJid: '15551234567@s.whatsapp.net', fromMe: false, id },
+    update: { message: null, messageStubType: WAMessageStubType.REVOKE },
+  };
+}
+
+describe('revokedMessageId', () => {
+  it('names the message deleted for everyone', () => {
+    expect(revokedMessageId(revoke('3A77C7FB'))).toBe('3A77C7FB');
+  });
+
+  it('ignores every other kind of update', () => {
+    expect(revokedMessageId({ key: { id: 'X1' }, update: { status: 3 } })).toBeNull();
+    expect(
+      revokedMessageId({
+        key: { id: 'X1' },
+        update: { messageStubType: WAMessageStubType.CIPHERTEXT },
+      }),
+    ).toBeNull();
+  });
+
+  it('ignores an id that could never have been a note on disk', () => {
+    expect(revokedMessageId(revoke('../../x'))).toBeNull();
   });
 });
 
@@ -184,5 +214,35 @@ describe('WhatsAppClient inbound', () => {
 
     await settle(() => logged.mock.calls.length === 1, 'the failure to be logged');
     expect(logged.mock.calls[0]?.[1]).toBe('could not save WhatsApp credentials');
+  });
+
+  it('reports a revoke addressed like the note it takes back, for the whitelist to judge', async () => {
+    const { baileys, client } = await connected();
+    const revocations: Revocation[] = [];
+    client.on('revoked', (revocation) => revocations.push(revocation));
+
+    baileys.sockets[0]?.ev.emit('messages.update', [
+      {
+        key: {
+          remoteJid: '120363000000000000@g.us',
+          participant: '15551234567@s.whatsapp.net',
+          fromMe: false,
+          id: 'GONE01',
+        },
+        update: { message: null, messageStubType: WAMessageStubType.REVOKE },
+      },
+      { key: { remoteJid: '120363000000000000@g.us', id: 'READ01' }, update: { status: 4 } },
+    ]);
+
+    await settle(() => revocations.length === 1, 'the revoke to be emitted');
+    expect(revocations).toEqual([
+      {
+        messageId: 'GONE01',
+        chatJid: '120363000000000000@g.us',
+        chatJidAlt: undefined,
+        participantJid: '15551234567@s.whatsapp.net',
+        fromMe: false,
+      },
+    ]);
   });
 });

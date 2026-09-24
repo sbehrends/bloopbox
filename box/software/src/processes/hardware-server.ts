@@ -289,6 +289,10 @@ async function main(): Promise<void> {
         durationMs: payload.durationMs,
       });
     },
+    onRevoked: ({ index, messageId }) => {
+      const removed = controller.revokeNote(index, messageId);
+      log.info({ index, messageId, removed }, 'voice note deleted by its sender');
+    },
     onConnectionChange: (connected) => {
       log.info({ connected }, 'bridge link');
       if (!connected) {

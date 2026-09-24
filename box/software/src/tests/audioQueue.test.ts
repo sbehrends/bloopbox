@@ -347,3 +347,92 @@ describe('clearing', () => {
     expect(queue.totalCount).toBe(0);
   });
 });
+
+describe('remove — a note deleted for everyone', () => {
+  /** Waits until the mock HAL is holding `path` open, i.e. that note is mid-playback. */
+  async function untilPlaying(path: string): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      if (hal.nowPlaying === path) return;
+      await Promise.resolve();
+    }
+    throw new Error(`never started playing ${path}`);
+  }
+
+  it('takes a waiting note out of its queue and hands it back', () => {
+    const queue = manager();
+    const first = note();
+    const second = note();
+    queue.enqueue(1, first);
+    queue.enqueue(1, second);
+
+    expect(queue.remove(1, first.messageId)).toEqual(first);
+
+    expect(queue.peek(1)).toEqual([second]);
+    expect(queue.count(1)).toBe(1);
+  });
+
+  it('finds nothing for an unknown id, or for a note on another button', () => {
+    const queue = manager();
+    const onOne = note();
+    queue.enqueue(1, onOne);
+
+    expect(queue.remove(1, 'never-queued')).toBeNull();
+    expect(queue.remove(0, onOne.messageId)).toBeNull();
+    expect(queue.count(1)).toBe(1);
+  });
+
+  it('skips a note later in the run that is playing, chime and all', async () => {
+    hal.holdPlayback = true;
+    const queue = manager();
+    const first = note();
+    const revoked = note();
+    const third = note();
+    for (const queued of [first, revoked, third]) queue.enqueue(0, queued);
+    let drainedIds: readonly string[] = [];
+    queue.on('queueDrained', ({ messageIds }) => (drainedIds = messageIds));
+
+    const playing = queue.playQueue(0);
+    await untilPlaying(first.path);
+    expect(queue.remove(0, revoked.messageId)).toEqual(revoked);
+    hal.finishPlayback();
+    await untilPlaying(third.path);
+    hal.finishPlayback();
+    await playing;
+
+    expect(hal.playSequence()).toEqual([first.path, third.path]);
+    expect(hal.cueSequence()).toEqual([AudioCue.Chime]);
+    expect(drainedIds).toEqual([first.messageId, third.messageId]);
+  });
+
+  it('leaves the note that is already playing alone', async () => {
+    hal.holdPlayback = true;
+    const queue = manager();
+    const current = note();
+    queue.enqueue(2, current);
+
+    const playing = queue.playQueue(2);
+    await untilPlaying(current.path);
+
+    expect(queue.remove(2, current.messageId)).toBeNull();
+    hal.finishPlayback();
+    await playing;
+    expect(hal.playSequence()).toEqual([current.path]);
+  });
+
+  it('does not put a removed note back when the run is stopped', async () => {
+    hal.holdPlayback = true;
+    const queue = manager();
+    const first = note();
+    const revoked = note();
+    const kept = note();
+    for (const queued of [first, revoked, kept]) queue.enqueue(0, queued);
+
+    const playing = queue.playQueue(0);
+    await untilPlaying(first.path);
+    queue.remove(0, revoked.messageId);
+    await queue.stop();
+    await playing;
+
+    expect(queue.peek(0).map((n) => n.messageId)).toEqual([first.messageId, kept.messageId]);
+  });
+});

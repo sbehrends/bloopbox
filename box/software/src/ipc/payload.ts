@@ -61,3 +61,15 @@ export function optionalString(
   const value = readString(payload, key);
   return value === null ? {} : { [as]: value };
 }
+
+/**
+ * A `wa:revoked` payload: which button's note the sender deleted for everyone.
+ *
+ * The id is only length-capped here, not shape-checked — it is matched against ids already in a
+ * queue, never turned into a path, so an id no queue holds simply finds nothing.
+ */
+export function readRevoked(payload: unknown): { index: ButtonIndex; messageId: string } | null {
+  const index = readButtonIndex(payload);
+  const messageId = readString(payload, 'messageId', 128);
+  return index === null || messageId === null ? null : { index, messageId };
+}

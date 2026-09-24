@@ -267,6 +267,18 @@ The boot-partition file wins over `config.json` when both are present. The conne
 `bloopbox` and is given `autoconnect-priority 10`, so anything seeded earlier stays as a
 fallback if the new network turns out to be wrong.
 
+Two details that are easy to undo by accident:
+
+- **An open network removes the security setting outright** (`remove 802-11-wireless-security`).
+  `wifi-sec.key-mgmt none` looks like "open" and is static WEP to NetworkManager, which then fails
+  for want of a key — found on hardware for the hotspot on 2026-08-10, and fixed in
+  `wifi-apply.sh` only on 2026-09-24, so until then an open network typed into the admin panel
+  never connected.
+- **`nmcli --wait 10 con up`**, never the bare form. This runs inside the hardware unit's
+  `ExecStartPre`, and nmcli's default is to wait 90 s for a network that is out of range — 90 s
+  of dark buttons at boot and after every settings save. Activation carries on inside
+  NetworkManager after nmcli stops waiting.
+
 The **AP / captive-portal fallback is built** — `PRODUCT.md` §3 (First Boot) describes the
 behaviour, and the pieces are NetworkManager's own AP mode (not `hostapd`), an open network, the root
 `bloopbox-net.service` below doing the privileged work while the unprivileged daemon serves

@@ -477,6 +477,15 @@ speaker volume, say. A restart is a couple of seconds on this device and leaves 
 `Restart=always` is therefore load-bearing on the device. Without it, saving a setting would simply
 switch the device off.
 
+**Every exit goes through `Shutdown`** (`src/processes/shutdown.ts`), in both daemons: a config-save
+restart, SIGINT/SIGTERM, an `unhandledRejection`, an `uncaughtException`, and a failed startup. It
+arms a fallback exit (`SHUTDOWN_TIMEOUT_MS`, 5 s, inside the units' `TimeoutStopSec=10`) *before*
+the first step, and runs each teardown step in its own try/catch, so a step that throws cannot leave
+the lamps lit or the totals unwritten, and one that hangs cannot hold the process until systemd
+kills it. The handlers are installed on the first line of `main()`. A clean exit is code 0 and a
+crash is code 1: both restart under `Restart=always`, but only one reads as a crash in the journal,
+and a crash during a clean restart still reports as one.
+
 ### Patches are partial all the way down
 
 `PUT /api/config` accepts **any subset of any section, to any depth**. `configUpdateSchema` is

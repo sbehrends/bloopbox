@@ -48,6 +48,7 @@ import { denyFraming } from '../server/csrf.ts';
 import { serveSocketsOn } from '../server/socketListeners.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
 import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
+import { Shutdown } from './shutdown.ts';
 
 const log = childLogger('hardware');
 
@@ -126,7 +127,11 @@ const RESTART_DELAY_MS = 400;
  */
 const BOOT_ANIMATION_MS = 2600;
 
+/** Owns the way out — signals, crashes and config-save restarts alike. */
+const lifecycle = new Shutdown({ log });
+
 async function main(): Promise<void> {
+  lifecycle.installHandlers();
   const kind = selectHalKind();
 
   /* ---- config ---- */
@@ -670,36 +675,31 @@ async function main(): Promise<void> {
 
   /* ---- shutdown ---- */
 
-  let shuttingDown = false;
-  const shutdown = (reason: string): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    log.info({ reason }, 'shutting down');
-
-    void (async (): Promise<void> => {
-      netWatcher.stop();
-      portalServer?.close();
-      purger.stop();
-      notesPurger.stop();
-      // Before anything slow: this is the only moment the last few counted presses reach the
-      // card, and both a config save and a `poweroff` arrive here.
-      await stats.flush();
-      await purger.whenIdle();
-      await notesPurger.whenIdle();
-      await controller.stop();
-      // Leaves every LED off, per the HAL contract.
-      await hal.dispose();
-      void io.close();
-      httpServer.close(() => process.exit(0));
-      // Do not wait forever for lingering keep-alive sockets.
-      setTimeout(() => process.exit(0), 3000).unref();
-    })();
-  };
-
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(signal, () => shutdown(signal));
-  }
-
+  /*
+   * Each step on its own, so one that throws cannot leave the LEDs lit or the totals unwritten;
+   * `Shutdown` bounds the whole run, so one that hangs cannot either.
+   */
+  lifecycle.setSteps([
+    { name: 'network watcher', run: () => netWatcher.stop() },
+    { name: 'portal listener', run: () => portalServer?.close() },
+    {
+      name: 'purgers',
+      run: () => {
+        purger.stop();
+        notesPurger.stop();
+      },
+    },
+    // Before anything slow: this is the only moment the last few counted presses reach the
+    // card, and both a config save and a `poweroff` arrive here.
+    { name: 'stats', run: async () => stats.flush() },
+    { name: 'purge in progress', run: async () => purger.whenIdle() },
+    { name: 'notes purge in progress', run: async () => notesPurger.whenIdle() },
+    { name: 'controller', run: async () => controller.stop() },
+    // Leaves every LED off, per the HAL contract.
+    { name: 'hal', run: async () => hal.dispose() },
+    // Closes the sockets and then the :3000 listener, whose idle keep-alives Node drops itself.
+    { name: 'http and sockets', run: async () => io.close() },
+  ]);
   /**
    * Exits so the supervisor restarts us with the new config.
    *
@@ -708,13 +708,14 @@ async function main(): Promise<void> {
    * (`Restart=always`) handles it on the device; `npm run dev:hw` uses scripts/dev-server.ts.
    */
   restartHandler = (reason: string): void => {
-    if (shuttingDown) return;
+    if (lifecycle.started) return;
     log.info({ reason }, 'restarting to apply configuration');
-    setTimeout(() => shutdown(`restart: ${reason}`), RESTART_DELAY_MS).unref();
+    setTimeout(() => lifecycle.begin(`restart: ${reason}`, 0), RESTART_DELAY_MS).unref();
   };
 }
 
 await main().catch((error: unknown) => {
   log.error({ err: error }, 'hardware server failed to start');
-  process.exit(1);
+  // Through the same path as a crash, so whatever teardown was already registered still runs.
+  lifecycle.begin('startup failed', 1);
 });

@@ -19,6 +19,7 @@ import { childLogger } from '../logger.ts';
 import { WhatsAppClient, type Revocation, type VoiceNote } from '../whatsapp/client.ts';
 import { HoldUntilReady } from '../whatsapp/holdUntilReady.ts';
 import { Whitelist, type AllowedTarget } from '../whatsapp/whitelist.ts';
+import { Shutdown } from './shutdown.ts';
 
 const log = childLogger('whatsapp');
 
@@ -51,7 +52,14 @@ const MAX_TRACKED_REVOKES = 200;
 type Inbound = { readonly kind: 'note'; readonly note: VoiceNote } | Revoke;
 type Revoke = { readonly kind: 'revoke'; readonly revocation: Revocation };
 
+/**
+ * Owns the way out. A crash here used to be whatever Node did by default; now it closes the
+ * WhatsApp socket first, so Baileys is not killed mid-write to `creds.json`.
+ */
+const lifecycle = new Shutdown({ log });
+
 async function main(): Promise<void> {
+  lifecycle.installHandlers();
   const whitelist = new Whitelist();
   /** messageId -> the WhatsApp key needed to mark it read once the child has heard it. */
   const pendingReads = new Map<string, VoiceNote['raw']['key']>();
@@ -348,25 +356,17 @@ async function main(): Promise<void> {
 
   /* ---- start ---- */
 
+  /*
+   * Registered before the client starts, so a crash while it connects still ends the socket and
+   * closes the link. Separate steps: a Baileys that fails to stop must not keep the IPC open.
+   */
+  lifecycle.setSteps([
+    { name: 'whatsapp client', run: async () => client.stop() },
+    { name: 'hardware link', run: () => socket.close() },
+  ]);
+
   log.info({ authDirectory: AUTH_DIRECTORY, hardware: HARDWARE_URL }, 'WhatsApp bridge starting');
   await client.start();
-
-  let shuttingDown = false;
-  const shutdown = (signal: string): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    log.info({ signal }, 'shutting down');
-    void (async (): Promise<void> => {
-      await client.stop();
-      socket.close();
-      process.exit(0);
-    })();
-    setTimeout(() => process.exit(0), 3000).unref();
-  };
-
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(signal, () => shutdown(signal));
-  }
 }
 
 /** A voice note the HAL finished encoding: an `.ogg` directly inside the recordings directory. */
@@ -399,5 +399,5 @@ function readMessageIds(payload: unknown): string[] {
 
 await main().catch((error: unknown) => {
   log.error({ err: error }, 'WhatsApp bridge failed to start');
-  process.exit(1);
+  lifecycle.begin('startup failed', 1);
 });

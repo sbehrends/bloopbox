@@ -453,6 +453,107 @@ describe('taps', () => {
   });
 });
 
+/**
+ * While a note plays, the other buttons wait for it. The speaker is centimetres from the
+ * microphone and cues share its output, so a bip, an "oops" or an open capture would all land
+ * on top of the message the child is listening to.
+ */
+describe('while a note is playing', () => {
+  /** Queues a note on button 0, taps it, and holds playback open until the returned call. */
+  async function startPlayback(): Promise<() => Promise<void>> {
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    hal.play = async (file: string): Promise<void> => {
+      hal.filesPlayed.push({ path: file, at: Date.now() });
+      await gate;
+    };
+    controller.handleIncoming(0, {
+      messageId: 'm-playing',
+      path: join(workDir, 'm-playing.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 5000,
+    });
+
+    await press(0, 300);
+    await waitFor(() => controller.state.playing === 0, 'playback to start');
+    hal.clearHistory();
+
+    return async () => {
+      finish?.();
+      await waitFor(() => controller.state.playing === null, 'playback to finish');
+    };
+  }
+
+  it('ignores a hold on another button: no bip, no microphone, no send', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const finish = await startPlayback();
+
+    await press(1, HOLD_MS);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(hal.cueSequence()).toEqual([]);
+    expect(sent).toHaveLength(0);
+    await finish();
+  });
+
+  it('ignores a tap on another button, rather than beeping over the message', async () => {
+    const finish = await startPlayback();
+
+    await press(2, 100);
+
+    expect(hal.cueSequence()).toEqual([]);
+    await finish();
+  });
+
+  it('does not queue up another contact’s notes behind it', async () => {
+    const finish = await startPlayback();
+    controller.handleIncoming(1, {
+      messageId: 'm-waiting',
+      path: join(workDir, 'm-waiting.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+    hal.clearHistory();
+
+    await press(1, 100);
+    await finish();
+    await flush();
+
+    // The tap was nothing, so nothing plays after the first note: button 1 is still blinking.
+    expect(hal.playSequence()).toEqual([]);
+    expect(controller.state.unreadCount(1)).toBe(1);
+  });
+
+  it('frees the other buttons once the note has finished', async () => {
+    hal.fixedDurationMs = 3000;
+    const finish = await startPlayback();
+    await finish();
+
+    await press(1, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
+
+    expect(sent[0]).toMatchObject({ index: 1 });
+  });
+
+  it('keeps ignoring a button held down across the end of playback', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const finish = await startPlayback();
+
+    hal.pressButton(1);
+    await vi.advanceTimersByTimeAsync(100);
+    await finish();
+    await vi.advanceTimersByTimeAsync(HOLD_MS);
+    hal.releaseButton(1);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+    await flush();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
+  });
+});
+
 describe('receiving', () => {
   it('lights the button immediately and chimes, without waiting on audio', () => {
     controller.handleIncoming(1, {

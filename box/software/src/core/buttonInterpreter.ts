@@ -103,6 +103,14 @@ export type ButtonInterpreterOptions = {
    * restarts the daemon — there is no state here that can change under a running press.
    */
   readonly readOnly?: boolean;
+  /**
+   * Which button's notes are playing right now, if any. While they play the other buttons are
+   * locked out exactly as they are behind a held press: the child is listening, and a bip, an
+   * "oops" or an open microphone beside the speaker would all talk across the message.
+   *
+   * Read at each down edge rather than pushed in, so it stays a query like `hasUnread`.
+   */
+  readonly listeningTo?: () => ButtonIndex | null;
 };
 
 type ActivePress = {
@@ -164,15 +172,29 @@ type PendingCommit = {
  * whose grip slips mid-sentence can carry on rather than shipping half a message. Nothing
  * new has to be learned, because the existing signals already say it — the LED stays solid
  * (ladder rule 1 holds while `recording` is set) and the "whoosh" still marks the send.
+ *
+ * One button at a time (the lockout).
+ *
+ * While a press is down, or its take is waiting out the resume window, every *other* button is
+ * ignored — its down edge, its release, and everything in between, even if it is still held
+ * after the first one lets go. A toddler clutching one button grabs at the others, and without
+ * this each grab opened a second take or committed the first mid-sentence. The only exception
+ * is the silent-mode chord: the partner outer button may still join, but only while the first
+ * press is short of being a message (`recordThresholdMs + minRecordingMs`). A parent presses
+ * the two together; a child who is already talking keeps their take. Playing notes lock the
+ * other buttons out the same way, for as long as the queue plays (`listeningTo`).
  */
 export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
   readonly #timings: ButtonTimings;
   readonly #maxRecordingMs: number;
   readonly #hasUnread: (index: ButtonIndex) => boolean;
   readonly #readOnly: boolean;
+  readonly #listeningTo: () => ButtonIndex | null;
   readonly #active = new Map<ButtonIndex, ActivePress>();
   /** Confirmed recordings waiting out their resume window. */
   readonly #pending = new Map<ButtonIndex, PendingCommit>();
+  /** Buttons that went down while another one owned the box, ignored until they come up. */
+  readonly #ignored = new Set<ButtonIndex>();
   #comboTimer: NodeJS.Timeout | null = null;
 
   constructor(options: ButtonInterpreterOptions) {
@@ -181,6 +203,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.#maxRecordingMs = options.maxRecordingSeconds * 1000;
     this.#hasUnread = options.hasUnread;
     this.#readOnly = options.readOnly ?? false;
+    this.#listeningTo = options.listeningTo ?? (() => null);
   }
 
   /** The active press windows. */
@@ -203,18 +226,15 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
   }
 
   handleButtonDown(index: ButtonIndex): void {
-    if (this.#active.has(index)) return; // Already down; ignore repeat edges.
+    // Already down, or already being ignored; either way a repeat edge changes nothing.
+    if (this.#active.has(index) || this.#ignored.has(index)) return;
+
+    if (this.#isLockedOut(index)) {
+      this.#ignored.add(index);
+      return;
+    }
 
     const resuming = this.#pending.get(index);
-
-    /*
-     * A *different* button starting a press means the child has moved on: commit whatever
-     * is waiting out its window rather than leaving two takes open at once. This also keeps
-     * the silent-mode chord out of the resume path entirely — by the time both outer
-     * buttons are down, no window is left open behind them.
-     */
-    this.#closeWindowsExcept(index);
-
     if (resuming) {
       this.#resume(resuming);
       return;
@@ -288,6 +308,9 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
   }
 
   handleButtonUp(index: ButtonIndex): void {
+    // Ignored at press, so ignored at release — and it must not break a chord it never joined.
+    if (this.#ignored.delete(index)) return;
+
     const press = this.#active.get(index);
     if (!press) return; // Release without a matching press; nothing to do.
 
@@ -330,6 +353,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
       this.#clearPendingTimers(pending);
     }
     this.#pending.clear();
+    this.#ignored.clear();
 
     this.#disarmCombo();
   }
@@ -397,13 +421,39 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.#maybeArmCombo();
   }
 
-  /** Commits every open window except the one this button might be about to resume. */
-  #closeWindowsExcept(index: ButtonIndex): void {
-    // Deleting from a Map mid-iteration is well defined: the iterator skips removed entries.
+  /**
+   * Whether another button owns the box, so a press on `index` must be ignored.
+   *
+   * An open window on *this* button is not a lock — it is the take coming back to be resumed.
+   * An open window on another one is, because that take is a message by construction.
+   *
+   * Playback locks the others out too, the chord included: a parent waits for the note to end.
+   * The playing button itself stays on its ordinary path, which is already inert while its
+   * queue plays — a tap asks for what is playing, and a hold is refused with no sound.
+   */
+  #isLockedOut(index: ButtonIndex): boolean {
+    const listening = this.#listeningTo();
+    if (listening !== null && listening !== index) return true;
     for (const pending of this.#pending.values()) {
-      if (pending.index === index) continue;
-      this.#commitPending(pending, false);
+      if (pending.index !== index) return true;
     }
+    for (const press of this.#active.values()) {
+      if (!this.#canJoinChord(press, index)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The one press allowed alongside another: the other outer button, while the first press is
+   * still short of a message. A resumed take carries its first press's start, so it never is.
+   */
+  #canJoinChord(owner: ActivePress, index: ButtonIndex): boolean {
+    return (
+      owner.index !== index &&
+      SILENT_COMBO_BUTTONS.includes(owner.index) &&
+      SILENT_COMBO_BUTTONS.includes(index) &&
+      !this.#isMessage(owner.startedAt)
+    );
   }
 
   #commitPending(pending: PendingCommit, reachedMaxDuration: boolean): void {

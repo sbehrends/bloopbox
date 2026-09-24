@@ -287,8 +287,9 @@ Rules, all locked by [`src/tests/button.test.ts`](../box/software/src/tests/butt
 - `maxRecordingSeconds` is **not** restarted by a resume — the ceiling is carried across, so
   pumping the button cannot grow a file in the RAM disk. If it fires mid-window, the take commits
   there.
-- A **different** button going down commits whatever is waiting, rather than leaving two takes
-  open. That also keeps the silent-mode chord out of this path entirely.
+- A **different** button going down during the window is ignored (the lockout, below); the take
+  commits when the window expires, as if nothing had happened. That also keeps the silent-mode
+  chord out of this path entirely.
 - `reset()` drops an open window silently, exactly as it already dropped an in-flight press.
 - `resumeGraceMs: 0` restores commit-on-release.
 - The reported `durationMs` is time actually held, first press to final release. The trailing
@@ -322,6 +323,34 @@ holds `Promise<RecordingHandle | null>` rather than the handle.
 A send makes **one** sound. The whoosh means "sent"; delivery is the lamp flashing. A designed
 "delivered" swoosh used to follow the whoosh and the two read as noise rather than as two facts, so
 it was retired (`PRODUCT.md` §7). Only a failure adds a second sound.
+
+### One button at a time: the lockout
+
+A toddler holding one button grabs at the others. Before the lockout each button was tracked
+independently, so a grab opened a second take beside the first, answered with an "oops" or a queue
+mid-sentence, or — during the carry-on window — committed the first take early. Now one button
+**owns** the box while it is held or its take is waiting out `resumeGraceMs`, and every other press
+is ignored whole: down edge, release, everything between. Rules, locked by
+[`src/tests/button.test.ts`](../box/software/src/tests/button.test.ts):
+
+- **A press that began under the lock is never adopted.** It stays in `#ignored` until its own
+  release, even if the owner finishes first — promoting it mid-hold would start a take whose first
+  second the child never meant.
+- **Its release is invisible**, including to the chord: an ignored release does not disarm it.
+- **The chord partner is the only exception**, and only while the owner is short of a message
+  (`recordThresholdMs + minRecordingMs`, the tap boundary). No new constant: a parent pressing the
+  outer pair presses them together, and past that boundary the owner is a child talking. A resumed
+  take carries its first press's start, so it is always past it.
+- **Playback owns the box too.** While a queue plays, every other button is ignored the same way,
+  the chord included — a parent waits for the note to end. Before this a hold on another button
+  played the bip and opened a microphone beside the speaker, recording the incoming message into an
+  outgoing one, and a tap played the "oops" over it. The interpreter asks through a
+  `listeningTo()` query, like `hasUnread`, so `core/` stays pure. `DeviceController` answers from
+  its own `#listeningTo`, set in the same tick as the tap and cleared in `#playQueue`'s `finally`,
+  not from `state.playing` — that is only set when the first note starts, after the capture
+  teardown `#playQueue` waits on, and a press in that gap would slip through. The playing button
+  itself stays on its ordinary path, which is already inert while its queue plays.
+- `reset()` clears the ignored set with everything else.
 
 ### The silent chord
 

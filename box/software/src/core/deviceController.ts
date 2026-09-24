@@ -101,6 +101,14 @@ export class DeviceController {
   readonly #pathsByMessageId = new Map<string, string>();
   /** The most recent capture teardown, awaited before playback. See `#playQueue`. */
   #teardown: Promise<void> | undefined;
+  /**
+   * The button whose queue a tap asked for, from that tap until playback ends.
+   *
+   * Not `state.playing`, which is only set once the first note starts: between the two sits
+   * the capture teardown `#playQueue` waits on, and a press on another button in that gap
+   * would open a microphone just as the note begins.
+   */
+  #listeningTo: ButtonIndex | null = null;
   #quietHoursTimer: NodeJS.Timeout | null = null;
   #started = false;
 
@@ -123,6 +131,8 @@ export class DeviceController {
       hasUnread: (index) => this.state.hasUnread(index),
       // Receive-only: no hold ever opens a microphone. Snapshot like every other setting.
       readOnly: this.#config.current.mode.readOnly,
+      // While notes play, the other buttons wait for them to finish.
+      listeningTo: () => this.#listeningTo,
     });
 
     this.#animator = new LedAnimator(options.hal, this.state.snapshot());
@@ -501,18 +511,25 @@ export class DeviceController {
   }
 
   async #playQueue(index: ButtonIndex): Promise<void> {
+    // A second tap on the playing button asks for what is already playing. Returning here
+    // also keeps its `finally` from releasing the lock while the first run is still going.
+    if (this.#listeningTo !== null) return;
+    // Set before the first await, in the same tick as the tap's release.
+    this.#listeningTo = index;
+
     /*
      * Let any microphone this press opened close first. On the WM8960 both directions hang
      * off one I2S clock, so starting a note while `arecord` is still being torn down asks the
      * codec for two things at once. `#discardCapture` swallows its own errors, so this only
      * ever waits — and it is a SIGTERM and a process exit, not audio.
      */
-    await this.#teardown;
-
     try {
+      await this.#teardown;
       await this.queue.playQueue(index);
     } catch {
       this.state.setPlaying(null);
+    } finally {
+      this.#listeningTo = null;
     }
   }
 

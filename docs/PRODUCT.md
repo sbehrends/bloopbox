@@ -74,6 +74,17 @@ values below are the shipped defaults.
 
 7. A press shorter than `debounceMs` (60 ms) is ignored entirely, silently — that is a toddler
    brushing past.
+8. **One button at a time.** While a button is held, or its message is waiting out the carry-on
+   window, the other two do nothing at all — no lamp, no sound, no second message — and a button
+   that went down during that time stays ignored until it is let go, even if it is still held after
+   the first one finishes. A child clutching one button while grabbing at the others keeps the
+   message they are speaking. The one exception is the silent-mode chord (below): the other outer
+   button can still join, but only within the tap boundary of step 6. Past it the child is sending,
+   and the chord cannot cut them off.
+
+   **The same holds while messages are playing.** Until the last note of the queue has finished,
+   the other two buttons do nothing — the child is listening, and a bip, an "oops" or an open
+   microphone beside the speaker would all land on top of the message. The chord waits too.
 
 Bounds:
 
@@ -169,7 +180,9 @@ Holding **Button 1 + Button 3** together for `silentComboMs` (3 s) toggles silen
 a single slow left-to-right chase. That chase is the **only** thing silent mode ever shows: once it
 has passed the box looks exactly like an audible idle box, with no lamp of its own (§6). Both
 presses are swallowed the instant the chord forms, so a child mashing the outer buttons can never
-send two voice notes; released early, nothing at all happens.
+send two voice notes; released early, nothing at all happens. The second button has to join within
+the tap boundary (§1 step 6, 1150 ms by default) — later than that, the first press is a message
+being sent and the second button is simply ignored.
 
 It can also be scheduled — see §7.
 

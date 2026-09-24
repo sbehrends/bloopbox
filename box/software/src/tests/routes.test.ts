@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { AudioCue } from '../audio/cues.ts';
 import { QR_LIFETIME_MS } from '../ipc/events.ts';
 import { readField, readString } from '../ipc/payload.ts';
+import { qrIdentifier } from '../server/routes.ts';
 import { netReading, startApi, type Harness } from './support/apiHarness.ts';
 
 /**
@@ -71,21 +72,35 @@ describe('GET /whatsapp', () => {
     api.whatsapp = { state: 'connected', qr: 'secret-payload' };
     expect(await (await fetch(api.url('/api/whatsapp'))).json()).toEqual({
       state: 'connected',
-      qr: null,
+      qrId: null,
       qrAgeMs: null,
       qrLifetimeMs: QR_LIFETIME_MS,
     });
   });
 
-  it('hands over the QR while pairing is pending', async () => {
+  it('names the pending code without ever handing it over', async () => {
+    /*
+     * This route is open, so it must never carry the payload: anyone on the LAN could draw it
+     * and scan it first during a re-pair. The image is `qr.svg`, behind the gate.
+     */
     api = await startApi({ configured: false });
     api.whatsapp = { state: 'awaitingPairing', qr: 'secret-payload', qrAgeMs: 3_000 };
-    expect(await (await fetch(api.url('/api/whatsapp'))).json()).toEqual({
+    const response = await fetch(api.url('/api/whatsapp'));
+    const text = await response.text();
+
+    expect(text).not.toContain('secret-payload');
+    expect(JSON.parse(text)).toEqual({
       state: 'awaitingPairing',
-      qr: 'secret-payload',
+      qrId: qrIdentifier('secret-payload'),
       qrAgeMs: 3_000,
       qrLifetimeMs: QR_LIFETIME_MS,
     });
+  });
+
+  it('gives each code its own name, so the panel can tell a rotation', () => {
+    expect(qrIdentifier('code-one')).toMatch(/^[0-9a-f]{12}$/);
+    expect(qrIdentifier('code-one')).toBe(qrIdentifier('code-one'));
+    expect(qrIdentifier('code-one')).not.toBe(qrIdentifier('code-two'));
   });
 
   it('reports the age of the code, so the panel can count down without a shared clock', async () => {

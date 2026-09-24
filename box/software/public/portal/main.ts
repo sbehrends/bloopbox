@@ -237,6 +237,19 @@ async function loadStatus(): Promise<void> {
   refresh();
 }
 
+/**
+ * Base64 of the UTF-8 bytes, which is what the device decodes (`server/auth.ts`).
+ *
+ * Not `btoa(text)` on its own: that encodes Latin-1, so an "ä" in the password arrives as a byte
+ * the server reads as U+FFFD and never matches, and anything outside Latin-1 — "€", an emoji —
+ * makes `btoa` throw. Going through the bytes first means every character reaches bcrypt intact.
+ */
+function basicCredentials(text: string): string {
+  let binary = '';
+  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 async function connect(): Promise<void> {
   const ssid = currentSsid();
   if (ssid.length === 0) return;
@@ -252,7 +265,7 @@ async function connect(): Promise<void> {
   if (!choosingPassword) {
     // HTTP Basic, which is what the device's admin guard speaks. The user part is ignored by
     // the daemon; only the password is checked.
-    headers['Authorization'] = `Basic ${btoa(`admin:${adminPassword.value}`)}`;
+    headers['Authorization'] = `Basic ${basicCredentials(`admin:${adminPassword.value}`)}`;
   }
 
   try {

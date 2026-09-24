@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RECOVERY_MAX_AGE_MS, recordingName, recoverUnplayedNotes } from '../audio/recovery.ts';
+import {
+  isSafeMessageId,
+  notePath,
+  RECOVERY_MAX_AGE_MS,
+  recordingName,
+  recoverUnplayedNotes,
+} from '../audio/recovery.ts';
 
 /**
  * Rebuilding the unread queue after a restart.
@@ -153,5 +159,38 @@ describe('recordingName', () => {
 
     expect(result.notes[0]?.note.messageId).toBe('3A77-C7FB-9C8D');
     expect(result.notes[0]?.index).toBe(2);
+  });
+});
+
+describe('message ids as file names', () => {
+  /*
+   * The id is picked by the sender's client and becomes part of a path on the card. Any member of
+   * an assigned group is a sender, so a modified client there is enough to try this.
+   */
+  it('accepts the shapes WhatsApp actually uses', () => {
+    for (const id of ['3EB0C767D26A1D8E4B2F', 'BAE5F1A2B3C4D5E6', '3A77-C7FB-9C8D', 'a_b-1']) {
+      expect([id, isSafeMessageId(id)]).toEqual([id, true]);
+    }
+  });
+
+  it('refuses anything that could leave the directory or confuse the name', () => {
+    for (const id of [
+      '',
+      '../x',
+      '/../../etc/x',
+      'a/b',
+      'a\\b',
+      'id.ogg',
+      'x'.repeat(129),
+      'sp ace',
+    ]) {
+      expect([id, isSafeMessageId(id)]).toEqual([id, false]);
+      expect(() => recordingName(0, id)).toThrow(/unsafe/);
+    }
+  });
+
+  it('names the one path both daemons agree on, and none for an unsafe id', () => {
+    expect(notePath('/data/notes', 1, 'ABC123')).toBe('/data/notes/wa-1-ABC123.ogg');
+    expect(notePath('/data/notes', 1, '../../config.json')).toBeNull();
   });
 });

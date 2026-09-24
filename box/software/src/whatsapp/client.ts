@@ -16,7 +16,7 @@ import {
   type WASocket,
 } from 'baileys';
 import type { Logger } from 'pino';
-import { RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
+import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
 import { normalisePhone, type ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
 
@@ -441,6 +441,12 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     const messageId = message.key.id;
     const chatJid = message.key.remoteJid;
     if (!messageId || !chatJid) return;
+    // The sender's client picks the id and it becomes a file name, so a hostile one is dropped
+    // here rather than resolved to a path outside the notes directory.
+    if (!isSafeMessageId(messageId)) {
+      this.#log.warn({ chat: chatJid }, 'dropped a voice note with an unsafe message id');
+      return;
+    }
 
     const seconds = typeof audio.seconds === 'number' ? audio.seconds : null;
     if (seconds !== null && seconds > MAX_INBOUND_SECONDS) {

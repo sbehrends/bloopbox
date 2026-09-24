@@ -155,6 +155,22 @@ describe('once the device is configured', () => {
     expect(response.status).toBe(200);
   });
 
+  it('accepts a password outside ASCII when the header carries its UTF-8 bytes', async () => {
+    /*
+     * What the portal sends since it stopped using a bare `btoa`, which encodes Latin-1: an "ä"
+     * then arrived as a lone 0xE4 byte and this guard read U+FFFD, so a German parent could
+     * never pass it. The panel and the portal must both encode the way this decodes.
+     */
+    const password = 'Kätzchen€ü';
+    api = await startApi({ adminPassword: password });
+    const utf8 = `Basic ${Buffer.from(`admin:${password}`, 'utf8').toString('base64')}`;
+    const latin1 = `Basic ${Buffer.from(`admin:${password}`, 'latin1').toString('base64')}`;
+
+    const accepted = await fetch(api.url('/api/config'), { headers: { authorization: utf8 } });
+    const refused = await fetch(api.url('/api/config'), { headers: { authorization: latin1 } });
+    expect([accepted.status, refused.status]).toEqual([200, 401]);
+  });
+
   it('stands aside when configured is true but no hash was ever written', async () => {
     /*
      * An open API, and a **deliberate** one. The guard reads an empty hash as "no password

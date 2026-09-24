@@ -995,7 +995,9 @@ function renderWhatsApp(
 
       if (method !== 'qr') return; // chooser and phone-number flows have nothing to poll-sync
 
-      const qr = 'qr' in read ? asText(read.qr) : '';
+      // Only a name for the current code: the open route never carries the code itself, and
+      // the image comes from the gated qr.svg. A new name is a rotation.
+      const qr = 'qrId' in read ? asText(read.qrId) : '';
       if (qr.length === 0) {
         // Awaiting pairing but between codes — the bridge is mid-rotation or reconnecting.
         deadline = Date.now();

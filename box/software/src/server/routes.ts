@@ -1,4 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { createHash } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import { toString as qrToString } from 'qrcode';
 import { ALL_AUDIO_CUES } from '../audio/cues.ts';
@@ -103,6 +104,17 @@ export function buildStatusPayload(context: RoutesContext): DeviceStatusPayload 
   };
 }
 
+/**
+ * A short, stable name for a pairing code that says nothing about it.
+ *
+ * A digest rather than a counter so it needs no state: the same code always names the same way,
+ * and a rotation always changes the name. The code is high-entropy, so twelve hex characters of
+ * its hash do not help anyone reconstruct it.
+ */
+export function qrIdentifier(qr: string): string {
+  return createHash('sha256').update(qr).digest('hex').slice(0, 12);
+}
+
 export function createApiRouter(context: RoutesContext): Router {
   const router = Router();
   const admin = requireAdmin(context.config);
@@ -118,8 +130,13 @@ export function createApiRouter(context: RoutesContext): Router {
     const awaiting = whatsapp.state === 'awaitingPairing';
     res.json({
       state: whatsapp.state,
-      // The QR is a pairing secret; only expose it while it is actually needed.
-      qr: awaiting ? whatsapp.qr : null,
+      /*
+       * Which code is current, never the code itself. This route is open — the portal reads the
+       * state before any password exists — and whoever scans the QR becomes the account this
+       * device speaks as, so a LAN guest reading the payload here could win a re-pair. The panel
+       * only needs to notice a rotation; the image comes from the gated `qr.svg`.
+       */
+      qrId: awaiting && whatsapp.qr !== null ? qrIdentifier(whatsapp.qr) : null,
       /*
        * How old the code is and how long one lives, so the panel can run a countdown and
        * swap in the next image the moment Baileys rotates. Both are needed: the panel polls

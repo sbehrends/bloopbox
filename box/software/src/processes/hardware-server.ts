@@ -15,7 +15,7 @@ import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
 import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { CAPTURE_FILTER_CHAIN, PLAYBACK_FILTER_CHAIN } from '../audio/ffmpeg.ts';
-import { RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
+import { notePath, RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
 import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
 import { ConfigManager } from '../config/configManager.ts';
@@ -267,10 +267,24 @@ async function main(): Promise<void> {
       refreshStatus();
     },
     onIncoming: (payload) => {
+      /*
+       * The path is worked out here, not taken from the bridge: this daemon plays the file and
+       * then deletes it, so a reported path taken on faith would let whatever holds the bridge
+       * token delete anything it can write. A mismatch means the two daemons disagree about
+       * NOTES_DIR, which is worth a warning rather than a silent drop.
+       */
+      const path = notePath(NOTES_DIRECTORY, payload.index, payload.messageId);
+      if (path === null || resolve(payload.path) !== path) {
+        log.warn(
+          { index: payload.index, expected: path, reported: payload.path },
+          'refused a voice note whose path is not where notes live',
+        );
+        return;
+      }
       log.info({ index: payload.index, messageId: payload.messageId }, 'voice note received');
       controller.handleIncoming(payload.index, {
         messageId: payload.messageId,
-        path: payload.path,
+        path,
         receivedAt: payload.receivedAt,
         durationMs: payload.durationMs,
       });
@@ -372,7 +386,15 @@ async function main(): Promise<void> {
   });
 
   app.use('/api', createApiRouter(routesContext));
-  app.use('/audio', createAudioRouter([RECORDING_DIRECTORY, NOTES_DIRECTORY]));
+  /*
+   * Recordings, served to the simulator's browser so it can play what the fake HAL "records".
+   * Only there: on a device these are the child's own voice and the family's notes, the route
+   * has no password, and the captive portal lets it through on the open setup hotspot — so a
+   * device mounting it would hand them to anyone in radio range.
+   */
+  if (simulatorHal) {
+    app.use('/audio', createAudioRouter([RECORDING_DIRECTORY, NOTES_DIRECTORY]));
+  }
   app.use('/sounds', express.static(SOUNDS_DIRECTORY, { maxAge: '1h' }));
 
   if (existsSync(STATIC_ROOT)) {

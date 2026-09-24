@@ -8,8 +8,9 @@
  * The two are deliberately separate processes: WhatsApp is an unofficial API on a release
  * candidate, and a crash here must not take the buttons and lights with it.
  */
-import { notesDirectory } from '../audio/directories.ts';
+import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { rm } from 'node:fs/promises';
+import { dirname, extname, resolve } from 'node:path';
 import { io, type Socket } from 'socket.io-client';
 import { probeDurationMs } from '../audio/ffmpeg.ts';
 import { BRIDGE_AUTH_HEADER, BRIDGE_NAMESPACE } from '../ipc/events.ts';
@@ -22,8 +23,14 @@ const log = childLogger('whatsapp');
 
 /** Where Baileys keeps its credentials. Must be on the writable volume, and is gitignored. */
 const AUTH_DIRECTORY = process.env['WA_AUTH_DIR'] ?? '/data/auth_info';
-/** Inbound voice notes land here, alongside outgoing recordings. Should be tmpfs. */
+/** Inbound voice notes land here — on the card, apart from the captures (`audio/directories.ts`). */
 const NOTES_DIRECTORY = notesDirectory();
+/**
+ * Where outbound captures are. The only directory `wa:send` may upload from: the path arrives over
+ * IPC, and uploading whatever it names would let anything holding the bridge token post any file
+ * this daemon can read — WhatsApp credentials included — to a family's chat.
+ */
+const RECORDING_DIRECTORY = resolve(recordingDirectory());
 /** The hardware server's Socket.io endpoint. */
 const HARDWARE_URL = process.env['HARDWARE_URL'] ?? 'http://localhost:3000';
 
@@ -196,6 +203,17 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (!isOutboundCapture(path)) {
+      log.warn({ path }, 'refused to send a file that is not an outbound capture');
+      socket.emit('wa:sendResult', {
+        requestId,
+        index,
+        ok: false,
+        error: 'that file is not a recording',
+      });
+      return;
+    }
+
     const target = whitelist.forIndex(index);
     if (!target) {
       socket.emit('wa:sendResult', {
@@ -273,6 +291,12 @@ async function main(): Promise<void> {
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => shutdown(signal));
   }
+}
+
+/** A voice note the HAL finished encoding: an `.ogg` directly inside the recordings directory. */
+function isOutboundCapture(path: string): boolean {
+  const resolved = resolve(path);
+  return dirname(resolved) === RECORDING_DIRECTORY && extname(resolved) === '.ogg';
 }
 
 /** Reads the contact list the hardware server sends. */

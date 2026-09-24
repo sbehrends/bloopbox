@@ -98,6 +98,18 @@ export function reconnectDelayMs(attempt: number, random: number): number {
   return Math.round(base * (1 + (random * 2 - 1) * RECONNECT_JITTER));
 }
 
+/**
+ * How long Baileys may wait on one media host during an upload.
+ *
+ * Has to sit well under the hardware side's `SEND_TIMEOUT_MS` (60 s, `server/bridgeLink.ts`):
+ * past that the child has already heard the "oops", and an upload that then finishes delivers
+ * a note the box said had failed. Baileys applies this **per host** and tries every host it was
+ * given in turn — and on Node it is the socket's idle timeout, not a deadline — so two hosts
+ * stalling back to back cost twice this. Twenty seconds keeps two of them under the minute; a
+ * voice note is tens of kilobytes, so a live upload never comes near it.
+ */
+export const MEDIA_UPLOAD_TIMEOUT_MS = 20_000;
+
 /** Voice notes longer than this are almost certainly not for a toddler; skip the download. */
 const MAX_INBOUND_SECONDS = 300;
 
@@ -446,13 +458,17 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     if (!socket || !this.connected) {
       throw new Error('WhatsApp is not connected');
     }
-    await socket.sendMessage(jid, {
-      audio: { url: path },
-      mimetype: 'audio/ogg; codecs=opus',
-      // Without ptt this arrives as a file attachment rather than a voice bubble.
-      ptt: true,
-      seconds: Math.max(1, Math.round(durationMs / 1000)),
-    });
+    await socket.sendMessage(
+      jid,
+      {
+        audio: { url: path },
+        mimetype: 'audio/ogg; codecs=opus',
+        // Without ptt this arrives as a file attachment rather than a voice bubble.
+        ptt: true,
+        seconds: Math.max(1, Math.round(durationMs / 1000)),
+      },
+      { mediaUploadTimeoutMs: MEDIA_UPLOAD_TIMEOUT_MS },
+    );
   }
 
   /** Marks messages read, so the sender sees the child heard them. */
@@ -553,7 +569,11 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     const epoch = this.#credentialsEpoch;
     const persist = (): void => {
       if (epoch !== this.#credentialsEpoch) return;
-      void saveCreds();
+      // Not awaited — Baileys emits this mid-handshake — but never unhandled: a failed write is
+      // a pairing that may not survive the next restart, and that belongs in the log.
+      saveCreds().catch((error: unknown) => {
+        this.#log.error({ err: error }, 'could not save WhatsApp credentials');
+      });
     };
 
     socket.ev.on('creds.update', persist);

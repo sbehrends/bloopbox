@@ -875,6 +875,14 @@ A download is written to `<name>.part`, fsynced, then renamed. Boot recovery tre
 `wa-<i>-<id>.ogg` as an unread note, so the final name must only ever point at a complete file;
 recovery also skips a zero-length one, and the purge sweeps an abandoned `.ogg.part` by age.
 
+### Sends answer before the hardware side gives up
+
+The hardware server abandons a send after `SEND_TIMEOUT_MS` (60 s) and plays the "oops". An upload
+still running then can deliver a note the child was told had failed, so the client passes Baileys
+`mediaUploadTimeoutMs` = `MEDIA_UPLOAD_TIMEOUT_MS` (20 s). Baileys applies it **per media host**,
+trying each in turn, and on Node it is the socket's idle timeout rather than a deadline — hence 20 s
+and not 45: two stalled hosts still answer inside the minute.
+
 ## The whitelist is the safety boundary
 
 [`src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) is the most important file in the

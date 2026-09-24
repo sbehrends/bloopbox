@@ -1082,6 +1082,16 @@ hardware server logs it, but `onStatus` keeps only `state` and `qr`, and `GET /a
 field for it. A parent sees `disconnected` with nothing saying that retrying will not help.
 Surfacing it is a hardware-server + routes + admin change, left out of this one.
 
+### The upload bound assumes at most two media hosts
+
+`MEDIA_UPLOAD_TIMEOUT_MS` (20 s) is applied by Baileys per host, in turn (`getWAUploadToServer`
+in `Utils/messages-media.js`), and as an idle timeout. With two hosts both stalling, a send fails in
+about 40 s, inside the hardware side's 60 s. How many hosts `media_conn` actually returns has not
+been looked at on a real account; with three or more, a send can still outlive the "oops". A
+`sendResult` that arrives after the hardware side gave up is dropped there silently, so the
+symptom would be a note the recipient got and the box said had failed. Log `hosts.length` once
+from a real send to settle it.
+
 ### View-once voice notes are ignored — a product decision nobody has made
 
 `voiceNoteContent` in `whatsapp/client.ts` unwraps `ephemeralMessage` (disappearing chats) and

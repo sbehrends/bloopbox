@@ -3,8 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino from 'pino';
 import type { WAMessage } from 'baileys';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { voiceNoteContent, WhatsAppClient, type VoiceNote } from '../whatsapp/client.ts';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SEND_TIMEOUT_MS } from '../server/bridgeLink.ts';
+import {
+  MEDIA_UPLOAD_TIMEOUT_MS,
+  voiceNoteContent,
+  WhatsAppClient,
+  type VoiceNote,
+} from '../whatsapp/client.ts';
 import { MAX_INBOUND_BYTES } from '../whatsapp/mediaDownload.ts';
 import { fakeBaileys } from './support/fakeWASocket.ts';
 
@@ -153,5 +159,30 @@ describe('WhatsAppClient inbound', () => {
     expect(result).toEqual({ path: join(notesDir, 'wa-2-DL01.ogg'), byteLength: 3 });
     expect(await readdir(notesDir)).toEqual(['wa-2-DL01.ogg']);
     expect(baileys.download).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds the upload so a slow one fails before the hardware side gives up', async () => {
+    const { baileys, client } = await connected();
+
+    await client.sendVoiceNote('15551234567@s.whatsapp.net', '/run/bloopbox/rec.ogg', 2_400);
+
+    expect(baileys.sockets[0]?.sendMessage).toHaveBeenCalledWith(
+      '15551234567@s.whatsapp.net',
+      expect.objectContaining({ ptt: true, seconds: 2 }),
+      { mediaUploadTimeoutMs: MEDIA_UPLOAD_TIMEOUT_MS },
+    );
+    // Per host, and Baileys tries each in turn: two stalled hosts must still answer in time.
+    expect(2 * MEDIA_UPLOAD_TIMEOUT_MS).toBeLessThan(SEND_TIMEOUT_MS);
+  });
+
+  it('logs a failed credentials write instead of leaving it unhandled', async () => {
+    const { baileys } = await connected();
+    const logged = vi.spyOn(silentLogger, 'error');
+    baileys.saveCreds.mockRejectedValueOnce(new Error('EROFS'));
+
+    baileys.sockets[0]?.ev.emit('creds.update', {});
+
+    await settle(() => logged.mock.calls.length === 1, 'the failure to be logged');
+    expect(logged.mock.calls[0]?.[1]).toBe('could not save WhatsApp credentials');
   });
 });

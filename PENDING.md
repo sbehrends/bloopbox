@@ -1227,6 +1227,13 @@ bubbles from 18:45 and 18:46 actually look like before adding it.
 Reported while pairing on 2026-08-01: the panel "felt a bit unresponsive". Not diagnosed, and no
 measurement was taken — this is a note to look, not a conclusion.
 
+**First suspect addressed, 2026-09-24, not yet measured on a device.** Every admin request ran a
+~300 ms bcryptjs check on the event loop — the pairing ticker's polls included — so the panel and
+the buttons were both waiting on it. `AdminAuthenticator` now runs it once per browser per 5 min
+(`docs/architecture.md`, "The server surface"). Also fixed the same day: at `http://bloopbox.local/`
+the panel's Socket.io never connected at all, because it was attached to `:3000` only. Close this
+entry only after timing the panel on a Pi; the causes below are still unexamined.
+
 First places to look, cheapest first. The pairing block now runs a 500 ms ticker that polls
 `/api/whatsapp` every 2 s and every tick once a code has lapsed, so a bridge that is down turns
 into two fetches a second, each awaiting a socket round trip to the WhatsApp process. `getJson`

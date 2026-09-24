@@ -73,6 +73,19 @@ export const QUIET_HOURS_MAX_SLEEP_MS = 15 * 60 * 1000;
  */
 export const MIN_USABLE_AUDIO_MS = 150;
 
+/**
+ * One press's microphone, from the bip until it is committed or discarded.
+ *
+ * `token.cancelled` is what the bip checks before it opens anything. Awaiting the handle alone
+ * was not enough: a discard during the bip waited for it, found no handle yet, and returned —
+ * and then the bip finished and opened a microphone nobody would ever close, on top of the
+ * "oops" the release had just played, or after `stop()`.
+ */
+type Capture = {
+  readonly handle: Promise<RecordingHandle | null>;
+  readonly token: { cancelled: boolean };
+};
+
 export class DeviceController {
   readonly state = new DeviceState();
   readonly queue: AudioQueueManager;
@@ -96,7 +109,7 @@ export class DeviceController {
    * left the microphone open for the life of the process — and the next press on that button
    * reused the stale handle, shipping every second recorded since as one voice note.
    */
-  readonly #captures = new Map<ButtonIndex, Promise<RecordingHandle | null>>();
+  readonly #captures = new Map<ButtonIndex, Capture>();
   /** messageId -> file path, so played notes can be deleted ahead of the TTL. */
   readonly #pathsByMessageId = new Map<string, string>();
   /** The most recent capture teardown, awaited before playback. See `#playQueue`. */
@@ -168,6 +181,12 @@ export class DeviceController {
       this.#quietHoursTimer = null;
     }
     this.#interpreter.reset();
+    /*
+     * `reset()` drops the presses without emitting a cancel, so the captures they opened are
+     * closed here — including one still behind its bip, which the token keeps from opening a
+     * microphone after the process has been told to stop.
+     */
+    await Promise.all([...this.#captures.keys()].map((index) => this.#discardCapture(index)));
     await this.queue.stop();
     this.#animator.stop();
     this.#animator.blank();
@@ -429,20 +448,21 @@ export class DeviceController {
    * Both steps live inside the stored promise rather than being awaited here, because
    * `#commitCapture` and `#discardCapture` already await it (see `#captures`): a button
    * released during the bip finds a capture that is still opening and tears it down properly,
-   * which is exactly the case the promise was introduced for.
+   * which is exactly the case the promise was introduced for. What it finds is the token, not
+   * yet a microphone: the discard marks it cancelled, and the bip, once it ends, opens nothing.
    */
   #beginCapture(index: ButtonIndex): void {
     if (this.#captures.has(index)) return;
     const silent = this.state.silentMode;
+    const token = { cancelled: false };
     // No microphone, or no browser attached: the press simply produces nothing, and the
     // null is what commit and discard below check for.
-    this.#captures.set(
-      index,
-      (async (): Promise<RecordingHandle | null> => {
-        if (shouldPlayCue(AudioCue.Pop, silent)) await this.#safeCue(AudioCue.Pop);
-        return await this.#hal.startRecording(index).catch(() => null);
-      })(),
-    );
+    const handle = (async (): Promise<RecordingHandle | null> => {
+      if (shouldPlayCue(AudioCue.Pop, silent)) await this.#safeCue(AudioCue.Pop);
+      if (token.cancelled) return null;
+      return await this.#hal.startRecording(index).catch(() => null);
+    })();
+    this.#captures.set(index, { handle, token });
   }
 
   async #commitCapture(index: ButtonIndex): Promise<void> {
@@ -450,7 +470,7 @@ export class DeviceController {
     this.#captures.delete(index);
     this.state.setRecording(null);
 
-    const handle = pending ? await pending : null;
+    const handle = pending ? await pending.handle : null;
     if (!handle) return;
 
     /*
@@ -516,9 +536,12 @@ export class DeviceController {
     const pending = this.#captures.get(index);
     this.#captures.delete(index);
     if (this.state.recording === index) this.state.setRecording(null);
+    if (!pending) return;
 
+    // Set before the await: a capture still behind its bip then never opens at all.
+    pending.token.cancelled = true;
     // Waits for a capture that is still opening, rather than walking away from it.
-    const handle = pending ? await pending : null;
+    const handle = await pending.handle;
     if (!handle) return;
 
     try {

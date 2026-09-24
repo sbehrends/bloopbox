@@ -147,6 +147,32 @@ async function waitFor(predicate: () => boolean, label: string, attempts = 500):
 }
 
 /**
+ * Holds every cue open until the returned function is called, so a test can act while the bip
+ * is still playing. Every cue, not just the bip: releasing a press plays the "oops" too, and
+ * resolving only the most recent one would leave the bip — and the capture behind it — pending
+ * forever.
+ */
+function holdCues(): { release: () => void; restore: () => void } {
+  const pending: (() => void)[] = [];
+  const original = hal.playCue.bind(hal);
+  const spy = vi.spyOn(hal, 'playCue').mockImplementation(async (cue) => {
+    // Still logged by the mock, so `cueSequence()` shows what was asked for.
+    await original(cue);
+    await new Promise<void>((resolve) => {
+      pending.push(resolve);
+    });
+  });
+  return {
+    release: () => {
+      for (const resolve of pending.splice(0)) resolve();
+    },
+    restore: () => {
+      spy.mockRestore();
+    },
+  };
+}
+
+/**
  * Presses and releases a button, holding for `holdMs` of fake time.
  *
  * The wait after release clears the resume window: a recording is not committed the moment
@@ -988,31 +1014,64 @@ describe('the silent-mode chord', () => {
    * not finished opening. Losing that cancel left a capture running for the life of the
    * process, and the next press on that button reused the stale handle — the child's next
    * voice note would have been everything recorded since.
+   *
+   * Closing it afterwards was the first fix; the microphone still opened, on top of the "oops"
+   * the release had just played. Now the cancel reaches the capture before the bip ends, and
+   * nothing opens at all.
    */
-  it('closes a capture that was still opening behind the bip', async () => {
-    // Every cue is held open, not just the bip: releasing the press plays the "oops" too, and
-    // resolving only the most recent one would leave the bip — and the capture behind it —
-    // pending forever.
-    const pendingCues: (() => void)[] = [];
-    vi.spyOn(hal, 'playCue').mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          pendingCues.push(resolve);
-        }),
-    );
+  it('never opens the microphone for a press released during the bip', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const cues = holdCues();
 
     hal.pressButton(0);
     await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 10);
     // The bip is still playing, so no microphone exists yet to cancel.
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop]);
     expect(hal.activeRecordings.size).toBe(0);
 
     hal.releaseButton(0);
-    for (const resolve of pendingCues) resolve();
+    cues.release();
     await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
     await flush();
 
-    expect(hal.cancelledRecordings).toHaveLength(1);
+    expect(start).not.toHaveBeenCalled();
     expect(hal.activeRecordings.size).toBe(0);
+    expect(sent).toHaveLength(0);
+
+    // And the button still records afterwards, into a capture of its own.
+    cues.restore();
+    hal.fixedDurationMs = 3000;
+    await press(0, HOLD_MS);
+    await waitFor(() => sent.length === 1, 'the next recording to be sent');
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('never opens the microphone once stopped, even behind a bip still playing', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const cues = holdCues();
+
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 10);
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop]);
+
+    const stopped = controller.stop();
+    cues.release();
+    await stopped;
+    await flush();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(hal.activeRecordings.size).toBe(0);
+  });
+
+  it('closes a microphone that was already open when stopped', async () => {
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 100);
+    expect(hal.activeRecordings.size).toBe(1);
+
+    await controller.stop();
+
+    expect(hal.activeRecordings.size).toBe(0);
+    expect(hal.cancelledRecordings).toHaveLength(1);
     expect(sent).toHaveLength(0);
   });
 });

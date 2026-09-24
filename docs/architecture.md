@@ -322,7 +322,13 @@ it (above). The LED still goes solid at press, so acknowledgement is instant and
 A second consequence, worth naming because it looks like an accident: the bip is now the only cue
 that can overlap a capture *opening*, so a release during those 90 ms cancels a capture that does not
 exist yet. That is exactly the case `#captures` stores a promise for, and it is the reason the map
-holds `Promise<RecordingHandle | null>` rather than the handle.
+holds `Promise<RecordingHandle | null>` rather than the handle. Awaiting that promise was not enough
+on its own: the discard waited for the bip, and the bip then opened a microphone for a press that was
+already over — on top of the "oops" the release had just played, or after `stop()`. Each entry
+therefore carries a **cancel token** beside the promise. `#discardCapture` sets it before it awaits,
+the promise checks it between the bip and `startRecording`, and a cancelled capture resolves `null`
+without opening anything. `stop()` discards every capture in flight the same way, because
+`ButtonInterpreter.reset()` drops presses without emitting a cancel.
 
 A send makes **one** sound. The whoosh means "sent"; delivery is the lamp flashing. A designed
 "delivered" swoosh used to follow the whoosh and the two read as noise rather than as two facts, so

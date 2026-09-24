@@ -934,9 +934,9 @@ which is a helper rather than a suite. No supertest; nothing was worth a depende
 is handshake middleware and only exists during a connection.
 
 `vitest.config.ts` declares 80% coverage thresholds but **`npm run check` does not run them** — it
-calls plain `vitest run`. Coverage currently sits at about **77% statements / 68% branches**, so the
-thresholds still fail. `src/whatsapp/` (24%) is the large remaining hole and `src/audio/` sits at
-75%. `src/server/simulatorTransport.ts` is untested on purpose: it is the browser end of a
+calls plain `vitest run`. Coverage currently sits at about **87% statements / 79% branches**, so the
+branch threshold still fails. `src/whatsapp/` (86% / 77%) is the largest remaining hole, now that
+Baileys is injected and `FakeWASocket` drives the lifecycle. `src/server/simulatorTransport.ts` is untested on purpose: it is the browser end of a
 debugging tool, not device code. Treat the number as known debt, not a passing gate — the detail is
 in `PENDING.md`.
 

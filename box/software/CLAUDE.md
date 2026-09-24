@@ -367,9 +367,10 @@ Server-layer tests drive a **real Express app on an ephemeral port with `fetch`*
 middleware and only exists during a connection.
 
 `vitest.config.ts` declares 80% coverage thresholds but **`npm run check` does not run them** — it
-calls plain `vitest run`. Currently ~77% statements / 68% branches, so they still fail:
-`src/whatsapp/` (24%) is the large hole, `src/audio/` sits at 75%, and
-`src/server/simulatorTransport.ts` is untested on purpose. Known debt, not a passing gate.
+calls plain `vitest run`. Currently ~87% statements / 79% branches, so branches still fail:
+`src/whatsapp/` (86% / 77%, up from 58% once Baileys was injected — `tests/support/fakeWASocket.ts`)
+is the largest hole left, and `src/server/simulatorTransport.ts` is untested on purpose. Known
+debt, not a passing gate.
 
 ## Decisions the spec left open
 

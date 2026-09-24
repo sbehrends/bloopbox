@@ -2,16 +2,17 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino from 'pino';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BufferJSON, DisconnectReason, initAuthCreds } from 'baileys';
-import type * as Baileys from 'baileys';
+import { extractStatusCode, isPaired, WhatsAppClient } from '../whatsapp/client.ts';
+import { FakeWASocket } from './support/fakeWASocket.ts';
 
 /**
  * The pure parts of the Baileys client, plus the two behaviours that keep it from talking to
  * WhatsApp before it should.
  *
  * Most of `WhatsAppClient` needs a live, paired WhatsApp account and is exercised by hand — see
- * `docs/hardware-bringup.md`. What is covered here, via a mocked `makeWASocket`, is: how the
+ * `docs/hardware-bringup.md`. What is covered here, via an injected `FakeWASocket`, is: how the
  * device reacts to a disconnect (retry vs. "we have been unlinked, throw the credentials away");
  * that only one `requestPairingCode` call can be in flight at a time, since two together each
  * overwrite `creds.me`/`creds.pairingCode` on the same socket; and that `start()` does not open a
@@ -19,30 +20,10 @@ import type * as Baileys from 'baileys';
  * a QR nobody asked for, so it waits in `notLinked` until `beginLinking()` says otherwise.
  */
 
-type FakeSocket = {
-  ev: { on: ReturnType<typeof vi.fn<(event: string, cb: (payload: unknown) => void) => void>> };
-  end: ReturnType<typeof vi.fn<() => undefined>>;
-  requestPairingCode: ReturnType<typeof vi.fn<(phone: string) => Promise<string>>>;
-};
-
-const { makeWASocketMock, fetchLatestBaileysVersionMock } = vi.hoisted(() => ({
-  makeWASocketMock: vi.fn<() => FakeSocket>(),
-  fetchLatestBaileysVersionMock: vi.fn<() => Promise<{ version: undefined }>>(() =>
-    Promise.resolve({ version: undefined }),
-  ),
-}));
-
-vi.mock('baileys', async (importOriginal) => {
-  const original = await importOriginal<typeof Baileys>();
-  return {
-    ...original,
-    makeWASocket: makeWASocketMock,
-    fetchLatestBaileysVersion: fetchLatestBaileysVersionMock,
-  };
-});
-
-const { extractStatusCode, isPaired, WhatsAppClient } = await import('../whatsapp/client.ts');
-
+/*
+ * No `vi.mock('baileys')`: the client takes its socket factory as an option, and these pass a
+ * `FakeWASocket` in. Auth state stays real where a test is about what lands on disk.
+ */
 /**
  * Polls rather than flushing a fixed number of times — `saveCreds` is fire-and-forget, so an
  * assertion about the file on disk depends on real filesystem work finishing. Same reasoning
@@ -60,12 +41,18 @@ async function waitFor(
   throw new Error(`waitFor timed out waiting for: ${label}`);
 }
 
-function createFakeSocket(): FakeSocket {
-  return {
-    ev: { on: vi.fn<(event: string, cb: (payload: unknown) => void) => void>() },
-    end: vi.fn<() => undefined>(),
-    requestPairingCode: vi.fn<(phone: string) => Promise<string>>(),
-  };
+/** A client over real auth state in `authDirectory`, opening fakes into `sockets`. */
+function createClient(authDirectory: string, sockets: FakeWASocket[]): WhatsAppClient {
+  return new WhatsAppClient({
+    authDirectory,
+    logger: silentLogger,
+    socketFactory: () => {
+      const socket = new FakeWASocket();
+      sockets.push(socket);
+      return socket;
+    },
+    versionProvider: () => Promise.resolve(undefined),
+  });
 }
 
 // A real, silenced logger satisfies pino's full `Logger` type without an unsafe cast.
@@ -208,17 +195,11 @@ describe('extractStatusCode', () => {
 
 describe('WhatsAppClient#requestPairingCode', () => {
   let authDirectory: string;
-  let sockets: FakeSocket[];
+  let sockets: FakeWASocket[];
 
   beforeEach(async () => {
     authDirectory = await mkdtemp(join(tmpdir(), 'bloopbox-wa-test-'));
     sockets = [];
-    makeWASocketMock.mockReset();
-    makeWASocketMock.mockImplementation(() => {
-      const socket = createFakeSocket();
-      sockets.push(socket);
-      return socket;
-    });
   });
 
   afterEach(async () => {
@@ -226,7 +207,7 @@ describe('WhatsAppClient#requestPairingCode', () => {
   });
 
   it('normalises the phone number before handing it to Baileys', async () => {
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
     await client.beginLinking();
 
@@ -240,7 +221,7 @@ describe('WhatsAppClient#requestPairingCode', () => {
   });
 
   it('rejects a phone number with a surviving leading 0 rather than guessing a country code', async () => {
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
     await client.beginLinking();
 
@@ -249,7 +230,7 @@ describe('WhatsAppClient#requestPairingCode', () => {
   });
 
   it('rejects a second request while the first is still waiting on WhatsApp', async () => {
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
     await client.beginLinking();
 
@@ -272,7 +253,7 @@ describe('WhatsAppClient#requestPairingCode', () => {
   });
 
   it('clears a stuck lock on reconnect, so a hung request cannot block pairing forever', async () => {
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
     await client.beginLinking();
 
@@ -291,17 +272,11 @@ describe('WhatsAppClient#requestPairingCode', () => {
 
 describe('WhatsAppClient#start and #beginLinking', () => {
   let authDirectory: string;
-  let sockets: FakeSocket[];
+  let sockets: FakeWASocket[];
 
   beforeEach(async () => {
     authDirectory = await mkdtemp(join(tmpdir(), 'bloopbox-wa-test-'));
     sockets = [];
-    makeWASocketMock.mockReset();
-    makeWASocketMock.mockImplementation(() => {
-      const socket = createFakeSocket();
-      sockets.push(socket);
-      return socket;
-    });
   });
 
   afterEach(async () => {
@@ -309,37 +284,37 @@ describe('WhatsAppClient#start and #beginLinking', () => {
   });
 
   it('does not open a socket for an unregistered device — it waits in notLinked', async () => {
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
 
-    expect(makeWASocketMock).not.toHaveBeenCalled();
+    expect(sockets).toHaveLength(0);
     expect(client.state).toBe('notLinked');
   });
 
   it('opens the socket only once beginLinking is called', async () => {
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
     await client.beginLinking();
 
-    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+    expect(sockets).toHaveLength(1);
     expect(client.state).toBe('connecting');
   });
 
   it('beginLinking is a no-op once a socket is already open', async () => {
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
     await client.beginLinking();
     await client.beginLinking();
 
-    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+    expect(sockets).toHaveLength(1);
   });
 
   it('connects immediately on start when credentials are already registered', async () => {
     await markRegistered(authDirectory);
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
 
-    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+    expect(sockets).toHaveLength(1);
     expect(client.state).toBe('connecting');
   });
 
@@ -349,25 +324,22 @@ describe('WhatsAppClient#start and #beginLinking', () => {
     // the box offered a QR for the account it was already connected to — where scanning it
     // would have replaced the session that was sitting there intact.
     await markPairedByQrScan(authDirectory);
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
 
-    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+    expect(sockets).toHaveLength(1);
     expect(client.state).toBe('connecting');
   });
 
   it('writes the flag down once WhatsApp accepts the credentials', async () => {
     await markPairedByQrScan(authDirectory);
-    const client = new WhatsAppClient({ authDirectory, logger: silentLogger });
+    const client = createClient(authDirectory, sockets);
     await client.start();
 
     expect(await readRegisteredFlag(authDirectory)).toBe(false);
 
     // Reaching `open` is WhatsApp accepting these credentials — the only proof that counts.
-    const handler = sockets[0]?.ev.on.mock.calls.find(
-      ([event]) => event === 'connection.update',
-    )?.[1];
-    handler?.({ connection: 'open' });
+    sockets[0]?.open();
 
     await waitFor(
       async () => (await readRegisteredFlag(authDirectory)) === true,

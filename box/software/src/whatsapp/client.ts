@@ -11,9 +11,12 @@ import {
   makeWASocket,
   useMultiFileAuthState,
   type AuthenticationCreds,
+  type AuthenticationState,
   type ConnectionState,
+  type UserFacingSocketConfig,
   type WAMessage,
   type WASocket,
+  type WAVersion,
 } from 'baileys';
 import type { Logger } from 'pino';
 import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
@@ -143,17 +146,73 @@ export type WhatsAppClientEvents = {
   voiceNote: [VoiceNote];
 };
 
+/**
+ * The part of a Baileys socket this client uses — and so all a test double has to provide.
+ *
+ * `WASocket` itself is a few hundred members; naming the dozen this file touches is what lets
+ * `src/tests/support/fakeWASocket.ts` stand in for it without a cast, and it is a list worth
+ * having anyway: anything added here is a new way this client depends on the library.
+ */
+export type ClientSocket = {
+  readonly ev: Pick<WASocket['ev'], 'on'>;
+  readonly end: WASocket['end'];
+  readonly logout: WASocket['logout'];
+  readonly sendMessage: WASocket['sendMessage'];
+  readonly readMessages: WASocket['readMessages'];
+  readonly requestPairingCode: WASocket['requestPairingCode'];
+  readonly groupFetchAllParticipating: WASocket['groupFetchAllParticipating'];
+  readonly updateMediaMessage: WASocket['updateMediaMessage'];
+  readonly signalRepository: {
+    readonly lidMapping: Pick<WASocket['signalRepository']['lidMapping'], 'getPNForLID'>;
+  };
+};
+
+export type AuthStateFactory = (
+  directory: string,
+) => Promise<{ state: AuthenticationState; saveCreds: () => Promise<void> }>;
+
+/** What the media download needs from the socket, in the shape `downloadMediaMessage` takes. */
+export type MediaDownloadContext = {
+  readonly logger: Logger;
+  readonly reuploadRequest: (message: WAMessage) => Promise<WAMessage>;
+};
+
+/** Opens a media message as a stream of decrypted bytes. */
+export type MediaDownloader = (
+  message: WAMessage,
+  context: MediaDownloadContext,
+) => Promise<Readable>;
+
 export type WhatsAppClientOptions = {
   /** Directory for Baileys' multi-file auth state. Must be on the writable volume. */
   readonly authDirectory: string;
   readonly logger: Logger;
+  /*
+   * The four ways this client reaches Baileys, injectable so the lifecycle can be tested
+   * without a WhatsApp account. Every default is the real library call; production passes none.
+   */
+  readonly socketFactory?: (config: UserFacingSocketConfig) => ClientSocket;
+  readonly authStateFactory?: AuthStateFactory;
+  readonly download?: MediaDownloader;
+  /** The protocol version to announce, or undefined for the one Baileys ships with. */
+  readonly versionProvider?: () => Promise<WAVersion | undefined>;
 };
+
+const defaultDownload: MediaDownloader = (message, context) =>
+  downloadMediaMessage(message, 'stream', {}, context);
+
+const defaultVersionProvider = async (): Promise<WAVersion | undefined> =>
+  (await fetchLatestBaileysVersion()).version;
 
 export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   readonly #authDirectory: string;
   readonly #log: Logger;
+  readonly #socketFactory: (config: UserFacingSocketConfig) => ClientSocket;
+  readonly #authStateFactory: AuthStateFactory;
+  readonly #download: MediaDownloader;
+  readonly #versionProvider: () => Promise<WAVersion | undefined>;
 
-  #socket: WASocket | null = null;
+  #socket: ClientSocket | null = null;
   #reconnectAttempts = 0;
   #reconnectTimer: NodeJS.Timeout | null = null;
   #stopping = false;
@@ -173,6 +232,10 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     super();
     this.#authDirectory = options.authDirectory;
     this.#log = options.logger;
+    this.#socketFactory = options.socketFactory ?? makeWASocket;
+    this.#authStateFactory = options.authStateFactory ?? useMultiFileAuthState;
+    this.#download = options.download ?? defaultDownload;
+    this.#versionProvider = options.versionProvider ?? defaultVersionProvider;
   }
 
   get state(): WhatsAppConnectionState {
@@ -195,7 +258,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   async start(): Promise<void> {
     this.#stopping = false;
     await mkdir(this.#authDirectory, { recursive: true });
-    const { state } = await useMultiFileAuthState(this.#authDirectory);
+    const { state } = await this.#authStateFactory(this.#authDirectory);
     if (isPaired(state.creds)) {
       await this.#connect();
     } else {
@@ -315,17 +378,15 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
 
   async #connect(): Promise<void> {
     await mkdir(this.#authDirectory, { recursive: true });
-    const { state, saveCreds } = await useMultiFileAuthState(this.#authDirectory);
+    const { state, saveCreds } = await this.#authStateFactory(this.#authDirectory);
     // A pinned protocol version is better than none, but a fetch failure must not block boot.
-    const version = await fetchLatestBaileysVersion()
-      .then((result) => result.version)
-      .catch(() => undefined);
+    const version = await this.#versionProvider().catch(() => undefined);
 
     this.#setState('connecting');
     // A stale lock from the superseded socket must not block pairing on the new one.
     this.#pairingCodeRequest = null;
 
-    const socket = makeWASocket({
+    const socket = this.#socketFactory({
       auth: state,
       // Spread rather than assigned: the config declares `version?: WAVersion`, which under
       // exactOptionalPropertyTypes will not accept an explicit undefined.
@@ -370,7 +431,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     });
   }
 
-  #handleConnectionUpdate(update: Partial<ConnectionState>, socket: WASocket): void {
+  #handleConnectionUpdate(update: Partial<ConnectionState>, socket: ClientSocket): void {
     if (this.#socket !== socket) return; // A superseded socket; ignore its events.
 
     if (update.qr) {
@@ -466,19 +527,14 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
         await mkdir(directory, { recursive: true });
         const path = join(directory, recordingName(index, messageId));
         // Streamed rather than buffered: this runs on a 512MB Pi.
-        const stream = (await downloadMediaMessage(
-          message,
-          'stream',
-          {},
-          {
-            logger: this.#log.child({ lib: 'baileys-media' }),
-            reuploadRequest: (msg) => {
-              const socket = this.#socket;
-              if (!socket) throw new Error('cannot re-request media while disconnected');
-              return socket.updateMediaMessage(msg);
-            },
+        const stream = await this.#download(message, {
+          logger: this.#log.child({ lib: 'baileys-media' }),
+          reuploadRequest: (msg) => {
+            const socket = this.#socket;
+            if (!socket) throw new Error('cannot re-request media while disconnected');
+            return socket.updateMediaMessage(msg);
           },
-        )) as Readable;
+        });
 
         try {
           await pipeline(stream, createWriteStream(path));

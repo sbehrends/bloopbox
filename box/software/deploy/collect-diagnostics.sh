@@ -74,7 +74,18 @@ capture 19-api-status.txt curl -fsS --max-time 5 http://127.0.0.1:3000/api/statu
 
 # ---- the network, which is what most of this is for ----
 capture 20-net-state.json cat /run/bloopbox-net/net-state.json
-capture 21-net-request.json cat /run/bloopbox/net-request.json
+# A pending join carries the Wi-Fi passphrase until the agent acknowledges it. Redacted by
+# node, not sed, for the reason given at the config below.
+capture 21-net-request.json "${NODE}" -e '
+  const fs = require("node:fs");
+  try {
+    const request = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (typeof request.psk === "string" && request.psk.length > 0) request.psk = "[redacted]";
+    console.log(JSON.stringify(request));
+  } catch (error) {
+    console.log("no readable request: " + error.message);
+  }
+' /run/bloopbox/net-request.json
 capture 22-nmcli-general.txt nmcli general status
 capture 23-nmcli-devices.txt nmcli -f DEVICE,TYPE,STATE,CONNECTION dev status
 capture 24-nmcli-connections.txt nmcli -f NAME,UUID,TYPE,DEVICE,AUTOCONNECT con show

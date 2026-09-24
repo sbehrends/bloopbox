@@ -301,6 +301,7 @@ export function netReading(overrides: Partial<NetState> = {}): NetState {
     scan: [],
     scanAgeSeconds: 0,
     lastError: null,
+    handledRequestId: null,
     ...overrides,
   };
 }

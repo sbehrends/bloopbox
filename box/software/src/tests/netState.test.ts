@@ -1,15 +1,19 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  clearHandledRequest,
   isStale,
   isWifiDown,
   NET_STATE_MAX_AGE_MS,
   NetStateWatcher,
   parseNetState,
   readNetState,
+  requestNetAction,
+  writeAgentRequest,
 } from '../net/netState.ts';
+import { requestPowerAction } from '../system/power.ts';
 
 /**
  * The reading published by `deploy/net-agent.sh` crosses a privilege boundary as a file
@@ -46,7 +50,16 @@ describe('parseNetState', () => {
       scan: [],
       scanAgeSeconds: 0,
       lastError: null,
+      handledRequestId: null,
     });
+  });
+
+  it("reads the agent's acknowledgement of the last request it acted on", () => {
+    expect(parseNetState(reading({ handledRequestId: 'abc-123' }))?.handledRequestId).toBe(
+      'abc-123',
+    );
+    // A malformed one degrades to "nothing acknowledged", never to a rejected reading.
+    expect(parseNetState(reading({ handledRequestId: 42 }))?.handledRequestId).toBeNull();
   });
 
   it('reads a scan list', () => {
@@ -286,5 +299,103 @@ describe('NetStateWatcher', () => {
     expect(watcher.last?.ssid).toBe('Kitchen');
     expect(watcher.last?.signal).toBe(44);
     watcher.stop();
+  });
+});
+
+/**
+ * The other direction: the daemon's requests to the root agent.
+ *
+ * The agent cannot delete the file — it is in the daemon's runtime directory, read-only to it
+ * under `ProtectSystem=strict` — so every request carries an id, the agent publishes the id it
+ * last acted on, and the daemon deletes the file when it sees its own id come back.
+ */
+describe('agent requests', () => {
+  let directory: string;
+  let requestPath: string;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'bloopbox-request-'));
+    requestPath = join(directory, 'net-request.json');
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  async function written(): Promise<Record<string, unknown>> {
+    const parsed: unknown = JSON.parse(await readFile(requestPath, 'utf8'));
+    return typeof parsed === 'object' && parsed !== null ? { ...parsed } : {};
+  }
+
+  it('gives every request a fresh id, so a repeat is not mistaken for one already done', async () => {
+    await requestNetAction('ap-up', { path: requestPath });
+    const first = await written();
+    await requestNetAction('ap-up', { path: requestPath });
+    const second = await written();
+
+    expect(first).toMatchObject({ action: 'ap-up' });
+    expect(typeof first['id']).toBe('string');
+    expect(second['id']).not.toBe(first['id']);
+  });
+
+  it('writes by rename, leaving nothing half-written or stray behind', async () => {
+    await requestNetAction('join', {
+      path: requestPath,
+      credentials: { ssid: 'Home', psk: 'correct-horse' },
+    });
+    expect(await readdir(directory)).toEqual(['net-request.json']);
+    expect(await written()).toMatchObject({ action: 'join', ssid: 'Home', psk: 'correct-horse' });
+  });
+
+  it('sends power requests through the same channel', async () => {
+    expect(await requestPowerAction('reboot', { path: requestPath })).toBe(true);
+    expect(await written()).toMatchObject({ action: 'reboot' });
+    expect(typeof (await written())['id']).toBe('string');
+  });
+
+  it('reports false where there is no directory to write into', async () => {
+    // Every development machine: no /run/bloopbox.
+    expect(await writeAgentRequest({ action: 'ap-up' }, join(directory, 'absent', 'r.json'))).toBe(
+      false,
+    );
+  });
+
+  it('deletes the request once the agent acknowledges that id', async () => {
+    await requestNetAction('join', {
+      path: requestPath,
+      credentials: { ssid: 'Home', psk: 'correct-horse' },
+    });
+    const id = String((await written())['id']);
+
+    await clearHandledRequest(id, requestPath);
+    // The passphrase does not outlive the join it was for.
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('keeps a newer request the agent has not seen yet', async () => {
+    await requestNetAction('ap-up', { path: requestPath });
+    const acknowledged = String((await written())['id']);
+    await requestNetAction('ap-down', { path: requestPath });
+
+    await clearHandledRequest(acknowledged, requestPath);
+    expect(await written()).toMatchObject({ action: 'ap-down' });
+  });
+
+  it('clears the file from the watcher as soon as a reading acknowledges it', async () => {
+    const statePath = join(directory, 'net-state.json');
+    await requestNetAction('forget', { path: requestPath });
+    const id = String((await written())['id']);
+    await writeFile(statePath, reading({ handledRequestId: id }));
+
+    const watcher = new NetStateWatcher({
+      path: statePath,
+      requestPath,
+      now: () => NOW,
+      onWifiDownChange: () => {},
+    });
+    await watcher.poll();
+    watcher.stop();
+
+    expect(await readdir(directory)).toEqual(['net-state.json']);
   });
 });

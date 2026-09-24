@@ -75,6 +75,14 @@ docker run --rm \
       " "$1" "$2"
     }
     called() { grep -qF "$1" /run/fake-nm/calls.log; }
+    # How many times the agent asked nmcli for something. Read from the file, not a pipe.
+    times_called() { grep -cF "$1" /run/fake-nm/calls.log || true; }
+    acknowledged() {
+      /opt/bloopbox/node/bin/node -e "
+        const s = JSON.parse(require(\"node:fs\").readFileSync(\"/run/bloopbox-net/net-state.json\",\"utf8\"));
+        process.exit(typeof s.handledRequestId === \"string\" && s.handledRequestId.length > 0 ? 0 : 1);
+      "
+    }
 
     echo
     echo "--- 1. the root agent comes up and publishes a reading ---"
@@ -99,6 +107,18 @@ docker run --rm \
     called "802-11-wireless.mode ap" || fail "the AP profile was not put into ap mode"
     called "ipv4.method shared" || fail "the AP profile did not use NetworkManager shared mode (no DHCP for the phone)"
     echo "hotspot up, and asked for ap mode + shared ipv4"
+
+    echo
+    echo "--- 3b. the request runs once, and is acknowledged rather than deleted ---"
+    # On a device the agent cannot delete this file: the runtime directory of the daemon is read-only
+    # to it under ProtectSystem=strict. A request that ran again on every poll would bounce the
+    # radio every five seconds, so absence of a repeat is the thing to prove — which takes a
+    # wait of a few polls, not a condition.
+    await "an acknowledgement" acknowledged
+    sleep 3
+    [[ "$(times_called "802-11-wireless.mode ap")" == 1 ]] \
+      || fail "the agent ran the same ap-up more than once: $(times_called "802-11-wireless.mode ap") times"
+    echo "ap-up ran once; acknowledged as $(/opt/bloopbox/node/bin/node -p "JSON.parse(require(\"node:fs\").readFileSync(\"/run/bloopbox-net/net-state.json\",\"utf8\")).handledRequestId")"
 
     echo
     echo "--- 4. the daemon sees the hotspot and offers setup ---"
@@ -166,6 +186,10 @@ docker run --rm \
     await "the hotspot to stand down" state_says apActive false
     await "the device to come online" state_says online true
     echo "joined: $(cat /run/bloopbox-net/net-state.json)"
+    sleep 3
+    [[ "$(times_called "802-11-wireless.ssid HomeNet")" == 1 ]] \
+      || fail "the join ran more than once: $(times_called "802-11-wireless.ssid HomeNet") times"
+    echo "the join ran once"
 
     kill "${SERVER_PID}" "${AGENT_PID}" 2>/dev/null || true
     wait "${SERVER_PID}" "${AGENT_PID}" 2>/dev/null || true

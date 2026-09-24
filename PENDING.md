@@ -1547,6 +1547,48 @@ Two decisions worth not re-litigating:
   hardening exception; and two fixed-colour LEDs cannot express the matrix. Lamps on this board need
   no extra part: the HAT passes the header through, so 22/23/24/25/27 stay reachable with it seated.
 
+### The root agent's request acknowledgement has only run in a container
+
+Changed 2026-09-23 (`docs/deployment.md` § the request channel). The agent no longer deletes
+`/run/bloopbox/net-request.json`: it acts once per request id, records the id in
+`/run/bloopbox-net/handled-request-id`, and publishes it as `handledRequestId`, and the daemon
+deletes its own file when that id comes back. The reason was reasoned from systemd's documented
+`ProtectSystem=strict` behaviour rather than measured, so the first thing to do on a device is to
+confirm it and then confirm the fix:
+
+- `sudo systemd-run --wait -p ProtectSystem=strict touch /run/bloopbox/x` should fail with EROFS.
+  If it succeeds, the old code was not replaying requests after all, and the acknowledgement is
+  belt and braces rather than a fix.
+- After a Wi-Fi join or a reboot request from the panel, `cat /run/bloopbox-net/net-state.json`
+  should carry `handledRequestId`, `/run/bloopbox/net-request.json` should be gone within a few
+  seconds, and `journalctl -u bloopbox-net` should show the action once.
+
+`scripts/test-onboarding.sh` now proves the action runs once and is acknowledged, but it runs the
+agent outside systemd, so it cannot show the sandbox itself.
+
+### Playback interruption on the GPIO driver is tested against a fake aplay only
+
+Also 2026-09-23. `GpioHal.stopPlayback()` now waits for `aplay` to exit (SIGKILL after 500 ms)
+before anything else plays, and a note cut off by a signal resolves `'interrupted'`. That is the
+fix for the device-busy and deleted-unheard bugs (`docs/architecture.md` § Nothing plays over a
+note), and `gpioPlayback.test.ts` covers it against a fake child process. On a device, check two
+things: tapping a blinking button, then pressing **Test speaker** in the panel mid-note, leaves the
+lamp blinking and the note on the card; and a second note sent while the first plays neither chimes
+nor cuts the first off.
+
+### The first-boot ssh password has only run in a container
+
+`deploy/ssh-password.sh` was exercised on Debian Trixie in Docker, 2026-09-23: no marker, a user not
+yet renamed (marker kept, exit 1), a bad name (refused), a real run (record `0640 root:bloopbox`,
+the recorded password verified against `/etc/shadow`, marker removed), and a second boot (no-op).
+What that cannot show is the **ordering on a real first boot**: that `userconfig.service` has
+renamed `pi` before the unit runs, and that `sshswitch.service` / `ssh.service` wait for it. If the
+rename lands later, the unit exits 1 and succeeds on the next boot, and during that one boot the
+account keeps the throwaway password nobody knows, so it fails closed. Worth confirming on the first
+flashed card with `systemctl status bloopbox-ssh-password` and
+`journalctl -b -u userconfig -u bloopbox-ssh-password -u ssh`, and adding to
+`docs/hardware-bringup.md`'s image gate.
+
 ### An MVP-profile SD image now exists, but has never been booted
 
 Added 2026-08-10. `build-sd-image.sh` gained `--audio-hat` / `--no-leds`, passed straight through to

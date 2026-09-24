@@ -79,7 +79,11 @@ daemons a SIGTERM, and that is what flushes the activity counters and finalises 
 | `/run/bloopbox/net-request.json`   | the daemon | the agent (root) |
 
 **Two directories, exactly one writer each.** That is deliberate: the agent must never end up
-owning `/run/bloopbox`, which is the recordings tmpfs the daemon has to be able to write.
+owning `/run/bloopbox`, which is the recordings tmpfs the daemon has to be able to write. It is also
+why **the agent acknowledges a request instead of deleting it**: the daemon's directory is
+read-only to it under `ProtectSystem=strict`, so it publishes the id of the last request it acted
+on (`handledRequestId`), and the daemon deletes its own file once it sees that id.
+`docs/deployment.md` has the steps.
 
 ### Missing information is never an outage
 

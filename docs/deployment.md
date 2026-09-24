@@ -297,10 +297,25 @@ file, an unparseable one, a reading older than 30s, or an agent that found no `n
 network is gone lights the LEDs. Inventing an outage from missing information would light all
 three LEDs on any dev machine and on any device whose agent died.
 
-The daemon asks for things back through `/run/bloopbox/net-request.json` — one JSON object,
-`{"action":"ap-up"}` or `{"action":"ap-down"}`, consumed and deleted by the agent. The action is
+The daemon asks for things back through `/run/bloopbox/net-request.json`: one JSON object such as
+`{"action":"ap-up","id":"…"}`, written by rename so it is never read half-written. The action is
 matched against a fixed list before anything runs and no part of the file is ever evaluated as
-shell; that allowlist is the whole security model of the boundary.
+shell; that allowlist is the whole security model of the boundary. Root opens the file without
+following a symlink or blocking, and ignores anything that is not a regular file of at most 4 KiB.
+
+**The agent never deletes the request, and must not try.** Under `ProtectSystem=strict` the
+daemon's runtime directory is read-only to `bloopbox-net.service`. The agent used to `rm -f` it,
+the `rm` failed silently, and the action would have run again on every 5 s poll. Now:
+
+1. every request carries a fresh `id` (`writeAgentRequest` in `src/net/netState.ts`);
+2. the agent acts on each id once, recording it in `/run/bloopbox-net/handled-request-id` before
+   it acts, so a restart mid-join does not run the join again;
+3. it publishes that id as `handledRequestId` in `net-state.json`;
+4. the daemon, the file's only writer, deletes the request when it sees its own id come back, and
+   leaves a newer request alone.
+
+A request with no id (hand-written, or from an older `bloopbox-hotspot-test`) is named by a hash of
+its content, so it also runs only once.
 
 **The list is wider than networking.** `reboot` and `poweroff` arrive here too, from the admin
 panel's *Device health* card via `src/system/power.ts`, because this agent is the only process in

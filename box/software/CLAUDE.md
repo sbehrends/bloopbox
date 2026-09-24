@@ -401,8 +401,9 @@ work around it locally. Full reasoning for each is in
 - **`notesDirectory()` must never fall back to `RECORDING_DIR`.** `/etc/bloopbox/environment` sets
   that variable and an upgrade *keeps the file*, so a fallback silently puts every already-installed
   box back in RAM while the tests stay green. Pinned by `purge.test.ts`.
-- `/data/config.json` writes are **atomic** (tmp file → `fsync` → `rename`). A half-written config
-  during power loss would brick the device.
+- `/data/config.json` writes are **atomic** (unique tmp file → `fsync` → `rename` → `fsync` the
+  directory, in `src/config/atomicWrite.ts`) and **serialised**. A half-written config during power
+  loss would brick the device.
 - Invalid or missing config falls back to `config.default.json` **in RAM** and boots into
   onboarding. It never crashes the daemon.
 - Only the configured JIDs are accepted — `src/whatsapp/whitelist.ts`. Unknown numbers, groups

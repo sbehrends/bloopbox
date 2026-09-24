@@ -404,8 +404,16 @@ from the admin API or the portal (bad input is rejected, not persisted). A toddl
 is three buttons, so a bad config cannot be diagnosed or corrected by the user. Validation is the
 safety net.
 
-Writes are **atomic** — temp file → `fsync` → `rename`. A half-written config during power loss
-would brick the device.
+Writes are **atomic**: a temp file named for that write alone → `fsync` → `rename` → `fsync` the
+directory (`src/config/atomicWrite.ts`). A half-written config during power loss would brick the
+device. The directory fsync makes the rename itself durable. Without it, a power cut can bring back
+the old directory entry, and a save the panel reported as done is silently undone at the next boot.
+A failed write removes its temp file.
+
+Writes are also **serialised**. `save`, `update` and `factoryReset` run one at a time through a
+`SerialQueue`, and `update` merges *inside* the queue. Two admin tabs saving at once used to merge
+over the same `current`, so the second silently undid the first, and their temp files, which shared
+one fixed name, truncated each other.
 
 ### Activity totals are a separate file, for a reason that is not tidiness
 
@@ -423,6 +431,12 @@ Writes are atomic like the config's, and **coalesced**: a change schedules one w
 later, so a burst of arriving notes is one erase cycle on the card rather than ten. That delay is
 exactly why `flush()` exists and why every path that ends the process calls it — a config save, a
 SIGTERM, and the reboot and shutdown requests before they are handed to the root agent.
+
+Writes chain one after another, and **every `flush()` waits for a write that covers what it asked
+for**. Two flushes that overlapped used to let the second return before the first write had
+landed, because it found `dirty` already cleared, and the process could exit mid-write. A failed
+write marks the totals dirty again, so the next change or the shutdown `flush()` retries it instead
+of treating the stale file as current.
 
 **`src/core/` still does no I/O.** `DeviceController` takes a `StatsRecorder` — three synchronous
 methods, structurally typed so nothing in `core/` imports the store — exactly as it already takes

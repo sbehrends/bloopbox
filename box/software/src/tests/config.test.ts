@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -190,6 +190,42 @@ describe('atomic writes', () => {
     // a write in-process. See "Config is snapshot at boot" in CLAUDE.md.
     expect(saved.system.configured).toBe(true);
     expect(config.current).toEqual(saved);
+  });
+});
+
+describe('concurrent and failed writes', () => {
+  it('applies two overlapping updates in turn, so neither undoes the other', async () => {
+    // Two admin tabs saving at once. Both used to merge over the same `current`, and the second
+    // write silently threw away the first one's change.
+    const config = manager();
+    await config.load();
+    await config.save(await validConfig());
+
+    await Promise.all([
+      config.update({ audio: { speakerVolumePercent: 31 } }),
+      config.update({ quietHours: { enabled: true } }),
+    ]);
+
+    const reloaded = await manager().load();
+    expect(reloaded.config.audio.speakerVolumePercent).toBe(31);
+    expect(reloaded.config.quietHours.enabled).toBe(true);
+    expect(await readdir(workDir)).toEqual(['config.json']);
+  });
+
+  it('leaves no temp file behind when the write fails, and the next save still runs', async () => {
+    const config = manager();
+    await config.load();
+    // A directory where the file should be: every step up to the rename succeeds.
+    await mkdir(configPath);
+    await writeFile(join(configPath, 'occupied'), '');
+
+    await expect(config.save(await validConfig())).rejects.toThrow(/EISDIR|ENOTEMPTY|EEXIST|EPERM/);
+    expect((await readdir(workDir)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+
+    await rm(configPath, { recursive: true });
+    await expect(config.save(await validConfig())).resolves.toMatchObject({
+      system: { configured: true },
+    });
   });
 });
 

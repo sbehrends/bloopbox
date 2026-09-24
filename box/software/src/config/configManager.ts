@@ -1,6 +1,7 @@
 import { constants as fsConstants } from 'node:fs';
-import { access, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { access, readFile, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { SerialQueue, writeFileAtomic } from './atomicWrite.ts';
 import {
   configSchema,
   type ButtonTimings,
@@ -19,7 +20,12 @@ import {
  *
  *  2. **Writes are atomic.** The Pi has no power button and children pull cables. A
  *     half-written config would brick the device, so we write a temp file, fsync it,
- *     then rename over the target — rename is atomic within a filesystem.
+ *     then rename over the target — rename is atomic within a filesystem. See
+ *     `atomicWrite.ts` for the full sequence.
+ *
+ * Writes are also **serialised**. Two admin tabs saving at once used to both merge over the
+ * same `current` and the second silently undid the first, while their temp files, sharing one
+ * name, truncated each other.
  */
 
 /** Where the writable config lives on the device. Overridable for tests and dev. */
@@ -54,6 +60,8 @@ export class ConfigManager {
   readonly #templatePath: string;
   #current: DeviceConfig | null = null;
   #source: ConfigSource = 'defaults';
+  /** Every write — save, update, reset — runs alone, so each one sees the last one's result. */
+  readonly #writes = new SerialQueue();
 
   constructor(options: ConfigManagerOptions = {}) {
     this.#configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
@@ -113,37 +121,45 @@ export class ConfigManager {
   }
 
   /**
-   * Validates and atomically persists a full config, then emits `change`.
-   * Rejects without touching disk if the config is invalid.
+   * Validates and atomically persists a full config. Rejects without touching disk if the
+   * config is invalid. Nothing is notified: the caller restarts the daemon to apply it.
    */
   async save(candidate: unknown): Promise<DeviceConfig> {
-    const parsed = configSchema.safeParse(candidate);
-    if (!parsed.success) {
-      throw new ConfigValidationError(parsed.error);
-    }
-
-    await this.#writeAtomic(this.#configPath, parsed.data);
-    this.#current = parsed.data;
-    this.#source = 'file';
-    return parsed.data;
+    return this.#writes.run(async () => this.#saveNow(candidate));
   }
 
   /**
    * Deep-merges a partial update over the current config, then validates and saves.
    * Used by the admin API, where the client sends only the sections it changed.
+   *
+   * The merge happens inside the queue, not before it: merging first would read `current`
+   * before an earlier save in flight had replaced it, and write that save's change away.
    */
   async update(patch: ConfigPatch): Promise<DeviceConfig> {
-    const merged = mergeConfig(this.current, patch);
-    return this.save(merged);
+    return this.#writes.run(async () => this.#saveNow(mergeConfig(this.current, patch)));
   }
 
   /** Removes the persisted config so the next boot re-enters onboarding. */
   async factoryReset(): Promise<DeviceConfig> {
-    await unlink(this.#configPath).catch((error: unknown) => {
-      if (!isNotFound(error)) throw error;
+    return this.#writes.run(async () => {
+      await unlink(this.#configPath).catch((error: unknown) => {
+        if (!isNotFound(error)) throw error;
+      });
+      const result = await this.load();
+      return result.config;
     });
-    const result = await this.load();
-    return result.config;
+  }
+
+  async #saveNow(candidate: unknown): Promise<DeviceConfig> {
+    const parsed = configSchema.safeParse(candidate);
+    if (!parsed.success) {
+      throw new ConfigValidationError(parsed.error);
+    }
+
+    await writeFileAtomic(this.#configPath, `${JSON.stringify(parsed.data, null, 2)}\n`);
+    this.#current = parsed.data;
+    this.#source = 'file';
+    return parsed.data;
   }
 
   async #tryReadValidated(
@@ -171,34 +187,6 @@ export class ConfigManager {
       return { ok: false, reason: `failed validation: ${summarizeZodError(result.error)}` };
     }
     return { ok: true, config: result.data };
-  }
-
-  /**
-   * Atomic write: temp file in the same directory (rename is only atomic within a
-   * filesystem), fsync the contents, rename over the target.
-   */
-  async #writeAtomic(path: string, config: DeviceConfig): Promise<void> {
-    const directory = dirname(path);
-    await mkdir(directory, { recursive: true });
-
-    const tempPath = `${path}.tmp`;
-    const payload = `${JSON.stringify(config, null, 2)}\n`;
-
-    const handle = await open(tempPath, 'w');
-    try {
-      await handle.writeFile(payload, 'utf8');
-      // Without this the rename can land before the data does after power loss.
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-
-    try {
-      await rename(tempPath, path);
-    } catch (error: unknown) {
-      await unlink(tempPath).catch(() => undefined);
-      throw error;
-    }
   }
 }
 

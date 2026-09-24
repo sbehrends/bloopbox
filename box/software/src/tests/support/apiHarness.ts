@@ -276,6 +276,12 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     basic: (password) => `Basic ${Buffer.from(`admin:${password}`).toString('base64')}`,
     close: async () => {
       stats.stop();
+      /*
+       * Waits for a write already under way. The store writes atomically, through a temp file
+       * beside stats.json, and one landing while `rm` below is emptying the directory made it
+       * fail with ENOTEMPTY now and then.
+       */
+      await stats.flush();
       await controller.stop();
       await new Promise<void>((closed, failed) => {
         server.close((error) => {

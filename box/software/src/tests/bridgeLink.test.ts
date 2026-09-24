@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { Server as IoServer } from 'socket.io';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
-import { BRIDGE_AUTH_HEADER, BRIDGE_NAMESPACE } from '../ipc/events.ts';
+import {
+  BRIDGE_AUTH_HEADER,
+  BRIDGE_NAMESPACE,
+  createRequestId,
+  REQUEST_ID_BOOT,
+} from '../ipc/events.ts';
 import {
   registerBridgeNamespace,
   type BridgeLink,
@@ -207,6 +212,30 @@ describe('send', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(rig.link.connected).toBe(true);
+  });
+
+  it('is not resolved by a result for the same counter from an earlier boot', async () => {
+    /*
+     * The bridge outlives the hardware server, which restarts on every config save and counts
+     * from 1 again. A result for the previous boot's first send, still in flight across the
+     * restart, carries the id this boot's first send would have had without the boot prefix.
+     * If it resolved the new send, a note that failed would be reported delivered.
+     */
+    rig = await startRig();
+    const client = await rig.connect();
+    await waitFor(() => rig?.link.connected === true, 'connected');
+
+    client.on('wa:send', (payload: { requestId: string }) => {
+      expect(payload.requestId).not.toBe('send-1');
+      // Socket.io delivers in order, so the stale one arrives first and must be ignored.
+      client.emit('wa:sendResult', { requestId: 'send-1', ok: true });
+      client.emit('wa:sendResult', { requestId: 'send-0a1b2c3d-1', ok: true });
+      client.emit('wa:sendResult', { requestId: payload.requestId, ok: false, error: 'real' });
+    });
+
+    await expect(rig.link.send({ index: 0, path: '/tmp/a.ogg', durationMs: 900 })).rejects.toThrow(
+      /real/,
+    );
   });
 
   it('fails every pending send when the bridge goes away', async () => {
@@ -473,5 +502,20 @@ describe('fire-and-forget messages to the bridge', () => {
     rig.link.markRead(0, ['A']);
     rig.link.unlink();
     expect(rig.link.connected).toBe(false);
+  });
+});
+
+describe('request ids', () => {
+  it('carry the boot they were issued in', () => {
+    expect(createRequestId('send', 1)).toBe(`send-${REQUEST_ID_BOOT}-1`);
+    expect(REQUEST_ID_BOOT).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('differ between two boots for the same counter', async () => {
+    // A fresh module instance is what a restarted process is, as far as this constant goes.
+    vi.resetModules();
+    const again = await import('../ipc/events.ts');
+    expect(again.REQUEST_ID_BOOT).not.toBe(REQUEST_ID_BOOT);
+    expect(again.createRequestId('send', 1)).not.toBe(createRequestId('send', 1));
   });
 });

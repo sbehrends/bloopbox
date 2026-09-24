@@ -55,6 +55,11 @@ on the `/bridge` namespace, authenticated with a shared `BRIDGE_TOKEN` compared 
 The event contract is [`src/ipc/events.ts`](../box/software/src/ipc/events.ts) and is the single source of truth
 for both sides: adding an event means editing that file first.
 
+**Request ids carry a random per-boot prefix** (`send-<boot>-<n>`, `createRequestId`). The bridge
+outlives the hardware server, which restarts on every config save and counts from 1 again, so
+without it a result still in flight for the previous boot's `send-1` would resolve this boot's
+`send-1` — a note reported delivered that never left the box.
+
 **Networking sits outside both.** The daemons run unprivileged under `ProtectSystem=strict`, so
 they cannot talk to NetworkManager and should not be able to. A third unit, `bloopbox-net.service`,
 runs [`deploy/net-agent.sh`](../box/software/deploy/net-agent.sh) as root, polls `nmcli` every 5 s and publishes

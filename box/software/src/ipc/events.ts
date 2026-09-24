@@ -193,7 +193,20 @@ export type ServerToBridgeEvents = {
   'wa:requestPairingCode': (payload: { requestId: string; phone: string }) => void;
 };
 
+/**
+ * Random per process, so a request id can never be reissued by a later boot.
+ *
+ * The counters behind these ids restart at 1 every time the hardware server does, and it
+ * restarts on every config save — while the bridge, a separate process, stays up. Without this a
+ * `wa:sendResult` for the previous boot's `send-1`, still in flight when the server exited, would
+ * resolve this boot's `send-1`: a child's note reported delivered that never left the box.
+ *
+ * `crypto.randomUUID` is the web global rather than `node:crypto`, because the browser bundles
+ * compile this file too.
+ */
+export const REQUEST_ID_BOOT = crypto.randomUUID().slice(0, 8);
+
 /** Generates a short correlation id for send requests and playback tokens. */
 export function createRequestId(prefix: string, counter: number): string {
-  return `${prefix}-${counter.toString(36)}`;
+  return `${prefix}-${REQUEST_ID_BOOT}-${counter.toString(36)}`;
 }

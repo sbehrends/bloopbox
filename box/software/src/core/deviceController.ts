@@ -110,6 +110,14 @@ export class DeviceController {
    */
   #listeningTo: ButtonIndex | null = null;
   #quietHoursTimer: NodeJS.Timeout | null = null;
+  /**
+   * What the schedule said at the last evaluation, or null before the first.
+   *
+   * The schedule is applied only when this *changes*. Re-asserting it on every wake — every
+   * 15 minutes at most — silently undid a parent's chord: they forced sound back on at 21:00
+   * and the box went quiet again by 21:15. An override now lasts until the next boundary.
+   */
+  #scheduleInWindow: boolean | null = null;
   #started = false;
 
   constructor(options: DeviceControllerOptions) {
@@ -573,8 +581,11 @@ export class DeviceController {
   /* ---- quiet hours ---- */
 
   /**
-   * Applies the schedule and sleeps exactly until the next boundary, rather than polling
-   * every minute — on a device that runs for months, that adds up.
+   * Applies the schedule on its edges and sleeps exactly until the next boundary, rather than
+   * polling every minute — on a device that runs for months, that adds up.
+   *
+   * Only an edge applies it (see `#scheduleInWindow`): the capped wake-ups in between exist to
+   * catch clock changes, not to overrule the chord.
    */
   #evaluateQuietHours(): void {
     if (this.#quietHoursTimer) {
@@ -585,7 +596,11 @@ export class DeviceController {
 
     const { quietHours } = this.#config.current;
     const now = new Date();
-    this.state.setScheduledSilent(isWithinQuietHours(quietHours, now));
+    const inWindow = isWithinQuietHours(quietHours, now);
+    if (inWindow !== this.#scheduleInWindow) {
+      this.#scheduleInWindow = inWindow;
+      this.state.setScheduledSilent(inWindow);
+    }
 
     const untilBoundary = msUntilNextTransition(quietHours, now);
     if (untilBoundary === null) return;

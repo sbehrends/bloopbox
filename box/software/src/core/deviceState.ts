@@ -122,6 +122,10 @@ export class DeviceState extends EventEmitter<DeviceStateEvents> {
   /**
    * The chord toggles the *effective* state. During scheduled quiet hours this lets a
    * parent force audio back on without editing the schedule.
+   *
+   * Clearing `#scheduledSilent` is the override. It holds because `DeviceController` applies
+   * the schedule only on an edge, so the next boundary — not the next timer wake — is what
+   * brings the schedule back.
    */
   toggleSilent(): void {
     const before = this.silentMode;

@@ -11,6 +11,7 @@ const {
   recordThresholdMs: RECORD_THRESHOLD_MS,
   minRecordingMs: MIN_RECORDING_MS,
   resumeGraceMs: RESUME_GRACE_MS,
+  silentComboMs: SILENT_COMBO_MS,
 } = DEFAULT_BUTTON_TIMINGS;
 
 /**
@@ -25,6 +26,7 @@ const HOLD_MS = RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 500;
 import {
   DeviceController,
   MIN_USABLE_AUDIO_MS,
+  QUIET_HOURS_MAX_SLEEP_MS,
   type OutboundRequest,
   type StatsRecorder,
 } from '../core/deviceController.ts';
@@ -880,6 +882,45 @@ describe('silent mode', () => {
 
     await vi.advanceTimersByTimeAsync(30 * 1000);
     expect(scheduled.state.silentMode).toBe(true);
+    await scheduled.stop();
+  });
+
+  /*
+   * The schedule used to be re-asserted on every wake, and the wakes are capped at 15 minutes,
+   * so a parent who forced sound back on at bedtime had it taken away again within a quarter
+   * of an hour. The override now lasts until the schedule next changes its mind.
+   */
+  it('keeps a chord override until the next boundary, then follows the schedule again', async () => {
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 22, 30, 0)));
+    expect(scheduled.state.silentMode).toBe(true);
+
+    hal.pressButton(0);
+    hal.pressButton(2);
+    await vi.advanceTimersByTimeAsync(SILENT_COMBO_MS + 100);
+    hal.releaseButton(0);
+    hal.releaseButton(2);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    // Past the capped re-evaluation, still inside the window: the override stands.
+    await vi.advanceTimersByTimeAsync(QUIET_HOURS_MAX_SLEEP_MS + 1000);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    /*
+     * The clock is moved rather than run: a night of 50 ms LED ticks is too slow to advance
+     * through. `setSystemTime` leaves pending timers where they were, so the next wake lands
+     * at most one cap after each jump — two caps is enough to cross the boundary.
+     */
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 16, 6, 59, 0)));
+    await vi.advanceTimersByTimeAsync(2 * QUIET_HOURS_MAX_SLEEP_MS);
+    // The window ended with sound already on; nothing to change, and nothing flipped.
+    expect(scheduled.state.silentMode).toBe(false);
+
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 16, 19, 59, 0)));
+    await vi.advanceTimersByTimeAsync(2 * QUIET_HOURS_MAX_SLEEP_MS);
+    // The next night starts as scheduled — the override was for one night, not for good.
+    expect(scheduled.state.silentMode).toBe(true);
+    expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
     await scheduled.stop();
   });
 

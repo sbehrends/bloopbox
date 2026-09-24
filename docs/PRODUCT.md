@@ -649,7 +649,10 @@ Mastering is a decision in `scripts/generate-sounds.ts`, not a filter's side eff
   and on a device with no screen that is indistinguishable from a broken one. Switching it on and
   choosing a zone is one visit to the admin panel.
 - The chord toggles the **effective** state, so during scheduled quiet hours a parent can force
-  audio back on without editing the schedule.
+  audio back on without editing the schedule. **The override lasts until the next boundary**: sound
+  stays on for the rest of that window, and the next window starts silent as scheduled. The
+  schedule is applied only when it changes its mind, never re-asserted in between — it used to be,
+  every 15 minutes, which took the sound away again before a parent had finished the bedtime story.
 
 Behaviour while silent:
 

@@ -370,7 +370,13 @@ the instant the chord forms, so a child mashing the outer buttons can never send
 If the chord is released early, nothing at all happens — no send, no cancel beep.
 
 The chord toggles the **effective** state, so during scheduled quiet hours it lets a parent force
-audio back on without editing the schedule.
+audio back on without editing the schedule. The override is `DeviceState` clearing its scheduled
+flag, and it holds only because `DeviceController` applies the schedule on an **edge**: it
+remembers what the window said at the last evaluation and calls `setScheduledSilent` only when
+that changes. The timer still wakes at least every 15 minutes (`QUIET_HOURS_MAX_SLEEP_MS`) to
+catch clock and DST changes, but a wake inside the same window changes nothing, so the override
+lasts until the next boundary. The sleep itself is `msUntilNextTransition`, to the millisecond —
+counting whole minutes landed the boundary up to 59 s late.
 
 ---
 

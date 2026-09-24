@@ -873,6 +873,16 @@ describe('silent mode', () => {
     await scheduled.stop();
   });
 
+  it('falls silent on the boundary itself, not up to a minute after it', async () => {
+    // Thirty seconds before 20:00. Counting whole minutes slept a full one from here.
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 19, 59, 30)));
+    expect(scheduled.state.silentMode).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30 * 1000);
+    expect(scheduled.state.silentMode).toBe(true);
+    await scheduled.stop();
+  });
+
   it('reads the window in the configured zone, not the device clock', async () => {
     await controller.stop();
     await config.update({

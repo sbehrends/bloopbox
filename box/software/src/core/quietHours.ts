@@ -88,15 +88,24 @@ export function isWithinQuietHours(config: QuietHoursConfig, at: Date): boolean 
   return now >= start || now < end;
 }
 
+const MS_PER_MINUTE = 60 * 1000;
+const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE;
+
 /**
- * Minutes until the window's state next flips, so a scheduler can sleep exactly that
+ * Milliseconds until the window's state next flips, so a scheduler can sleep exactly that
  * long instead of polling every minute.
  *
- * Wall-clock minutes, so a DST jump inside the interval makes it an hour out. That is why
- * `DeviceController` caps the sleep and re-evaluates rather than trusting this once — twice a
- * year, an hour late, self-correcting, versus a timer per minute forever.
+ * Milliseconds, not minutes, because `at` is almost never on a minute boundary: counting whole
+ * minutes from the current one landed the timer up to 59 s past the boundary, and a box
+ * evaluated at 19:59:30 stayed audible until 20:00:30. The part of the minute already gone is
+ * taken from the epoch rather than from ICU — every zone in use today is offset by whole
+ * minutes, so the seconds hand reads the same everywhere.
+ *
+ * Wall-clock minutes otherwise, so a DST jump inside the interval makes it an hour out. That is
+ * why `DeviceController` caps the sleep and re-evaluates rather than trusting this once — twice
+ * a year, an hour late, self-correcting, versus a timer per minute forever.
  */
-export function minutesUntilNextTransition(config: QuietHoursConfig, at: Date): number | null {
+export function msUntilNextTransition(config: QuietHoursConfig, at: Date): number | null {
   if (!config.enabled) return null;
 
   const start = parseTimeOfDay(config.startTime);
@@ -105,8 +114,10 @@ export function minutesUntilNextTransition(config: QuietHoursConfig, at: Date): 
 
   const now = minutesOfDay(at, config.timezone);
   const target = isWithinQuietHours(config, at) ? end : start;
+  // Modulo twice so an instant before 1970 still yields a positive offset into its minute.
+  const intoMinute = ((at.getTime() % MS_PER_MINUTE) + MS_PER_MINUTE) % MS_PER_MINUTE;
 
-  const delta = target - now;
+  const delta = (target - now) * MS_PER_MINUTE - intoMinute;
   // A non-positive delta means the boundary is tomorrow.
-  return delta > 0 ? delta : delta + 24 * 60;
+  return delta > 0 ? delta : delta + MS_PER_DAY;
 }

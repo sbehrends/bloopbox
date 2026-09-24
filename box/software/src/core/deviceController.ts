@@ -7,7 +7,7 @@ import type { Hal, RecordingHandle } from '../hal/types.ts';
 import { ButtonInterpreter } from './buttonInterpreter.ts';
 import { DeviceState, type DeviceStatus } from './deviceState.ts';
 import { LedAnimator } from './ledAnimator.ts';
-import { isWithinQuietHours, minutesUntilNextTransition } from './quietHours.ts';
+import { isWithinQuietHours, msUntilNextTransition } from './quietHours.ts';
 
 /**
  * Wires the device together: HAL events in, intents out, LEDs and audio as a result.
@@ -56,7 +56,7 @@ export type DeviceControllerOptions = {
 };
 
 /** How often the quiet-hours schedule is re-evaluated when no transition is imminent. */
-const QUIET_HOURS_MAX_SLEEP_MS = 15 * 60 * 1000;
+export const QUIET_HOURS_MAX_SLEEP_MS = 15 * 60 * 1000;
 
 /**
  * Below this much audio, a committed take is a failed capture rather than a short message.
@@ -587,11 +587,11 @@ export class DeviceController {
     const now = new Date();
     this.state.setScheduledSilent(isWithinQuietHours(quietHours, now));
 
-    const minutes = minutesUntilNextTransition(quietHours, now);
-    if (minutes === null) return;
+    const untilBoundary = msUntilNextTransition(quietHours, now);
+    if (untilBoundary === null) return;
 
     // Cap the sleep so clock changes and DST shifts self-correct.
-    const delay = Math.min(minutes * 60 * 1000, QUIET_HOURS_MAX_SLEEP_MS);
+    const delay = Math.min(untilBoundary, QUIET_HOURS_MAX_SLEEP_MS);
     this.#quietHoursTimer = setTimeout(() => {
       this.#evaluateQuietHours();
     }, delay);

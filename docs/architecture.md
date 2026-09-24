@@ -298,6 +298,12 @@ Rules, all locked by [`src/tests/button.test.ts`](../box/software/src/tests/butt
 - `resumeGraceMs: 0` restores commit-on-release.
 - The reported `durationMs` is time actually held, first press to final release. The trailing
   window is not speech and is not counted.
+- The `durationMs` the **HAL** returns from `stopRecording` is a different number: how much audio
+  the file holds. `GpioHal` computes it from the capture WAV's size, `(size − 44) / (rate × 2 ×
+  channels)`, and the simulator probes the encoded file. The microphone stays open through the
+  window, so it includes that tail. It used to be `Date.now() − startedAt` taken after the encode,
+  which counted the stop and the encode as audio. A microphone that delivered nothing still
+  reported seconds, `MIN_USABLE_AUDIO_MS` could never catch it, and the sent totals ran high.
 
 No cue marks the resume and none is needed: the LED never goes out. `pressVisualOff` still fires on
 release, but ladder rule 1 keeps the light solid, so **solid means "still listening"** and the

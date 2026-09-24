@@ -130,6 +130,24 @@ const ALSA_AMP_AC_MIXER_CONTROL = process.env['ALSA_AMP_AC_MIXER_CONTROL'] ?? ''
 const CAPTURE_RATE = parseRate('CAPTURE_RATE', 16_000);
 export const CAPTURE_FORMAT = { rate: CAPTURE_RATE, channels: 1, format: 'S16_LE' } as const;
 
+/** Bytes in the canonical PCM WAV header `arecord -t wav` writes ahead of the samples. */
+const WAV_HEADER_BYTES = 44;
+
+/** `S16_LE`: two bytes per sample per channel. */
+const CAPTURE_BYTES_PER_SAMPLE = 2;
+
+/**
+ * How much audio a capture WAV of `sizeBytes` holds, in whole milliseconds.
+ *
+ * From the file size rather than the header's own length fields: a capture that had to be
+ * SIGKILLed never got its header finalised, but every sample it wrote is still on disk.
+ * Exported for tests.
+ */
+export function wavDurationMs(sizeBytes: number, format = CAPTURE_FORMAT): number {
+  const bytesPerSecond = format.rate * format.channels * CAPTURE_BYTES_PER_SAMPLE;
+  return Math.round((Math.max(0, sizeBytes - WAV_HEADER_BYTES) / bytesPerSecond) * 1000);
+}
+
 /** Grace period for arecord to finalise its WAV header before we SIGKILL. */
 const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
 
@@ -320,9 +338,15 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     const outputPath = join(this.#recordingDirectory, `${handle.id}.ogg`);
 
     try {
-      await toVoiceNote(wavPath, outputPath, this.#captureFilter);
+      /*
+       * Measured from the audio, not the clock. `Date.now() - startedAt` here would include the
+       * resume grace and — worse — the time `stopCapture` spent waiting, so a microphone that
+       * delivered nothing still reported seconds and `MIN_USABLE_AUDIO_MS` could never catch it.
+       */
+      const durationMs = wavDurationMs((await stat(wavPath)).size);
+      await toVoiceNote(wavPath, outputPath, this.#captureFilter, durationMs);
       const { size } = await stat(outputPath);
-      return { path: outputPath, durationMs: Date.now() - handle.startedAt, byteLength: size };
+      return { path: outputPath, durationMs, byteLength: size };
     } finally {
       // The intermediate WAV is several times larger than the Opus output.
       await rm(wavPath, { force: true });

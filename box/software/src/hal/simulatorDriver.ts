@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AudioCue } from '../audio/cues.ts';
-import { CAPTURE_FILTER_CHAIN, toVoiceNote } from '../audio/ffmpeg.ts';
+import { CAPTURE_FILTER_CHAIN, probeDurationMs, toVoiceNote } from '../audio/ffmpeg.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import { createRequestId } from '../ipc/events.ts';
 import type {
@@ -268,13 +268,20 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
         throw new Error('browser delivered no audio');
       }
       await writeFile(rawPath, raw);
+      // Taken before the encode: the clock after it would count the encode as audio.
+      const elapsedMs = Date.now() - pending.handle.startedAt;
       // MediaRecorder gives WebM/Opus in Chrome; WhatsApp needs Ogg/Opus.
-      await toVoiceNote(rawPath, outputPath, this.#captureFilter);
+      await toVoiceNote(rawPath, outputPath, this.#captureFilter, elapsedMs);
       const { size } = await stat(outputPath);
 
       pending.resolve({
         path: outputPath,
-        durationMs: Date.now() - pending.handle.startedAt,
+        /*
+         * What the file holds, as on the device. The clock is only the fallback for a machine
+         * without ffprobe: it also counts the browser's flush, so a microphone that delivered
+         * almost nothing would still clear `MIN_USABLE_AUDIO_MS`.
+         */
+        durationMs: (await probeDurationMs(outputPath)) ?? elapsedMs,
         byteLength: size,
       });
     } catch (error: unknown) {

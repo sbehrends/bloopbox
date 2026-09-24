@@ -60,7 +60,8 @@ Options:
   --output PATH       Where to write the .img.xz (default: ./release/<name>.img.xz)
   --hostname NAME     Device hostname, also its .local name (default: bloopbox)
   --user NAME         Login user for ssh (default: bloop)
-  --password PASS     That user's password (default: generated and written next to the image)
+  --password PASS     That user's password (default: none in the image — each device
+                      generates its own on first boot and shows it in the admin panel)
   --wifi-ssid SSID    Wi-Fi network to join on first boot
   --wifi-psk PSK      Wi-Fi passphrase
   --wifi-country CC   Two-letter regulatory domain, e.g. DE. Set this or the radio may
@@ -305,12 +306,23 @@ chroot "${MOUNT_POINT}" /bin/bash -euo pipefail -c "
 
 step "configuring access"
 if [[ -z "${LOGIN_PASSWORD}" ]]; then
-  LOGIN_PASSWORD="$(openssl rand -base64 12 | tr -d '/+=' | cut -c1-14)"
-  GENERATED_PASSWORD=true
+  # No password is baked in. One image is flashed onto many cards and, from CI, published for
+  # anyone to download, so a password chosen here would be shared by every box made from it.
+  # Pi OS's first-boot rename still needs a hash to set, so it gets one of a throwaway nobody
+  # ever sees; bloopbox-ssh-password.service replaces it with a per-device password before sshd
+  # starts, and the admin panel shows that one to whoever owns the box.
+  PASSWORD_HASH="$(openssl passwd -6 "$(openssl rand -base64 32)")"
+  printf '%s\n' "${LOGIN_USER}" > "${MOUNT_POINT}/etc/bloopbox/ssh-password.pending"
+  chmod 0600 "${MOUNT_POINT}/etc/bloopbox/ssh-password.pending"
+  PASSWORD_NOTE="generated on the device at first boot — admin panel, Advanced -> SSH access"
+  info "no password in the image: each device generates its own on first boot"
 else
-  GENERATED_PASSWORD=false
+  # Given explicitly, typically to debug a device before its admin panel is reachable. The hash
+  # is in the image, so anyone holding the image can attack it offline: choose a strong one.
+  PASSWORD_HASH="$(openssl passwd -6 "${LOGIN_PASSWORD}")"
+  PASSWORD_NOTE="${LOGIN_PASSWORD}"
+  info "password set from --password"
 fi
-PASSWORD_HASH="$(openssl passwd -6 "${LOGIN_PASSWORD}")"
 
 # Handed to Pi OS's own mechanism rather than by creating a second account here: the image
 # ships a `pi` user (uid 1000) plus an enabled userconfig.service, and that service renames
@@ -392,7 +404,7 @@ This card is ready to run. Put it in the Pi and power up.
 
   Wi-Fi        edit bloopbox-wifi.txt on this partition before first boot
   Settings     http://${NEW_HOSTNAME}.local/
-  ssh          ${LOGIN_USER}@${NEW_HOSTNAME}.local
+  ssh          ${LOGIN_USER}@${NEW_HOSTNAME}.local (password: admin panel, Advanced -> SSH access)
   Health       sudo bloopbox-doctor
   Logs         journalctl -u bloopbox-hardware -u bloopbox-whatsapp -f
 
@@ -448,7 +460,7 @@ ${IMAGE_NAME}
 
 hostname   ${NEW_HOSTNAME}
 ssh user   ${LOGIN_USER}
-password   ${LOGIN_PASSWORD}
+password   ${PASSWORD_NOTE}
 wi-fi      ${WIFI_SSID:-(not set — edit bloopbox-wifi.txt on the boot partition)}
 hardware   audio ${AUDIO_HAT:-usb}, lamps ${LED_DESCRIPTION}
            installed with: install.sh ${INSTALL_FLAGS}
@@ -458,10 +470,8 @@ EOF
 chmod 0600 "${CREDENTIALS}"
 
 printf '\n==> %s (%s)\n' "${OUTPUT}" "$(du -h "${OUTPUT}" | cut -f1)"
+# Never printed: this runs in CI, and a job log is readable by everyone who can read the repo.
 printf '    credentials in %s\n' "${CREDENTIALS}"
-if [[ "${GENERATED_PASSWORD}" == true ]]; then
-  printf '    generated ssh password for %s: %s\n' "${LOGIN_USER}" "${LOGIN_PASSWORD}"
-fi
 cat <<EOF
 
 Flash it:

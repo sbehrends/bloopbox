@@ -317,7 +317,7 @@ resetting is a crash loop), processor busy time and load, memory, free space on 
 RAM disk, and the Wi-Fi network and signal. Every reading is nullable: a value the box cannot obtain
 is a dash, never a zero.
 
-The same information is in `bloopbox-doctor`, which needs SSH — the tool a parent does not have.
+The same information is in `bloopbox-doctor`, which needs SSH — a tool a parent should never need.
 
 **Restart** and **Shut down** sit at the bottom of it, behind the same two-tap confirm as the factory
 reset. The box has no power button, and pulling the plug is what lost an unread note once already
@@ -326,6 +326,13 @@ unprivileged and cannot talk to systemd, so the request goes to the root agent b
 enum-validated file channel a Wi-Fi join uses; the agent stops the units the ordinary way, which is
 what flushes the counters and finalises anything mid-write. Where there is no agent — any development
 machine — the panel says the box cannot power itself off rather than reporting a failure.
+
+**SSH access** sits below them: the ssh login this box made for itself on its first boot, shown
+only when asked for and hidden again with the same button. A flashed card carries no password of
+its own, because one image is copied onto many cards, so this is the one place the password can be
+read — for whoever is helping debug the box, never needed for setup. On a box installed by hand, or
+from a card built with an explicit password, it says so and shows nothing. `docs/deployment.md` has
+the mechanism.
 
 ### First Boot
 

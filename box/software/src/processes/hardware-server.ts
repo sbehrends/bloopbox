@@ -40,6 +40,7 @@ import {
 } from '../net/netState.ts';
 import { StatsStore } from '../stats/statsStore.ts';
 import { requestPowerAction, type PowerAction } from '../system/power.ts';
+import { readSshAccess } from '../system/sshAccess.ts';
 import { CpuUsageTracker, readSystemInfo, type StorageTarget } from '../system/systemInfo.ts';
 import { portalRedirectTarget, shouldRedirectToPortal } from '../server/captivePortal.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
@@ -352,6 +353,7 @@ async function main(): Promise<void> {
       await stats.flush();
       return requestPowerAction(action);
     },
+    sshAccess: () => readSshAccess(),
   };
 
   /*

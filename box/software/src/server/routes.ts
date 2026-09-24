@@ -13,6 +13,7 @@ import {
 import { readBoolean, readField, readString } from '../ipc/payload.ts';
 import type { NetState } from '../net/netState.ts';
 import { isPowerAction, type PowerAction } from '../system/power.ts';
+import type { SshAccess } from '../system/sshAccess.ts';
 import type { SystemInfo } from '../system/systemInfo.ts';
 import type { StatsSnapshot } from '../stats/statsStore.ts';
 import { hashAdminPassword, requireAdmin } from './auth.ts';
@@ -81,6 +82,8 @@ export type RoutesContext = {
    * to ask — a development machine — which the panel reports rather than treating as an error.
    */
   readonly requestPower: (action: PowerAction) => Promise<boolean>;
+  /** The ssh login this device generated on first boot, or null where it made none. */
+  readonly sshAccess: () => Promise<SshAccess | null>;
 };
 
 export function buildStatusPayload(context: RoutesContext): DeviceStatusPayload {
@@ -556,6 +559,19 @@ export function createApiRouter(context: RoutesContext): Router {
     }
 
     res.json({ ok: true, action });
+  });
+
+  /**
+   * The device's own ssh password, for whoever holds the admin password.
+   *
+   * A password for the whole machine, so behind the gate and never cached. `available: false`
+   * is the normal answer on a tarball install or an image built with `--password`: the login
+   * there is not one this device made, and the panel says so rather than showing an error.
+   */
+  router.get('/system/ssh', admin, async (_req, res) => {
+    const access = await context.sshAccess();
+    res.set('Cache-Control', 'no-store');
+    res.json(access === null ? { available: false } : { available: true, ...access });
   });
 
   /* ---- diagnostics ---- */

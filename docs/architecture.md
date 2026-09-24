@@ -775,6 +775,7 @@ are testing configuration at all.
 | `NET_STATE_PATH`                             | `/run/bloopbox-net/net-state.json` | What the root net agent publishes; absent in dev  |
 | `NET_REQUEST_PATH`                           | `/run/bloopbox/net-request.json`   | What the daemon asks the agent for — network actions **and** reboot/poweroff |
 | `STATS_PATH`                                 | `/data/stats.json`         | Activity totals. Beside the config, never inside it       |
+| `SSH_PASSWORD_PATH`                          | `/data/ssh-password`       | The first-boot ssh login the admin panel shows. Root-written, read-only here |
 | `THERMAL_ZONE_PATH`                          | `/sys/class/thermal/thermal_zone0/temp` | SoC temperature for the health card. Absent off Linux → reported as a dash |
 | `DEVICE_MODEL_PATH`                          | `/sys/firmware/devicetree/base/model` | The board's own name, for the health card           |
 | `LED_ACTIVE_HIGH`                            | `true`                     | Pi only, unverified — a 3 V lamp between pin and ground lights on HIGH; flip if inverted |

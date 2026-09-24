@@ -1498,7 +1498,7 @@ function renderHealth(): HTMLElement {
     }
   });
 
-  section.append(renderPower());
+  section.append(renderPower(), renderSshAccess());
   return section;
 }
 
@@ -1569,6 +1569,89 @@ function renderPower(): HTMLElement {
       ],
     }),
   );
+
+  return block;
+}
+
+type SshAccessView = { available: false } | { available: true; user: string; password: string };
+
+function isSshAccessView(value: unknown): value is SshAccessView {
+  if (typeof value !== 'object' || value === null || !('available' in value)) return false;
+  if (value.available === false) return true;
+  return (
+    value.available === true &&
+    'user' in value &&
+    typeof value.user === 'string' &&
+    'password' in value &&
+    typeof value.password === 'string'
+  );
+}
+
+/**
+ * The box's own ssh login.
+ *
+ * A flashed card has no password baked in; the device made one on its first boot
+ * (`deploy/ssh-password.sh`), and this is the one place it can be read. Fetched only when asked
+ * for, so the password is not sitting in the page for anyone glancing at an open health card,
+ * and hidden again with the same button.
+ */
+function renderSshAccess(): HTMLElement {
+  const block = element('div', 'wa-section');
+  const details = element('div');
+  const toggle = element('button', 'link-button', 'Show the ssh password');
+  toggle.type = 'button';
+  block.append(
+    element('h3', undefined, 'SSH access'),
+    element(
+      'p',
+      'field-hint',
+      'For whoever is helping debug this box. Anyone with this password can change everything ' +
+        'on it, so only share it with someone you would hand the box to.',
+    ),
+    details,
+    toggle,
+  );
+
+  let shown = false;
+  toggle.addEventListener('click', () => {
+    void (async (): Promise<void> => {
+      if (shown) {
+        details.replaceChildren();
+        toggle.textContent = 'Show the ssh password';
+        shown = false;
+        return;
+      }
+
+      toggle.disabled = true;
+      try {
+        const payload = await getJson('/api/system/ssh');
+        if (!isSshAccessView(payload)) throw new Error('unexpected reply');
+        if (!payload.available) {
+          details.replaceChildren(
+            element(
+              'p',
+              'field-hint',
+              'This box did not make its own ssh password: it was installed by hand, or its card ' +
+                'was built with one. Use that one.',
+            ),
+          );
+          return;
+        }
+        details.replaceChildren(
+          element('p', 'mono-line', `ssh ${payload.user}@${window.location.hostname}`),
+          element('p', 'mono-line', `password  ${payload.password}`),
+        );
+        toggle.textContent = 'Hide the ssh password';
+        shown = true;
+      } catch {
+        details.replaceChildren(
+          element('p', 'field-hint is-bad', 'The box did not answer — it may be restarting.'),
+        );
+      } finally {
+        toggle.disabled = false;
+      }
+    })();
+  });
 
   return block;
 }

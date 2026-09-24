@@ -211,6 +211,8 @@ describe('the endpoints that are open by design', () => {
       { path: '/api/stats/reset', method: 'POST' },
       { path: '/api/system', method: 'GET' },
       { path: '/api/system/power', method: 'POST' },
+      // A password for the whole machine.
+      { path: '/api/system/ssh', method: 'GET' },
     ];
     const results = await Promise.all(
       guarded.map(async ({ path, method }) => {

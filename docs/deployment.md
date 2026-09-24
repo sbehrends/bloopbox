@@ -187,9 +187,9 @@ Desktop and OrbStack both fail with `error deallocating: Invalid argument` on th
 `/work` is the container's own filesystem, which can. Binding `…/image-work/cache` in separately is
 what keeps the ~500 MB Pi OS download between runs, since the cache lives under the work dir.
 
-Options: `--hostname`, `--user`, `--password` (generated and written to a `.credentials.txt`
-beside the image if omitted), `--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--audio-hat`,
-`--no-leds`, `--no-ssh`, `--keep-img`, `--artifact`, `--output`, `--work-dir`.
+Options: `--hostname`, `--user`, `--password` (see [the ssh password](#the-ssh-password)),
+`--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--audio-hat`, `--no-leds`, `--no-ssh`,
+`--keep-img`, `--artifact`, `--output`, `--work-dir`.
 
 ### What the builder does to the stock image
 
@@ -211,6 +211,37 @@ The login user is handed to Pi OS's own `userconfig.service` through `userconf.t
 created by hand. The image ships a `pi` user which that service renames, keeping its group
 memberships — and left with no `userconf.txt` it starts an **interactive setup wizard on tty1**,
 which is useless on a device with no screen.
+
+### The ssh password
+
+**By default an image carries no usable password, and each device makes its own on first boot.**
+One image is flashed onto many cards and, from CI, published for anyone to download, so a
+password chosen at build time would be shared by every box made from it, and printed wherever the
+build ran.
+
+- The builder gives `userconf.txt` the hash of a throwaway random password that is never
+  recorded, so nothing in the image can log in. It also leaves
+  `/etc/bloopbox/ssh-password.pending`, naming the login user.
+- On first boot `bloopbox-ssh-password.service` runs `deploy/ssh-password.sh` as root, after
+  `userconfig.service` has renamed the account and **before sshd starts**. It generates 14
+  characters from `/dev/urandom`, writes them to `/data/ssh-password` (`0640 root:bloopbox`), applies
+  them with `chpasswd`, and only then deletes the marker. A power cut part-way leaves the marker,
+  and the next boot starts again, so the record and the account cannot disagree.
+- The admin panel shows it under **Advanced → Device health → SSH access**, behind the parent's
+  admin password, fetched only when asked for (`GET /api/system/ssh`, `Cache-Control: no-store`).
+- Parents never need it. Setup is still flash, boot, onboard.
+
+**`--password PASS` still works**, and is the way to debug a device before its admin panel is
+reachable — the hotspot, a portal that never loads. The image then carries that password's hash
+and writes no marker, so the first-boot service does nothing; the panel says the password was set
+when the card was built. That hash is readable by anyone holding the image, so use a strong
+password and do not publish such an image.
+
+A **tarball install never gets a marker**, so its existing login is never touched.
+
+The `.credentials.txt` beside the image records either the explicit password or "generated on the
+device". The builder never prints the password, because it runs in CI, where the job log is as
+readable as the repository.
 
 ### The two files a parent can touch
 
@@ -358,13 +389,19 @@ Decisions worth knowing:
 GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping `runs-on` for
 an arm64 runner makes it several times faster and needs no other change.
 
-Optional repository secrets for the image job: `WIFI_SSID`, `WIFI_PSK`, `WIFI_COUNTRY`,
-`IMAGE_PASSWORD`. Without them the image still boots — it ships the fillable
-`bloopbox-wifi.txt` and a generated ssh password.
+Optional repository secrets for the image job: `WIFI_COUNTRY` and `IMAGE_PASSWORD`. Without
+`IMAGE_PASSWORD` every device makes its own ssh password on first boot ([above](#the-ssh-password));
+with it, every card flashed from that release shares one, which is only for debugging.
 
-**The generated ssh password is never attached to a release.** It goes to the private
-`sd-card-credentials` build artifact; the release assets are an explicit list, not a glob, so a
-`credentials.txt` cannot slip into a public download.
+**CI images carry no Wi-Fi network.** They are published, and a passphrase baked into one is
+readable by anyone who downloads it, so the build step takes no `--wifi-ssid` / `--wifi-psk`, and a
+`WIFI_PSK` secret fails the job rather than being silently ignored. A parent fills in
+`bloopbox-wifi.txt` or joins through the hotspot; bake a network into a local build instead.
+
+**CI uploads no credentials artifact.** On a public repository every signed-in GitHub user can
+download a workflow's artifacts, so an "unpublished" artifact was never private. The release
+assets are still an explicit list rather than a glob, so a local `credentials.txt` cannot slip into
+a download either.
 
 ## What none of this proves
 

@@ -36,7 +36,8 @@ step() { printf '\n==> %s\n' "$*"; }
 [[ "${EUID}" -eq 0 ]] || { echo "run this with sudo" >&2; exit 1; }
 
 step "stopping and disabling the services"
-for unit in bloopbox-hardware bloopbox-whatsapp bloopbox-firstboot bloopbox-net bloopbox-debug-sampler; do
+for unit in bloopbox-hardware bloopbox-whatsapp bloopbox-firstboot bloopbox-net bloopbox-debug-sampler \
+            bloopbox-ssh-password; do
   systemctl disable --now "${unit}.service" 2>/dev/null || true
   rm -f "/etc/systemd/system/${unit}.service"
 done

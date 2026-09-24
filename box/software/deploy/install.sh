@@ -488,7 +488,7 @@ if [[ "${HAS_SYSTEMCTL}" == true ]]; then
   # Works offline too: inside a mounted image systemctl just writes the symlinks.
   systemctl enable bloopbox-hardware.service bloopbox-whatsapp.service \
                    bloopbox-firstboot.service bloopbox-net.service \
-                   bloopbox-audio-init.service >/dev/null
+                   bloopbox-audio-init.service bloopbox-ssh-password.service >/dev/null
   info "enabled at boot"
 else
   warn "no systemctl here — the unit files are installed but nothing is enabled"

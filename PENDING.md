@@ -327,6 +327,20 @@ Scope this one narrowly: it must forget Wi-Fi only. Anything that also touches c
 password or WhatsApp pairing is the factory-reset item below, and conflating the two means a parent
 who only wanted to change routers loses the whole device's setup.
 
+### A factory reset does not change the ssh password
+
+Added 2026-09-23 with the per-device ssh password (`docs/deployment.md` § The ssh password). The
+password lives in `/data/ssh-password` and in `/etc/shadow`, and the factory reset touches neither,
+so a box handed to a new family still accepts the old owner's ssh login, and the new owner's panel
+shows them the same password the old owner saw.
+
+The fix is a `rotate-ssh-password` action for the root agent — the daemon cannot run `chpasswd`,
+and must not be able to — which re-runs `deploy/ssh-password.sh` with a fresh marker. The factory
+reset would then ask for it alongside `forget`, and the panel could offer it on its own as
+"generate a new password". Deliberately not done in the same change: the agent's request channel
+has the open `ReadWritePaths` question in `docs/review-2026-09.md` (0.8), and a new root action
+should not be added on top of a channel that may be replaying its requests.
+
 ### A factory-reset control that wipes all user configuration
 
 Requested 2026-08-10, alongside the Wi-Fi-forget item above — related, but a different blast

@@ -60,7 +60,7 @@ capture 06-temp.txt vcgencmd measure_temp
 capture 10-doctor.txt env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'cd / && bloopbox-doctor'
 capture 11-units.txt systemctl status --no-pager --full \
   bloopbox-hardware.service bloopbox-whatsapp.service bloopbox-net.service \
-  bloopbox-firstboot.service
+  bloopbox-firstboot.service bloopbox-ssh-password.service
 capture 12-journal-hardware.txt journalctl -u bloopbox-hardware --since "${SINCE}" --no-pager
 capture 13-journal-whatsapp.txt journalctl -u bloopbox-whatsapp --since "${SINCE}" --no-pager
 capture 14-journal-net.txt journalctl -u bloopbox-net --since "${SINCE}" --no-pager

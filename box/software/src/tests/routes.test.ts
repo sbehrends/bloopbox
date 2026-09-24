@@ -769,3 +769,28 @@ describe('POST /api/system/power', () => {
     expect(response.status).toBe(503);
   });
 });
+
+describe('GET /api/system/ssh', () => {
+  it('shows the password this device generated on first boot, and forbids caching it', async () => {
+    api = await startApi({ configured: false });
+    api.sshAccess = { user: 'bloop', password: 'Xy7kQ2mN4pR8sT' };
+
+    const response = await fetch(api.url('/api/system/ssh'));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual({
+      available: true,
+      user: 'bloop',
+      password: 'Xy7kQ2mN4pR8sT',
+    });
+  });
+
+  it('reports nothing to show on a box whose login it did not make', async () => {
+    // A tarball install, or an image built with --password. Normal, not a failure.
+    api = await startApi({ configured: false });
+
+    const response = await fetch(api.url('/api/system/ssh'));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ available: false });
+  });
+});

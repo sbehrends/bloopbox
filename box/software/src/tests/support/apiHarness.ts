@@ -14,6 +14,7 @@ import { hashAdminPassword } from '../../server/auth.ts';
 import { createApiRouter, createAudioRouter, type RoutesContext } from '../../server/routes.ts';
 import { StatsStore } from '../../stats/statsStore.ts';
 import type { PowerAction } from '../../system/power.ts';
+import type { SshAccess } from '../../system/sshAccess.ts';
 import { CpuUsageTracker, readSystemInfo } from '../../system/systemInfo.ts';
 
 /**
@@ -69,6 +70,8 @@ export type Harness = {
   /** Power requests the routes made, and whether the stub agent accepts them. */
   readonly powerRequests: PowerAction[];
   powerAccepted: boolean;
+  /** The first-boot ssh login the route reports; null is a box that made none. */
+  sshAccess: SshAccess | null;
 
   /** Basic auth header value for a password. */
   basic: (password: string) => string;
@@ -139,6 +142,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     groups: [] as { id: string; subject: string }[],
     pairing: {} as { code?: string; error?: string },
     powerAccepted: true,
+    sshAccess: null as SshAccess | null,
   };
   const joins: { ssid: string; psk: string }[] = [];
   const restarts: string[] = [];
@@ -190,6 +194,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
       powerRequests.push(action);
       return Promise.resolve(state.powerAccepted);
     },
+    sshAccess: () => Promise.resolve(state.sshAccess),
   };
 
   const app = express();
@@ -255,6 +260,12 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     },
     set powerAccepted(value) {
       state.powerAccepted = value;
+    },
+    get sshAccess() {
+      return state.sshAccess;
+    },
+    set sshAccess(value) {
+      state.sshAccess = value;
     },
     powerRequests,
     joins,

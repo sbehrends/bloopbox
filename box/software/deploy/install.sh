@@ -556,6 +556,11 @@ else
     fi
     {
       echo '# >>> bloopbox >>>'
+      # Appended, so without this the block would inherit whatever conditional filter the file
+      # ended on. Stock Pi OS config.txt closes on `[all]` today, but a `[cm4]` or `[pi5]` section
+      # left last by an edit would quietly make every line below apply to that board only.
+      echo '# Applies to every board, whatever section the lines above left open.'
+      echo '[all]'
       echo '# Button inputs with firmware pull-ups. This is where the pull-ups come from:'
       echo '# opengpio 2.0.2 transposes bias and debounce when calling its native binding,'
       echo '# so asking the library for them leaves the lines floating. Applied before'

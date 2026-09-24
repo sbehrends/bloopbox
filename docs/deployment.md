@@ -70,7 +70,10 @@ What it does:
   half an application behind
 - writes `/etc/bloopbox/environment` with a **generated** `BRIDGE_TOKEN`
 - installs and enables the systemd units
-- appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups and the watchdog
+- appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups and the watchdog,
+  opened with an explicit `[all]` so it never inherits a board filter such as `[cm4]` that the
+  file happened to end on
+- pins the journal to RAM (`journald.conf.d/50-bloopbox.conf` — see "When something is wrong")
 - restarts the services
 
 Re-running it is an upgrade: `/data` and the environment file are left alone, so the parent's

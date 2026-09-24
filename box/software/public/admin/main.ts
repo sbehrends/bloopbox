@@ -148,6 +148,19 @@ async function getJson(path: string): Promise<unknown> {
   return response.json();
 }
 
+/**
+ * A POST the device will accept. It refuses anything not labelled JSON (`src/server/csrf.ts`) —
+ * that label is what a forged form on another site cannot send — so even an action with nothing
+ * to say sends an empty object.
+ */
+async function post(path: string, body: unknown = {}): Promise<Response> {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 async function putConfig(patch: unknown): Promise<void> {
   const response = await fetch('/api/config', {
     method: 'PUT',
@@ -354,7 +367,7 @@ function testSpeakerButton(): HTMLElement {
     actionButton(
       'Test speaker',
       async () => {
-        const response = await fetch('/api/audio/test', { method: 'POST' });
+        const response = await post('/api/audio/test');
         if (!response.ok) throw new Error('the device could not play the test sound');
       },
       reportError,
@@ -696,7 +709,7 @@ const QR_POLL_TICKS = 4;
  */
 async function beginLinking(): Promise<void> {
   try {
-    await fetch('/api/whatsapp/link', { method: 'POST' });
+    await post('/api/whatsapp/link');
   } catch {
     // The next poll's "unavailable" message covers this; nothing more to do here.
   }
@@ -1070,7 +1083,7 @@ function renderWhatsApp(
       confirmLabel: 'Unlink',
       busyLabel: 'Unlinking…',
       run: async () => {
-        await fetch('/api/whatsapp/unlink', { method: 'POST' });
+        await post('/api/whatsapp/unlink');
         /*
          * The route returns as soon as it has told the bridge to unlink, not once the bridge has
          * actually logged out, deleted credentials and settled into `notLinked` — that involves a
@@ -1274,7 +1287,7 @@ function renderStats(initial: StatsView): HTMLElement {
       confirmLabel: 'Reset',
       busyLabel: 'Resetting…',
       run: async () => {
-        const response = await fetch('/api/stats/reset', { method: 'POST' });
+        const response = await post('/api/stats/reset');
         if (!response.ok) throw new Error('the box would not reset the counters');
         await refresh();
       },
@@ -1836,7 +1849,7 @@ function renderFactoryReset(): HTMLElement {
       busyLabel: 'Erasing…',
       run: async () => {
         try {
-          const response = await fetch('/api/factory-reset', { method: 'POST' });
+          const response = await post('/api/factory-reset');
           if (!response.ok) throw new Error('the box would not accept that');
         } catch {
           /*

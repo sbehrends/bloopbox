@@ -44,6 +44,7 @@ import { readSshAccess } from '../system/sshAccess.ts';
 import { CpuUsageTracker, readSystemInfo, type StorageTarget } from '../system/systemInfo.ts';
 import { portalRedirectTarget, shouldRedirectToPortal } from '../server/captivePortal.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
+import { denyFraming } from '../server/csrf.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
 import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
 
@@ -151,6 +152,8 @@ async function main(): Promise<void> {
   /* ---- HTTP + Socket.io ---- */
 
   const app = express();
+  // Every response, not just /api: the panel's HTML is what a clickjacking page would frame.
+  app.use(denyFraming());
   app.use(express.json({ limit: '128kb' }));
   const httpServer = createServer(app);
   const io = new Server(httpServer, {

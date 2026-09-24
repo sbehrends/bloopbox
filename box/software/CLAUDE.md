@@ -168,6 +168,11 @@ would make the device recoverable only by pulling the SD card. Both halves are p
 times button presses; `requireAdmin` goes through `AdminAuthenticator` (5 min success cache, global
 failure budget → 429). Its constants are exported and tested with an injected clock.
 
+**Every browser POST/PUT to `/api` sends `content-type: application/json`**, with a `{}` body if
+it has nothing to say. `requireSameOrigin` (`src/server/csrf.ts`) answers 415 otherwise and 403 to a
+cross-site `Sec-Fetch-Site` or a foreign `Origin` — the CSRF defence, since Basic credentials ride
+along on forged requests. Pinned by `csrf.test.ts`.
+
 **`/` is the settings panel and `:80` is the same app, not a second one.** The root route is
 `sendFile` of `dist/public/admin/index.html` and sits *after* the captive-portal middleware, so the
 hotspot still owns `/` during onboarding — that ordering is the safety property, and

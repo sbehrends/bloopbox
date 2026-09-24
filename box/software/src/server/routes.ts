@@ -18,6 +18,7 @@ import type { SshAccess } from '../system/sshAccess.ts';
 import type { SystemInfo } from '../system/systemInfo.ts';
 import type { StatsSnapshot } from '../stats/statsStore.ts';
 import { hashAdminPassword, requireAdmin } from './auth.ts';
+import { denyFraming, requireSameOrigin } from './csrf.ts';
 
 /**
  * REST API for the admin panel and captive portal.
@@ -118,6 +119,14 @@ export function qrIdentifier(qr: string): string {
 export function createApiRouter(context: RoutesContext): Router {
   const router = Router();
   const admin = requireAdmin(context.config);
+
+  /*
+   * Ahead of every route, the open ones included: `POST /onboard` sets the first password, so
+   * it is as worth forging as anything behind the gate. Mounted here rather than in the process
+   * so the test harness, which builds its app from this router, gets exactly what ships.
+   */
+  router.use(denyFraming());
+  router.use(requireSameOrigin());
 
   /* ---- status, readable without credentials ---- */
 

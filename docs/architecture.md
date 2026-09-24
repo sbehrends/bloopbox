@@ -582,6 +582,20 @@ once it is spent an uncached header gets **429 with `Retry-After`** and no bcryp
 rather than per address because the LAN offers no identity worth trusting; the cache is consulted
 first, so a panel that is already signed in keeps working through somebody else's guessing.
 
+**A password is not a defence against another website.** A browser attaches the parent's saved
+Basic credentials to any request for the box, whichever page made it, and several routes take no
+body — so a `<form method=post>` anywhere on the internet could factory-reset the device while a
+parent browsed. `requireSameOrigin` (`src/server/csrf.ts`), mounted first in `createApiRouter` so
+it covers `POST /onboard` too, refuses any non-GET/HEAD/OPTIONS request that carries
+`Sec-Fetch-Site: cross-site` or an `Origin` whose host is not the `Host` it was sent to (403), and
+any that is not labelled `application/json` (415) — the label a form cannot send and a cross-site
+`fetch` cannot send without a CORS preflight this server never answers. That last rule is why the
+panel's body-less actions post an empty `{}` as JSON. `same-site` is allowed, because `:80` and
+`:3000` on one box are the same site; a missing `Origin` is allowed, because that is curl or a test,
+not a browser. The Vite dev proxy keeps the browser's `Host`, so the check holds in development.
+`denyFraming` adds `X-Frame-Options: DENY` and `frame-ancestors 'none'` to every response, the HTML
+pages included, so nothing can lay the panel under a page of its own and click through it.
+
 `GET /api/stats`, `POST /api/stats/reset`, `GET /api/system` and `POST /api/system/power` are all
 admin-gated, and each for a concrete reason rather than by default: the totals name the family's
 contacts, the health reading names the network the box sits on, and the last one can turn the device

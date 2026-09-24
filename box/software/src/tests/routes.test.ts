@@ -586,7 +586,8 @@ describe('POST /factory-reset', () => {
 
     const response = await fetch(api.url('/api/factory-reset'), {
       method: 'POST',
-      headers: { authorization: api.basic('hunter2') },
+      headers: { authorization: api.basic('hunter2'), 'content-type': 'application/json' },
+      body: '{}',
     });
 
     expect(response.status).toBe(200);

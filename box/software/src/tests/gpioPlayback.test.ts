@@ -41,10 +41,23 @@ function fakeChild(): FakeChild {
   });
 }
 
+/** Commands that fail, mapped to what they print on stderr — a mixer control the card lacks. */
+const failing = new Map<string, string>();
+
 vi.mock('node:child_process', () => ({
   spawn: (command: string, args: readonly string[]) => {
     const child = fakeChild();
     spawned.push({ command, args, child });
+    const complaint = failing.get(command);
+    if (complaint !== undefined) {
+      const stderr = new EventEmitter();
+      Object.assign(child, { stderr });
+      setImmediate(() => {
+        stderr.emit('data', Buffer.from(complaint));
+        child.emit('close', 1, null);
+      });
+      return child;
+    }
     // A real aplay exits when the file ends; nothing here awaits a timer.
     if (player.mode === 'ends') setImmediate(() => child.emit('close', 0, null));
     return child;
@@ -70,6 +83,9 @@ vi.mock('../audio/ffmpeg.ts', () => ({
   PLAYBACK_FILTER_CHAIN: 'loudnorm=I=-16:TP=-1.5:LRA=11',
 }));
 
+const warned = vi.fn<(detail: object, message: string) => void>();
+vi.mock('../logger.ts', () => ({ childLogger: () => ({ warn: warned }) }));
+
 let directory: string;
 
 async function makeHal() {
@@ -80,6 +96,7 @@ async function makeHal() {
 beforeEach(async () => {
   spawned.length = 0;
   player.mode = 'ends';
+  failing.clear();
   decoded.mockClear();
   directory = await mkdtemp(join(tmpdir(), 'bloopbox-playback-'));
 });
@@ -350,5 +367,23 @@ describe('playCue', () => {
 
     expect(decoded).not.toHaveBeenCalled();
     expect(spawned.find(({ command }) => command === 'aplay')?.args.at(-1)).toMatch(/pop\.wav$/);
+  });
+});
+
+describe('mixer calls', () => {
+  it('logs a failed amixer call with its stderr, and carries on', async () => {
+    // Non-fatal by design — a card without this control is supported — but no longer silent:
+    // a wrong control name used to leave the volume where the card powered up and log nothing.
+    failing.set('amixer', "amixer: Unable to find simple control 'Master',0");
+    const hal = await makeHal();
+
+    await expect(hal.setVolume(40)).resolves.toBeUndefined();
+
+    expect(warned).toHaveBeenCalledOnce();
+    const [detail] = warned.mock.calls[0] ?? [];
+    expect(detail).toMatchObject({
+      command: 'amixer',
+      err: expect.stringContaining("Unable to find simple control 'Master'") as unknown,
+    });
   });
 });

@@ -655,6 +655,7 @@ Rules that keep it honest:
 | Module              | Owns                                                                        |
 | ------------------- | --------------------------------------------------------------------------- |
 | `ffmpeg.ts`         | The Opus/ogg pipeline both ways, and the `libopus` preflight check           |
+| `process.ts`        | `runProcess`: the one way a short-lived helper (ffmpeg, amixer) is run       |
 | `cues.ts`           | The cue vocabulary, and which cues silent mode suppresses. No node imports — the browser shares it |
 | `queueManager.ts`   | Sequential per-contact playback, with a soft chime between notes             |
 | `purge.ts`          | The 48-hour TTL sweep, hourly                                               |
@@ -688,6 +689,29 @@ back, one from yesterday is a confusing thing to hand a small child.
 
 Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys' own docs, or some
 clients show the voice bubble but refuse to play it.
+
+### Every helper process has a deadline
+
+ffmpeg and amixer go through `runProcess` in `src/audio/process.ts`, never a bare `spawn`. It gives
+every call a deadline (SIGTERM, then SIGKILL `PROCESS_KILL_GRACE_MS` later, and it settles even if the
+child never closes), keeps the **tail** of stderr in the error, because that is where both tools put
+the reason, and turns a failure to start into a rejection rather than an unhandled `'error'` event.
+Nothing is written to a child's stdin. The old `runFfmpeg(args, input)` stream path was never used,
+and an EPIPE from a child that exited early had nowhere to go.
+
+Before this, nothing had a timeout. `prepare()` decodes one note at a time, so one ffmpeg wedged on
+a malformed file silently stopped every later note from being decoded.
+
+- **ffmpeg's deadline scales with the audio**: `FFMPEG_BASE_TIMEOUT_MS` (30 s) plus twice the input's
+  duration when it is known (a capture), and `FFMPEG_UNKNOWN_DURATION_TIMEOUT_MS` (5 min) when it is
+  not (an arriving note, on decode).
+- **amixer failures stay non-fatal but are logged at `warn`** with amixer's own stderr
+  (`AMIXER_TIMEOUT_MS`, 5 s). The old `runQuiet` threw stderr away, so a wrong control name, such as
+  `Master` on the WM8960, which has none, logged nothing while the volume stayed where the card
+  powered up.
+
+`arecord` and `aplay` are not run through it. A button stops them, not a clock, and each has its own
+stop path with its own escalation.
 
 ### Nothing plays over a note
 

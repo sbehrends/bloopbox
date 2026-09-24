@@ -11,6 +11,7 @@ import {
   toPlayableWav,
   toVoiceNote,
 } from '../audio/ffmpeg.ts';
+import { runProcess } from '../audio/process.ts';
 import { cuePath } from '../audio/soundFiles.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import type {
@@ -22,6 +23,7 @@ import type {
   RecordingHandle,
   RecordingResult,
 } from './types.ts';
+import type { Logger } from 'pino';
 
 /**
  * ============================ UNVERIFIED ON HARDWARE ============================
@@ -441,7 +443,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     clearTimeout(timer);
   }
 
-  /** Sets the ALSA mixer volume. Callers must clamp to the config cap first. */
+  /** Sets the ALSA mixer volume, 0-100. The schema bounds it; there is no other cap. */
   async setVolume(percent: number): Promise<void> {
     this.#volumePercent = percent;
     await runQuiet('amixer', ['-M', 'sset', ALSA_MIXER_CONTROL, `${percent}%`]);
@@ -616,13 +618,44 @@ function stem(path: string): string {
   return basename(path, extname(path));
 }
 
-/** Runs a command, ignoring failure. Mixer controls differ across audio adapters. */
+/**
+ * How long one `amixer` call may take. It writes a register and exits in milliseconds; one
+ * that has not finished in five seconds is stuck on the card, and `init()` awaits these.
+ */
+export const AMIXER_TIMEOUT_MS = 5000;
+
+/**
+ * Runs a mixer command whose failure is not fatal. Mixer controls differ across audio adapters,
+ * so a name this card lacks is a supported configuration, not an error.
+ *
+ * Non-fatal is not the same as silent. This used to discard stderr, which is why naming a
+ * control the card does not have — `Master` on the WM8960, which has none — logged nothing at
+ * all while the volume quietly stayed wherever the card powered up.
+ */
 async function runQuiet(command: string, args: readonly string[]): Promise<void> {
-  await new Promise<void>((resolve) => {
-    const child = spawn(command, [...args], { stdio: 'ignore' });
-    child.on('error', () => resolve());
-    child.on('close', () => resolve());
-  });
+  try {
+    await runProcess({ command, args, timeoutMs: AMIXER_TIMEOUT_MS });
+  } catch (error: unknown) {
+    const log = await halLogger();
+    log.warn(
+      { command, args, err: error instanceof Error ? error.message : String(error) },
+      'mixer command failed; continuing without it',
+    );
+  }
+}
+
+let cachedLogger: Logger | undefined;
+
+/**
+ * The driver's logger, loaded on first use rather than at import. Importing the logger starts
+ * pino's transport, and this module is imported — sometimes repeatedly, under
+ * `vi.resetModules()` — by tests that never log anything.
+ */
+async function halLogger(): Promise<Logger> {
+  if (cachedLogger) return cachedLogger;
+  const { childLogger } = await import('../logger.ts');
+  cachedLogger = childLogger('hal');
+  return cachedLogger;
 }
 
 /**

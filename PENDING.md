@@ -942,17 +942,18 @@ simply the order the contact chattered in, not a stale level read. The interpret
 design. **Now settled in the HAL** (`hal/settledLine.ts`): every edge restarts a 20 ms quiet window
 (`BUTTON_SETTLE_MS`), and when it expires the line's level is read with `watch.value` — a live
 `get_value()` in the addon — and only a changed level is emitted. Covered by `settledLine.test.ts`
-and `gpioButtons.test.ts`, which drives the real driver's `init()` against a fake board. **Still to
-confirm on the box:** with debug mode on, one press shows one `buttonDown` and one `buttonUp` in the
-journal, however many raw edges the switch produced, and nothing feels laggy.
+and `gpioButtons.test.ts`, which drives the real driver's `init()` against a fake board. **Confirmed on
+the box the same evening** (installed as an in-place upgrade, `ff2630f`): a 3 s hold on button 1
+settled as one down and one up **2904 ms** apart, three taps on button 2 as three presses of 316,
+308 and 278 ms, nothing unpaired, and the extra 20 ms is not noticeable in use.
 
 **Finding 2 — a button with no contact recorded anyway. Fixed the same day.** Holding button 1 or 2
 (no contact assigned) bipped, opened the microphone, recorded, encoded, and only then failed in the
 bridge with `no contact assigned to that button` — three `device fault` `send` lines — before the
 "oops". It now refuses at `recordThresholdMs` like read-only, with `recordBlocked` reason
 `unassigned`, and never opens the microphone (`docs/PRODUCT.md` § A button with no contact).
-**Still to confirm on the box:** holding an unassigned button gives the "oops" at the bip moment and
-leaves no `device fault` line.
+**Confirmed on the box:** holding unassigned button 1 for 3 s gave the "oops" at the bip moment, with
+no bip before it, and left no `device fault` line; a send on button 3 still went through.
 
 **Still open from the plan:** six config saves in a row to see the 5 s backoff cap; `ffprobe`
 against the reported duration at 48 kHz; the capture-hardening items (entry "The capture and

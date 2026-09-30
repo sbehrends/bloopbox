@@ -59,10 +59,10 @@ bundle from each gate. It is designed for exactly that — see the bottom of thi
 
 ## Gate 0 — a Pi you can reach
 
-**Do not use `npm run release:image` for the first device.** The SD image builder has itself
-never run against real hardware; if the card does not boot you will not know whether the fault
-is the image, the install, or the app. Use the stock image for the first one and prove the
-builder later, against a device you already trust.
+**Prefer the stock image for a new device.** A `release:image` card has booted on the 3B+
+(2026-08-10), but the `--audio-hat wm8960 --no-leds` variant and the per-device ssh password never
+have, and if a card does not boot you will not know whether the fault is the image, the install, or
+the app. Prove a new image against a device you already trust, on a spare card.
 
 1. Raspberry Pi Imager → **Raspberry Pi OS Lite (64-bit)**, which must be **Trixie** (see
    `docs/deployment.md` for why nothing older can work).
@@ -105,7 +105,7 @@ all three services active, the firmware pull-ups present, and `nmcli` + dnsmasq 
 
 If something fails with a permission error rather than wrong behaviour, comment out the
 hardening block in `deploy/systemd/bloopbox-hardware.service` before suspecting the code —
-`ProtectSystem=strict` and friends have never run against real GPIO or ALSA either.
+`ProtectSystem=strict` and friends have only run against the 3B+'s GPIO and the WM8960 so far.
 
 Then the restart and OOM policy (added 2026-09-24; checked with `systemd-analyze verify` on
 Debian's systemd 257.13 in a container, never on the device):
@@ -354,7 +354,9 @@ are one `peak` value each in `scripts/generate-sounds.ts`; the tone gains are th
 
 ## Gate 4 — buttons and LEDs
 
-Now the wiring. `src/hal/gpioDriver.ts` was written from datasheets and has never run.
+Now the wiring. `src/hal/gpioDriver.ts` has run on the 3B+, where button 1 (the HAT's switch)
+registers presses; buttons 2–3 and the lamps below have never been wired, so this gate is still
+mostly open.
 
 GPIO 17, 27, 22 for the buttons, pulled up in firmware; the 3 V lamps straight off
 GPIO 23, 24, 25, one leg on the pin and one on ground. [`hardware.md`](./hardware.md) has the wiring and the reason the pull-ups come

@@ -120,8 +120,9 @@ All physical I/O — buttons, LEDs, **and audio in and out** — sits behind one
 [`src/hal/index.ts`](../box/software/src/hal/index.ts) loads the GPIO driver through a dynamic `import()`. Never
 import it statically — importing the HAL factory has to stay safe on a dev machine.
 
-`gpioDriver.ts` has **never run on real hardware**. Treat it as unverified, and do not add code
-paths that only work with real GPIO.
+`gpioDriver.ts` has run on one board — a Pi 3B+ with the WM8960 HAT, button 1 only and no lamps
+(`box/software/CLAUDE.md` § Hardware status). Buttons 2–3, the lamps and the Zero 2 W are still
+unproven, so do not add code paths that only work with real GPIO.
 
 ### Domain logic is pure
 

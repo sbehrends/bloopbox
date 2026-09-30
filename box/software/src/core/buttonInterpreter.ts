@@ -25,8 +25,8 @@ export const SILENT_COMBO_BUTTONS: readonly ButtonIndex[] = [0, 2];
  * Only a button-up ends a press that opened no microphone — one refused (read-only), withheld
  * (notes waiting) or swallowed by the chord — and under the lockout that press also silences the
  * other two buttons. A single missed up edge would therefore freeze the whole box until somebody
- * happened to press the same button again. `gpioDriver.ts` has never run on real hardware and the
- * debounce is in software, so a lost edge is not hypothetical.
+ * happened to press the same button again. `gpioDriver.ts` has only run with a single button on
+ * one board and the debounce is in software, so a lost edge is not hypothetical.
  *
  * Past any real press: a recording ends at `maxRecordingSeconds` and a resumed one waits out one
  * more window, so a press still down after both is a switch that stopped reporting, not a child.

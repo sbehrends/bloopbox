@@ -426,9 +426,9 @@ device the admin guard is already standing aside (by design — onboarding has t
 first password), so anyone in radio range can complete onboarding. The window is short, the device
 holds nothing yet, and hardening is deferred. If it needs hardening later, the answer is physical
 presence — require a button press within N seconds to accept `POST /api/onboard` and
-`POST /api/wifi/join` — not a shared secret. Note that path depends on the buttons, which is the
-one subsystem never run on hardware, so it should not gate setup until bring-up proves a press
-registers.
+`POST /api/wifi/join` — not a shared secret. Note that path depends on the buttons, and only button 1 on the
+3B+ has been proven to register a press; it should not gate setup until every board it would ship
+on has proven the same.
 
 _The portal is its own UI._ **Built** — `public/portal/`, a third Vite entry: pick a network →
 passphrase → admin password → "joining". Not the admin panel: iOS/Android captive browsers are
@@ -1548,8 +1548,9 @@ before.
 That boot also settles the board map: `RaspberryPi_Zero2W` resolves BCM names to the right lines on a
 3B+, which is what `PI_BOARD` defaults to. The override exists for a board that does not agree.
 
-Still unproven, and needing a finger and an eye rather than a shell: whether a **press registers**
-(no button was pressed during this session), whether `BUTTON_ACTIVE_LOW` matches the wiring, and
+Since then **button 1 registers presses** on this board: the HAT's own switch on GPIO17 drove the
+cues on 2026-08-10 and worked through the 2026-09-08 upgrade. Still unproven, because nothing else is
+wired: buttons 2 and 3, whether `BUTTON_ACTIVE_LOW` matches an external switch's wiring, and
 whether the LEDs light the right colour in the right order — `--ch-1/2/3` are yellow, coral, teal
 and nothing enforces it. The board also matters for what comes next: a 3B+ has an analog audio jack
 that a **Zero 2 W does not have at all**, so any playback verified here says nothing about the real

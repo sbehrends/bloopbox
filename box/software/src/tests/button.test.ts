@@ -927,8 +927,8 @@ describe('robustness', () => {
 
   /*
    * A lost release edge. Only a button-up ends a press that opened no microphone, and under the
-   * lockout that press silences the other two buttons — so one missed edge, on a GPIO driver that
-   * has never run on hardware, would freeze the whole box. The watchdog drops such a press once
+   * lockout that press silences the other two buttons — so one missed edge, on a GPIO driver proven
+   * with only one button, would freeze the whole box. The watchdog drops such a press once
    * it has been down longer than any real press can be.
    */
   describe('a press whose release never arrives', () => {

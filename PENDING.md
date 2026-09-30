@@ -916,6 +916,48 @@ The design, for hardware bring-up (gate 1, once the plain units are proven):
 
 ## Verification gaps
 
+### Bench session 2026-09-30 — what the reference board proved, and two new findings
+
+A fresh card built with `--audio-hat wm8960` (three buttons, three lamps) on the Pi 3B+, onboarded
+through the setup hotspot, WhatsApp linked, button 3 assigned to a group, debug mode on.
+
+**Proven on hardware:** all three buttons register; all three lamps light, with correct polarity,
+yellow / coral / teal left to right (the setup double-pulse, the WhatsApp-error pair, the silent
+chase, a recording held solid, the sent flashes, an unread blink); the lockout (button 1 did nothing
+while button 3 was recording); the silent chord both ways; a ~5 s hold arriving as a ~4 s note
+(`sentMs: 4128`, the WAV-derived duration — not yet cross-checked with `ffprobe`); a short hold
+refused with the "oops"; the note-loss fix and the speaker-test interruption (entry below); the
+restart policy (`StartLimitIntervalUSec=0`, backoff 5/5/3 steps, caps 5 s / 1 min / 15 s), OOM
+scores (−500 / 300) and the journal drop-ins — **Pi OS ships
+`/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf`**, which sorts before both of ours,
+so `50-bloopbox` and debug mode's `90-` both apply as intended; `timeSynced: true` within a minute.
+Doctor: all green except the two known `Name=Value` false failures (entry above).
+
+**Finding 1 — the switches bounce hard, and the edges arrive out of order.** Of 75 edge bursts in the
+session, 42 carried bounce: up to **12 edges within 15 ms** (median burst 1 ms), and **17 bursts began
+with an `up`** — the driver reads the line's level when the event fires, so during bounce it reports
+whatever the level happens to be, not the edge that happened. The interpreter coped every time (the
+last edge per button was `up`, no stuck press, no ghost take), but it is coping by the tolerance of
+`handleButtonDown`/`Up` to repeats plus the stuck-press watchdog, not by design. The fix belongs in
+the HAL, where the tripwire already puts debounce: after any edge, wait for the line to be quiet for
+~20 ms, read the level once, and emit only a settled change. That also makes `debounceMs` measure
+presses rather than contact chatter. Not done yet; `opengpio`'s own debounce stays off (the
+bias/debounce transposition).
+
+**Finding 2 — a button with no contact records anyway.** Holding button 1 or 2 (no contact assigned)
+bipped, opened the microphone, recorded, encoded, and only then failed in the bridge with `no contact
+assigned to that button` — three `device fault` `send` lines — before playing the "oops". To a child
+it sounds like any refusal, which is why it looked fine. It should refuse at `recordThresholdMs` the
+way `readOnly` does, with a new `recordBlocked` reason, and never open the microphone: nothing the
+child says into a button that cannot send should be recorded, even into RAM. Not done yet.
+
+**Still open from the plan:** six config saves in a row to see the 5 s backoff cap; `ffprobe`
+against the reported duration at 48 kHz; the capture-hardening items (entry "The capture and
+helper-process hardening…"); and the ssh password of this card was pasted into a chat during the
+session, so rotate it once a rotation action exists (entry "A factory reset does not change the ssh
+password").
+
+
 These are things built but not proven. Not bugs — just claims that have not been tested.
 
 ### The brand implementation has only been seen in headless Chrome on macOS
@@ -1692,7 +1734,14 @@ Two decisions worth not re-litigating:
   hardening exception; and two fixed-colour LEDs cannot express the matrix. Lamps on this board need
   no extra part: the HAT passes the header through, so 22/23/24/25/27 stay reachable with it seated.
 
-### The root agent's request acknowledgement has only run in a container
+### ~~The root agent's request acknowledgement has only run in a container~~ — verified on the device, 2026-09-30
+
+On the reference board, from a fresh `wm8960` card: `systemd-run --wait -p ProtectSystem=strict
+touch /run/bloopbox/x` fails (exit 1, no file), which **confirms the diagnosis** — the old agent's
+`rm -f` could not have worked. The onboarding Wi-Fi join ran exactly once (`net-agent: joined …`
+once in the journal), `handledRequestId` was published, and `/run/bloopbox/net-request.json` was
+gone. The original notes follow.
+
 
 Changed 2026-09-23 (`docs/deployment.md` § the request channel). The agent no longer deletes
 `/run/bloopbox/net-request.json`: it acts once per request id, records the id in
@@ -1711,7 +1760,13 @@ confirm it and then confirm the fix:
 `scripts/test-onboarding.sh` now proves the action runs once and is acknowledged, but it runs the
 agent outside systemd, so it cannot show the sandbox itself.
 
-### Playback interruption on the GPIO driver is tested against a fake aplay only
+### ~~Playback interruption on the GPIO driver is tested against a fake aplay only~~ — verified on the device, 2026-09-30
+
+Both checks below passed on the reference board: a second note arriving mid-playback neither chimed
+nor cut the first off, and the lamp kept blinking for it; **Test speaker** mid-note stopped the note,
+left it unread and on the card, and the next tap played it from the start. The journal showed no
+`busy`, `aplay failed` or `device fault` of kind `playback`. The original notes follow.
+
 
 Also 2026-09-23. `GpioHal.stopPlayback()` now waits for `aplay` to exit (SIGKILL after 500 ms)
 before anything else plays, and a note cut off by a signal resolves `'interrupted'`. That is the
@@ -1746,7 +1801,13 @@ Pi. `docs/architecture.md` § Audio has the reasoning.
   deliberately wrong `ALSA_MIXER_CONTROL` logs the warning, and that a correctly configured box logs
   nothing at boot.
 
-### The first-boot ssh password has only run in a container
+### ~~The first-boot ssh password has only run in a container~~ — verified on a real first boot, 2026-09-30
+
+From a freshly flashed `wm8960` image: `userconfig` finished renaming `pi` → `bloop` at 96.78 s,
+`bloopbox-ssh-password` ran 96.79 → 97.19 s (`Result=success`), `sshswitch` started at 97.20 s and
+sshd listened at 103.18 s — the order it was designed for. The record is `0640 root:bloopbox`, the
+marker is gone, and the password shown in the admin panel logged in. The original notes follow.
+
 
 `deploy/ssh-password.sh` was exercised on Debian Trixie in Docker, 2026-09-23: no marker, a user not
 yet renamed (marker kept, exit 1), a bad name (refused), a real run (record `0640 root:bloopbox`,

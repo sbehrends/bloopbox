@@ -95,6 +95,7 @@ changes in `/etc/bloopbox/environment` followed by a service restart:
 | ------------------------- | ------------------------------------------------------- |
 | `LED_ACTIVE_HIGH=false`   | The lamps are on when they should be off — a lamp wired between 3V3 and the pin sinks instead of sourcing |
 | `BUTTON_ACTIVE_LOW=false` | Presses read backwards, or the switches went to 3V3     |
+| `BUTTON_SETTLE_MS=40`     | One press registers as two, or a hold drops and resumes — the switch chatters longer than the 20 ms default |
 
 ### The lamps run at 3 V, straight off the pin
 

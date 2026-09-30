@@ -25,6 +25,7 @@ import type {
   RecordingResult,
 } from './types.ts';
 import type { Logger } from 'pino';
+import { SettledLine } from './settledLine.ts';
 
 /**
  * ============================ UNVERIFIED ON HARDWARE ============================
@@ -196,6 +197,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   readonly #ledLines: (Output | null)[] = [null, null, null];
   readonly #buttonWatches: (Watch | null)[] = [null, null, null];
+  /** One settler per watched button: edges in, settled levels out — see `settledLine.ts`. */
+  readonly #buttonLines: (SettledLine | null)[] = [null, null, null];
 
   /** Note path -> the WAV `prepare()` decoded it into, both in the RAM disk. */
   readonly #decoded = new Map<string, string>();
@@ -285,7 +288,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
        * 4ms debounce and leave the line floating. Both concerns are handled properly
        * elsewhere: pull-ups come from the firmware (`gpio=17,27,22=ip,pu` in
        * /boot/firmware/config.txt, applied by scripts/provision.sh) and debouncing is
-       * software-side in core/buttonInterpreter.ts.
+       * software-side: contact chatter is settled below (`settledLine.ts`), and press length is
+       * judged in core/buttonInterpreter.ts.
        */
       const watch = board.watch(pin, Edge.Both);
       this.#buttonWatches[index] = watch;
@@ -313,6 +317,9 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     // Contract: dispose leaves every LED off — before releasing the lines.
     for (const index of [0, 1, 2] as const) this.setLed(index, false);
 
+    // Settlers first, so no pending read lands on a watch that has already been stopped.
+    for (const line of this.#buttonLines) line?.stop();
+    this.#buttonLines.fill(null);
     for (const line of [...this.#ledLines, ...this.#buttonWatches]) {
       line?.stop();
     }
@@ -567,10 +574,31 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   /* ---- internals ---- */
 
+  /**
+   * Reports settled presses only. Every edge restarts the button's settle timer; when the line has
+   * been quiet for `BUTTON_SETTLE_MS` its level is read afresh (`watch.value` is a live
+   * `get_value()`, not the last event) and a change, if any, becomes one `buttonDown` or
+   * `buttonUp`. The switches bounce hard and out of order — the figures are in `settledLine.ts`.
+   */
   #attachButton(watch: Watch, index: ButtonIndex): void {
+    const released = BUTTON_ACTIVE_LOW;
+    let initial = released;
+    try {
+      initial = watch.value;
+    } catch {
+      // Unreadable at start: assume released, the state a pull-up leaves an untouched button in.
+    }
+    const line = new SettledLine({
+      initial,
+      read: () => watch.value,
+      onChange: (value) => {
+        const pressed = BUTTON_ACTIVE_LOW ? !value : value;
+        this.emit(pressed ? 'buttonDown' : 'buttonUp', { index });
+      },
+    });
+    this.#buttonLines[index] = line;
     watch.on('change', (value: boolean) => {
-      const pressed = BUTTON_ACTIVE_LOW ? !value : value;
-      this.emit(pressed ? 'buttonDown' : 'buttonUp', { index });
+      line.edge(value);
     });
   }
 

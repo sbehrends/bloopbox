@@ -933,23 +933,26 @@ scores (−500 / 300) and the journal drop-ins — **Pi OS ships
 so `50-bloopbox` and debug mode's `90-` both apply as intended; `timeSynced: true` within a minute.
 Doctor: all green except the two known `Name=Value` false failures (entry above).
 
-**Finding 1 — the switches bounce hard, and the edges arrive out of order.** Of 75 edge bursts in the
-session, 42 carried bounce: up to **12 edges within 15 ms** (median burst 1 ms), and **17 bursts began
-with an `up`** — the driver reads the line's level when the event fires, so during bounce it reports
-whatever the level happens to be, not the edge that happened. The interpreter coped every time (the
-last edge per button was `up`, no stuck press, no ghost take), but it is coping by the tolerance of
-`handleButtonDown`/`Up` to repeats plus the stuck-press watchdog, not by design. The fix belongs in
-the HAL, where the tripwire already puts debounce: after any edge, wait for the line to be quiet for
-~20 ms, read the level once, and emit only a settled change. That also makes `debounceMs` measure
-presses rather than contact chatter. Not done yet; `opengpio`'s own debounce stays off (the
-bias/debounce transposition).
+**Finding 1 — the switches bounce hard. Fixed the same day, needs one bench pass.** Of 75 edge bursts
+in the session, 42 carried bounce: up to **12 edges within 15 ms** (median burst 1 ms), and **17 bursts
+began with an `up`**. Reading opengpio's native code afterwards corrected the first guess at why: the
+addon reports genuine kernel edge events with their type, so a burst opening with the "wrong" edge is
+simply the order the contact chattered in, not a stale level read. The interpreter coped every time
+(no stuck press, no ghost take), but by tolerating repeats, with the watchdog behind it, not by
+design. **Now settled in the HAL** (`hal/settledLine.ts`): every edge restarts a 20 ms quiet window
+(`BUTTON_SETTLE_MS`), and when it expires the line's level is read with `watch.value` — a live
+`get_value()` in the addon — and only a changed level is emitted. Covered by `settledLine.test.ts`
+and `gpioButtons.test.ts`, which drives the real driver's `init()` against a fake board. **Still to
+confirm on the box:** with debug mode on, one press shows one `buttonDown` and one `buttonUp` in the
+journal, however many raw edges the switch produced, and nothing feels laggy.
 
-**Finding 2 — a button with no contact records anyway.** Holding button 1 or 2 (no contact assigned)
-bipped, opened the microphone, recorded, encoded, and only then failed in the bridge with `no contact
-assigned to that button` — three `device fault` `send` lines — before playing the "oops". To a child
-it sounds like any refusal, which is why it looked fine. It should refuse at `recordThresholdMs` the
-way `readOnly` does, with a new `recordBlocked` reason, and never open the microphone: nothing the
-child says into a button that cannot send should be recorded, even into RAM. Not done yet.
+**Finding 2 — a button with no contact recorded anyway. Fixed the same day.** Holding button 1 or 2
+(no contact assigned) bipped, opened the microphone, recorded, encoded, and only then failed in the
+bridge with `no contact assigned to that button` — three `device fault` `send` lines — before the
+"oops". It now refuses at `recordThresholdMs` like read-only, with `recordBlocked` reason
+`unassigned`, and never opens the microphone (`docs/PRODUCT.md` § A button with no contact).
+**Still to confirm on the box:** holding an unassigned button gives the "oops" at the bip moment and
+leaves no `device fault` line.
 
 **Still open from the plan:** six config saves in a row to see the 5 s backoff cap; `ffprobe`
 against the reported duration at 48 kHz; the capture-hardening items (entry "The capture and

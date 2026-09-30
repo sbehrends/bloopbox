@@ -331,8 +331,11 @@ which on a button input means garbage reads.
 
 `gpioDriver.ts` passes **no options at all** and handles both concerns elsewhere: pull-ups come from
 the firmware (`gpio=17,27,22=ip,pu`, written into `/boot/firmware/config.txt` by
-`deploy/install.sh`, effective only after a reboot), and debounce is software-side in
-`core/buttonInterpreter.ts`, which we need anyway for the tap-vs-hold distinction.
+`deploy/install.sh`, effective only after a reboot), and debounce is software-side in two layers:
+**contact chatter** is settled in the HAL (`hal/settledLine.ts`: a line must be quiet for
+`BUTTON_SETTLE_MS`, 20 ms, and its level is then *read*, so one press is one down and one up
+however the edges arrived — measured bounce was up to 12 edges in 15 ms), and **press length** is
+judged in `core/buttonInterpreter.ts`, which we need anyway for the tap-vs-hold distinction.
 
 ## Packaging: the device target is Trixie 64-bit, forced by opengpio
 

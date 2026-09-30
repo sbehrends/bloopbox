@@ -26,7 +26,8 @@ export const SILENT_COMBO_BUTTONS: readonly ButtonIndex[] = [0, 2];
  * (notes waiting) or swallowed by the chord — and under the lockout that press also silences the
  * other two buttons. A single missed up edge would therefore freeze the whole box until somebody
  * happened to press the same button again. `gpioDriver.ts` is proven with only one of its buttons
- * so far and the debounce is in software, so a lost edge is not hypothetical.
+ * so far and its switches chatter (the HAL settles them, `hal/settledLine.ts`), so a lost edge is
+ * not hypothetical.
  *
  * Past any real press: a recording ends at `maxRecordingSeconds` and a resumed one waits out one
  * more window, so a press still down after both is a switch that stopped reporting, not a child.

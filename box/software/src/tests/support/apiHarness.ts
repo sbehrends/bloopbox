@@ -69,6 +69,8 @@ export type Harness = {
   readonly forgets: { count: number };
   /** Power requests the routes made, and whether the stub agent accepts them. */
   readonly powerRequests: PowerAction[];
+  /** What the routes logged, as `[level, message, details]`. */
+  readonly logged: [level: 'warn' | 'error', message: string, details: object][];
   powerAccepted: boolean;
   /** The first-boot ssh login the route reports; null is a box that made none. */
   sshAccess: SshAccess | null;
@@ -150,6 +152,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
   const beginLinkings = { count: 0 };
   const forgets = { count: 0 };
   const powerRequests: PowerAction[] = [];
+  const logged: [level: 'warn' | 'error', message: string, details: object][] = [];
 
   const context: RoutesContext = {
     config,
@@ -195,6 +198,10 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
       return Promise.resolve(state.powerAccepted);
     },
     sshAccess: () => Promise.resolve(state.sshAccess),
+    log: {
+      warn: (details, message) => logged.push(['warn', message, details]),
+      error: (details, message) => logged.push(['error', message, details]),
+    },
   };
 
   const app = express();
@@ -268,6 +275,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
       state.sshAccess = value;
     },
     powerRequests,
+    logged,
     joins,
     restarts,
     unlinks,

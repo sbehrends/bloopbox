@@ -26,6 +26,7 @@ const HOLD_MS = RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 500;
 import {
   DeviceController,
   MIN_USABLE_AUDIO_MS,
+  type DeviceFault,
   QUIET_HOURS_MAX_SLEEP_MS,
   type OutboundRequest,
   type StatsRecorder,
@@ -55,6 +56,8 @@ let sendResult: 'ok' | 'fail';
  * events count, not how they are written to a card. The store has its own suite.
  */
 let counted: { kind: 'sent' | 'received' | 'played'; index: number; value: number | null }[];
+/** Every failure the controller swallowed and reported, in order. */
+let faults: DeviceFault[];
 
 async function buildConfig(): Promise<DeviceConfig> {
   const template = configSchema.parse(
@@ -95,6 +98,7 @@ beforeEach(async () => {
   sent = [];
   marked = [];
   counted = [];
+  faults = [];
   sendResult = 'ok';
   const stats: StatsRecorder = {
     recordSent: (index, durationMs) => counted.push({ kind: 'sent', index, value: durationMs }),
@@ -114,6 +118,7 @@ beforeEach(async () => {
       marked.push({ index, messageIds: [...messageIds] });
     },
     stats,
+    onFault: (fault) => faults.push(fault),
   });
   controller.setStatus(DeviceStatus.Ready);
 });
@@ -1126,6 +1131,98 @@ describe('the silent-mode chord', () => {
     expect(hal.activeRecordings.size).toBe(0);
     expect(hal.cancelledRecordings).toHaveLength(1);
     expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * Failures the child never hears about beyond an "oops" still have to reach the journal. Each was
+ * once caught and dropped here, which left a box on the bench answering "oops" with nothing logged.
+ */
+describe('reported faults', () => {
+  const kinds = (): string[] => faults.map((fault) => fault.kind);
+
+  it('reports a microphone that would not open', async () => {
+    hal.failRecording = true;
+    await press(0, HOLD_MS);
+
+    expect(faults).toContainEqual(expect.objectContaining({ kind: 'capture-start', index: 0 }));
+    expect(faults.find((fault) => fault.kind === 'capture-start')?.error).toBeInstanceOf(Error);
+  });
+
+  it('reports a take that came back with no audio, with its length', async () => {
+    // Not an exception, but the one sign of a microphone that delivers nothing at all.
+    hal.fixedDurationMs = MIN_USABLE_AUDIO_MS - 50;
+    await press(1, HOLD_MS);
+    await waitFor(() => kinds().includes('capture-empty'), 'the empty take to be reported');
+
+    expect(faults.find((fault) => fault.kind === 'capture-empty')).toMatchObject({
+      index: 1,
+      detail: { durationMs: MIN_USABLE_AUDIO_MS - 50 },
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('reports a send WhatsApp did not accept', async () => {
+    hal.fixedDurationMs = 3000;
+    sendResult = 'fail';
+    await press(2, HOLD_MS);
+    await waitFor(() => kinds().includes('send'), 'the failed send to be reported');
+
+    expect(faults.find((fault) => fault.kind === 'send')).toMatchObject({ index: 2 });
+  });
+
+  it('reports a note that would not play', async () => {
+    const path = join(workDir, 'm-broken.ogg');
+    controller.handleIncoming(0, {
+      messageId: 'm-broken',
+      path,
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+    hal.failPlayback = true;
+    await press(0, 300);
+    await waitFor(() => kinds().includes('playback'), 'the failed playback to be reported');
+
+    expect(faults.find((fault) => fault.kind === 'playback')).toMatchObject({
+      index: 0,
+      detail: { path },
+    });
+  });
+
+  it('reports a cue that would not play, naming it', async () => {
+    // The bip, on a button with nothing waiting: the press carries on without it.
+    hal.failPlayback = true;
+    await press(1, HOLD_MS);
+
+    expect(faults).toContainEqual(
+      expect.objectContaining({ kind: 'cue', detail: { cue: AudioCue.Pop } }),
+    );
+  });
+
+  it('keeps working when the reporter itself throws', async () => {
+    // Reporting must never be the thing that breaks the next press.
+    await controller.dispose();
+    const throwing = new DeviceController({
+      hal,
+      config,
+      send: (request) => {
+        sent.push(request);
+        return Promise.resolve();
+      },
+      onFault: () => {
+        throw new Error('the log is broken too');
+      },
+    });
+    controller = throwing;
+    controller.setStatus(DeviceStatus.Ready);
+    hal.failRecording = true;
+    await press(0, HOLD_MS);
+
+    hal.failRecording = false;
+    hal.fixedDurationMs = 3000;
+    await press(0, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the next press to send');
+    expect(sent[0]).toMatchObject({ index: 0 });
   });
 });
 

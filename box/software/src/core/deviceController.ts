@@ -44,6 +44,42 @@ export type StatsRecorder = {
   recordPlayed(index: ButtonIndex, count: number): void;
 };
 
+/**
+ * Everything that can go wrong on the interaction path without the child noticing more than an
+ * "oops" — or nothing at all.
+ *
+ * Each of these used to be caught and dropped here, which is the right answer for the child (one
+ * failure must never break the next press) and the wrong one for whoever is debugging the box: the
+ * journal said nothing. They are still caught; now they are also reported.
+ */
+export type DeviceFaultKind =
+  /** `startRecording` rejected: no microphone, a busy device, a wrong ALSA name. */
+  | 'capture-start'
+  /** `stopRecording` rejected: the take could not be finalised or encoded. */
+  | 'capture-finalise'
+  /** The take finalised with essentially no audio — a microphone that delivered nothing. */
+  | 'capture-empty'
+  /** `cancelRecording` rejected. The purge collects whatever it left. */
+  | 'capture-cancel'
+  /** WhatsApp did not accept a finished take. */
+  | 'send'
+  /** A note could not be played, or playback itself threw. */
+  | 'playback'
+  /** A cue could not be played. Cues are courtesy, so this never reaches the child. */
+  | 'cue'
+  /** A played or revoked note's file, or its decoded copy, could not be removed. */
+  | 'delete';
+
+export type DeviceFault = {
+  readonly kind: DeviceFaultKind;
+  /** The button involved, where there is one. */
+  readonly index: ButtonIndex | null;
+  /** What was thrown, if anything was. */
+  readonly error?: unknown;
+  /** Small facts that explain it — a duration, a cue name, a path. */
+  readonly detail?: Readonly<Record<string, string | number>>;
+};
+
 export type DeviceControllerOptions = {
   readonly hal: Hal;
   readonly config: ConfigManager;
@@ -53,6 +89,14 @@ export type DeviceControllerOptions = {
   readonly markRead?: (index: ButtonIndex, messageIds: readonly string[]) => void;
   /** Counts what the box sent, received and played. Absent means nothing is counted. */
   readonly stats?: StatsRecorder;
+  /**
+   * Told about every failure this controller swallows (see {@link DeviceFault}).
+   *
+   * A callback rather than a logger for the same reason `stats` is a structural type: `src/core/`
+   * does no I/O, and the composition root decides where faults go. Called synchronously on the
+   * interaction path, so it must return at once; anything it throws is ignored.
+   */
+  readonly onFault?: (fault: DeviceFault) => void;
 };
 
 /** How often the quiet-hours schedule is re-evaluated when no transition is imminent. */
@@ -97,6 +141,7 @@ export class DeviceController {
   readonly #send: (request: OutboundRequest) => Promise<void>;
   readonly #markRead: ((index: ButtonIndex, ids: readonly string[]) => void) | undefined;
   readonly #stats: StatsRecorder | undefined;
+  readonly #onFault: ((fault: DeviceFault) => void) | undefined;
 
   /**
    * In-flight captures, keyed by button.
@@ -139,11 +184,15 @@ export class DeviceController {
     this.#send = options.send;
     this.#markRead = options.markRead;
     this.#stats = options.stats;
+    this.#onFault = options.onFault;
 
     this.queue = new AudioQueueManager({
       hal: options.hal,
       // Silent mode gates cues only; playback itself always happens.
       playCues: () => !this.state.silentMode,
+      onPlaybackError: (index, path, error) => {
+        this.#fault('playback', index, error, { path });
+      },
     });
 
     this.#interpreter = new ButtonInterpreter({
@@ -499,7 +548,10 @@ export class DeviceController {
     const handle = (async (): Promise<RecordingHandle | null> => {
       if (shouldPlayCue(AudioCue.Pop, silent)) await this.#safeCue(AudioCue.Pop);
       if (token.cancelled) return null;
-      return await this.#hal.startRecording(index).catch(() => null);
+      return await this.#hal.startRecording(index).catch((error: unknown) => {
+        this.#fault('capture-start', index, error);
+        return null;
+      });
     })();
     this.#captures.set(index, { handle, token });
   }
@@ -524,8 +576,9 @@ export class DeviceController {
       const result = await this.#hal.stopRecording(handle);
       path = result.path;
       durationMs = result.durationMs;
-    } catch {
+    } catch (error: unknown) {
       // Capture failed after the fact — tell the child nothing was sent.
+      this.#fault('capture-finalise', index, error);
       await this.#courtesyCue(AudioCue.Oops);
       return;
     }
@@ -538,7 +591,11 @@ export class DeviceController {
      * sending a click.
      */
     if (durationMs < MIN_USABLE_AUDIO_MS) {
-      await rm(path, { force: true }).catch(() => undefined);
+      // Not an exception, but the one signal that a microphone is delivering nothing at all.
+      this.#fault('capture-empty', index, undefined, { durationMs });
+      await rm(path, { force: true }).catch((error: unknown) => {
+        this.#fault('delete', index, error, { path });
+      });
       await this.#courtesyCue(AudioCue.Oops);
       return;
     }
@@ -564,7 +621,8 @@ export class DeviceController {
       // Only a send WhatsApp accepted. A failed one already told the child "oops"; counting it
       // would make the panel disagree with what the box actually did.
       this.#stats?.recordSent(index, durationMs);
-    } catch {
+    } catch (error: unknown) {
+      this.#fault('send', index, error);
       // Delivery failed. The file stays for the purge to collect. The "oops" can arrive up to a
       // minute later, which is exactly when the child may be listening to something else.
       await this.#courtesyCue(AudioCue.Oops);
@@ -585,8 +643,9 @@ export class DeviceController {
 
     try {
       await this.#hal.cancelRecording(handle);
-    } catch {
+    } catch (error: unknown) {
       // Nothing more to do; the purge will collect any partial file.
+      this.#fault('capture-cancel', index, error);
     }
   }
 
@@ -606,7 +665,8 @@ export class DeviceController {
     try {
       await this.#teardown;
       await this.queue.playQueue(index);
-    } catch {
+    } catch (error: unknown) {
+      this.#fault('playback', index, error);
       this.state.setPlaying(null);
     } finally {
       this.#listeningTo = null;
@@ -621,7 +681,9 @@ export class DeviceController {
       this.#playedPaths(messageIds)
         .filter((path) => !stillQueued.has(path))
         .map(async (path) => {
-          await rm(path, { force: true }).catch(() => undefined);
+          await rm(path, { force: true }).catch((error: unknown) => {
+            this.#fault('delete', index, error, { path });
+          });
           // The decode `prepare()` made is derived from a file that no longer exists.
           await this.#hal.release(path);
         }),
@@ -630,8 +692,12 @@ export class DeviceController {
 
   /** Deletes one note's file and the decode `prepare()` made of it. Never rejects. */
   async #discard(path: string): Promise<void> {
-    await rm(path, { force: true }).catch(() => undefined);
-    await this.#hal.release(path).catch(() => undefined);
+    await rm(path, { force: true }).catch((error: unknown) => {
+      this.#fault('delete', null, error, { path });
+    });
+    await this.#hal.release(path).catch((error: unknown) => {
+      this.#fault('delete', null, error, { path });
+    });
   }
 
   #playedPaths(messageIds: readonly string[]): string[] {
@@ -704,8 +770,28 @@ export class DeviceController {
   async #safeCue(cue: AudioCue): Promise<void> {
     try {
       await this.#hal.playCue(cue);
-    } catch {
+    } catch (error: unknown) {
       // Cues are non-essential; never let one break the interaction.
+      this.#fault('cue', null, error, { cue });
+    }
+  }
+
+  /** Reports a swallowed failure. A reporter that throws must not break the press either. */
+  #fault(
+    kind: DeviceFaultKind,
+    index: ButtonIndex | null,
+    error?: unknown,
+    detail?: Readonly<Record<string, string | number>>,
+  ): void {
+    try {
+      this.#onFault?.({
+        kind,
+        index,
+        ...(error === undefined ? {} : { error }),
+        ...(detail === undefined ? {} : { detail }),
+      });
+    } catch {
+      // Deliberately silent: reporting is the one thing here that is allowed to fail quietly.
     }
   }
 }

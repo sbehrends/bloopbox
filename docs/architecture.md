@@ -138,6 +138,16 @@ Everything in `src/core/` is I/O-free. It consumes events and timings, and its o
 | `quietHours`          | Whether now falls inside the window, read in the configured IANA zone       |
 | `deviceController`    | The wiring: intents in, capture / playback / cues / LEDs out                |
 
+**A failure core swallows is still reported.** The controller catches everything on the interaction
+path — one failed microphone must never break the next press — and used to drop it, so on a real box
+a failure produced an "oops" and nothing in the journal. Every such catch now calls the `onFault`
+option with a `DeviceFaultKind` (`capture-start`, `capture-finalise`, `capture-empty`,
+`capture-cancel`, `send`, `playback`, `cue`, `delete`), the button, the error and a little detail.
+It is a structural callback like `StatsRecorder`, so core still does no I/O: the hardware server
+logs each one at `warn` as `device fault`. The routes take the same approach with an optional
+`log` in `RoutesContext`, so every 4xx/5xx that stands for a failure leaves its reason in the
+journal. The rule for new code: **a catch that swallows must report**.
+
 That purity is the whole reason the timing behaviour is testable on fake timers with no hardware
 and no sleeping. Keep it that way — `deviceController` is where I/O is allowed to appear.
 

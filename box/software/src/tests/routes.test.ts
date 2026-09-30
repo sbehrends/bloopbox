@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AudioCue } from '../audio/cues.ts';
@@ -798,6 +798,24 @@ describe('POST /api/system/power', () => {
 
     const response = await send(api, 'POST', '/api/system/power', { action: 'poweroff' });
     expect(response.status).toBe(503);
+  });
+});
+
+describe('failures behind a 500', () => {
+  it('reach the log with the error, not only the panel', async () => {
+    /*
+     * The panel shows a parent one sentence. Without this the reason existed nowhere, and a box
+     * that "would not reset" could only be debugged by guessing.
+     */
+    api = await startApi({ configured: false });
+    const cause = new Error('EROFS: read-only file system');
+    vi.spyOn(api.config, 'factoryReset').mockRejectedValue(cause);
+
+    const response = await send(api, 'POST', '/api/factory-reset', {});
+    expect(response.status).toBe(500);
+    expect(api.logged).toEqual([
+      ['error', 'factory reset failed', { err: cause, route: 'POST /factory-reset' }],
+    ]);
   });
 });
 

@@ -102,7 +102,7 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
 
 | Layer          | Rule                                                                              |
 | -------------- | --------------------------------------------------------------------------------- |
-| `src/core/`    | Pure and I/O-free. Only calls `hal.setLed()`. This is what makes timing testable    |
+| `src/core/`    | Pure and I/O-free. Only calls `hal.setLed()`. This is what makes timing testable. A catch that swallows must report through `onFault` |
 | `src/hal/`     | All physical I/O — buttons, LEDs, **and audio** — behind `types.ts`. Load GPIO dynamically |
 | `src/ipc/`     | The daemon-to-daemon contract. **Adding an event means editing `events.ts` first**  |
 | `src/processes/hardware-server.ts` | Never imports Baileys                                         |

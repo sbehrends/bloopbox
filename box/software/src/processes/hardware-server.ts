@@ -233,6 +233,22 @@ async function main(): Promise<void> {
       link.current?.markRead(index, messageIds);
     },
     stats,
+    /*
+     * Every failure the controller swallows so the next press still works. One stable message,
+     * with the kind as a field, so `journalctl -u bloopbox-hardware | grep 'device fault'` lists
+     * them all and the kind says which.
+     */
+    onFault: (fault) => {
+      log.warn(
+        {
+          fault: fault.kind,
+          index: fault.index,
+          ...fault.detail,
+          ...(fault.error === undefined ? {} : { err: fault.error }),
+        },
+        'device fault',
+      );
+    },
   });
 
   let booting = true;
@@ -338,6 +354,7 @@ async function main(): Promise<void> {
   /* ---- routes ---- */
 
   const routesContext = {
+    log: log.child({ mod: 'routes' }),
     config,
     controller,
     recordingDirectory: RECORDING_DIRECTORY,

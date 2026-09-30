@@ -49,11 +49,18 @@ export type QueueManagerOptions = {
   readonly hal: Hal;
   /** Whether to play the separator chime. False during silent mode. */
   readonly playCues: () => boolean;
+  /**
+   * Told when a note fails to play outright — the note is still skipped, so the rest of the queue
+   * plays, but the reason is no longer thrown away. Must not throw.
+   */
+  readonly onPlaybackError?: (index: ButtonIndex, path: string, error: unknown) => void;
 };
 
 export class AudioQueueManager extends EventEmitter<QueueEvents> {
   readonly #hal: Hal;
   readonly #playCues: () => boolean;
+  readonly #onPlaybackError:
+    ((index: ButtonIndex, path: string, error: unknown) => void) | undefined;
   /** Pending notes per button, oldest first. */
   readonly #queues: [QueuedNote[], QueuedNote[], QueuedNote[]] = [[], [], []];
   #playing: ButtonIndex | null = null;
@@ -77,6 +84,7 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
     super();
     this.#hal = options.hal;
     this.#playCues = options.playCues;
+    this.#onPlaybackError = options.onPlaybackError;
   }
 
   /** Which contact is currently playing, if any. */
@@ -170,7 +178,7 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
           count: batch.length,
         });
 
-        const outcome = await this.#safePlay(note.path);
+        const outcome = await this.#safePlay(index, note.path);
         this.emit('noteFinished', { index, messageId: note.messageId, ok: outcome !== 'failed' });
 
         // Cut off part-way: not heard, so back it goes, with everything after it.
@@ -247,10 +255,15 @@ export class AudioQueueManager extends EventEmitter<QueueEvents> {
    * that cannot be played will not become playable by blinking at the child until the purge.
    * An *interruption* is different, and is reported as one: the note was fine, it was cut off.
    */
-  async #safePlay(path: string): Promise<PlaybackOutcome | 'failed'> {
+  async #safePlay(index: ButtonIndex, path: string): Promise<PlaybackOutcome | 'failed'> {
     try {
       return await this.#hal.play(path);
-    } catch {
+    } catch (error: unknown) {
+      try {
+        this.#onPlaybackError?.(index, path, error);
+      } catch {
+        // A reporter that throws must not strand the rest of the queue.
+      }
       return 'failed';
     }
   }

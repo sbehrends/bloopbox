@@ -86,6 +86,18 @@ export type RoutesContext = {
   readonly requestPower: (action: PowerAction) => Promise<boolean>;
   /** The ssh login this device generated on first boot, or null where it made none. */
   readonly sshAccess: () => Promise<SshAccess | null>;
+  /**
+   * Where a failure behind a 4xx/5xx goes. The panel shows the parent a sentence; the journal is
+   * where the reason has to be, or a box that "would not save" can only be debugged by guessing.
+   * Optional so the test harness stays quiet.
+   */
+  readonly log?: RouteLogger;
+};
+
+/** The two levels routes log at. A pino logger satisfies it. */
+export type RouteLogger = {
+  warn(details: object, message: string): void;
+  error(details: object, message: string): void;
 };
 
 export function buildStatusPayload(context: RoutesContext): DeviceStatusPayload {
@@ -191,6 +203,7 @@ export function createApiRouter(context: RoutesContext): Router {
         res.status(400).json({ error: error.message, issues: error.issues });
         return;
       }
+      context.log?.error({ err: error, route: 'PUT /config' }, 'configuration save failed');
       res.status(500).json({ error: 'failed to save configuration' });
     }
   });
@@ -217,6 +230,7 @@ export function createApiRouter(context: RoutesContext): Router {
       res.json({ ok: true, restarting: true });
       context.requestRestart('onboarding completed');
     } catch (error: unknown) {
+      context.log?.warn({ err: error, route: 'POST /onboard' }, 'onboarding failed');
       res.status(400).json({ error: error instanceof Error ? error.message : 'onboarding failed' });
     }
   });
@@ -334,6 +348,7 @@ export function createApiRouter(context: RoutesContext): Router {
         res.status(400).json({ error: error.message, issues: error.issues });
         return;
       }
+      context.log?.warn({ err: error, route: 'POST /wifi/join' }, 'wi-fi join failed');
       res.status(400).json({ error: error instanceof Error ? error.message : 'could not join' });
     }
   });
@@ -353,6 +368,7 @@ export function createApiRouter(context: RoutesContext): Router {
       await context.controller.playTestCue();
       res.json({ played: true });
     } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'POST /audio/test' }, 'speaker test failed');
       res.status(500).json({
         error: error instanceof Error ? error.message : 'could not play the test sound',
       });
@@ -398,7 +414,8 @@ export function createApiRouter(context: RoutesContext): Router {
         color: { dark: '#000000ff', light: '#ffffffff' },
       });
       res.type('image/svg+xml').set('cache-control', 'no-store').send(svg);
-    } catch {
+    } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'GET /whatsapp/qr.svg' }, 'QR render failed');
       res.status(500).json({ error: 'could not render the pairing code' });
     }
   });
@@ -456,8 +473,9 @@ export function createApiRouter(context: RoutesContext): Router {
   router.post('/factory-reset', admin, async (_req, res) => {
     try {
       await context.config.factoryReset();
-    } catch {
+    } catch (error: unknown) {
       // Nothing has been torn down yet, so this is still a recoverable, reportable failure.
+      context.log?.error({ err: error, route: 'POST /factory-reset' }, 'factory reset failed');
       res.status(500).json({ error: 'factory reset failed' });
       return;
     }
@@ -474,9 +492,10 @@ export function createApiRouter(context: RoutesContext): Router {
     void (async (): Promise<void> => {
       try {
         await context.requestForgetNetwork();
-      } catch {
+      } catch (error: unknown) {
         // Swallowed rather than left to reject: the restart below is what finishes the reset,
         // and abandoning it would leave the device running on a config that is already gone.
+        context.log?.warn({ err: error }, 'factory reset could not forget the Wi-Fi network');
       }
       context.requestRestart('factory reset');
     })();
@@ -514,7 +533,8 @@ export function createApiRouter(context: RoutesContext): Router {
     try {
       await context.resetStats();
       res.json({ ok: true, stats: context.stats() });
-    } catch {
+    } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'POST /stats/reset' }, 'counter reset failed');
       res.status(500).json({ error: 'could not reset the counters' });
     }
   });
@@ -556,7 +576,8 @@ export function createApiRouter(context: RoutesContext): Router {
          */
         timeSynced: net?.timeSynced ?? null,
       });
-    } catch {
+    } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'GET /system' }, 'health reading failed');
       res.status(500).json({ error: 'could not read the device state' });
     }
   });

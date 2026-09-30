@@ -440,6 +440,18 @@ Five commands, all installed on PATH by `install.sh`:
 | `sudo bloopbox-hotspot-test` | Raise the hotspot on purpose, hold it, restore. Gate 3.           |
 | `sudo bloopbox-audio-test`   | Speaker out, microphone in, played back. Gates 4a and 5.          |
 
+**When the box answers "oops" or does nothing, look here first:**
+
+```bash
+journalctl -u bloopbox-hardware -b | grep 'device fault'
+```
+
+Every failure the daemon swallows so the next press still works is logged there with a `fault`
+field — `capture-start` (the microphone would not open), `capture-finalise` (the take could not be
+encoded), `capture-empty` (a take with no audio, with its `durationMs`), `capture-cancel`, `send`,
+`playback` (with the note's `path`), `cue` (with its name) or `delete` — plus the button and the
+error. A panel action that fails logs under `mod: "routes"` with the route it came from.
+
 `bloopbox-audio-test` opens the same card the daemon does, so **stop the services first** if a
 recording could be in progress. It reads the devices out of `/etc/bloopbox/environment` rather than
 using ALSA's default, which is the point: it tests what the daemon will open.

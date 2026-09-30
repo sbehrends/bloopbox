@@ -442,6 +442,66 @@ p.nightEyebrow {
   color: var(--accent-ink);
 }
 
+/* Troubleshooting entry point under the steps. */
+.help {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  margin-block-start: clamp(2.5rem, 6vw, 4rem);
+  padding: var(--space-5) var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.help:hover,
+.help:focus-visible {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+.helpLamps {
+  display: flex;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.helpLamps i {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  border-radius: 50%;
+}
+
+.helpLamps i:nth-child(1) { background: var(--ch-1); }
+.helpLamps i:nth-child(2) { background: var(--ch-2); }
+.helpLamps i:nth-child(3) { background: var(--ch-3); }
+
+.helpText {
+  display: grid;
+  gap: var(--space-1);
+  flex: 1;
+}
+
+.helpText span {
+  color: var(--muted);
+}
+
+.helpArrow {
+  flex: none;
+  font-size: var(--text-xl, 1.5rem);
+  color: var(--accent-ink);
+}
+
+@media (max-width: 30rem) {
+  .helpLamps {
+    display: none;
+  }
+}
+
 /* ---- closing ---- */
 
 .closing {

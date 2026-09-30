@@ -29,7 +29,6 @@ const NAV = [
   { href: '#setup', label: 'Setup' },
 ] as const
 
-/** The three parts of the build, as the reader meets them. */
 function Step({
   n,
   title,
@@ -55,11 +54,6 @@ function Step({
   )
 }
 
-/** A thing worth stopping for. Amber, because coral and the danger red both mean something
- *  else on this device — `docs/BRAND.md`. */
-/* Children are rendered as-is rather than wrapped in a `<p>`: one note needs several
-   paragraphs, and a `<ul>` or a second `<p>` inside one is invalid HTML. Every caller wraps
-   its own prose, and `.note p` styles it either way. */
 function Note({ title, children }: { readonly title: string; readonly children: React.ReactNode }) {
   return (
     <aside className={styles.note}>
@@ -79,7 +73,6 @@ export default function Manual() {
       <SiteHeader nav={NAV} current="manual" />
 
       <main id="main">
-        {/* ---- intro ---- */}
         <section className={`wrap ${styles.hero}`}>
           <div className={styles.heroCopy}>
             <p className="eyebrow">The build manual</p>
@@ -108,7 +101,6 @@ export default function Manual() {
           />
         </section>
 
-        {/* ---- what you're getting into ---- */}
         <section className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">Before you start</p>
           <div className={`${styles.split} rise`}>
@@ -142,12 +134,10 @@ export default function Manual() {
           </ol>
         </section>
 
-        {/* ---- the kit alternative ---- */}
         <section className={`wrap ${styles.kit} rise`}>
           <WaitlistForm />
         </section>
 
-        {/* ---- bill of materials ---- */}
         <section id="parts" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">What to buy</p>
           <h2 className={`${styles.sectionTitle} rise`}>The bill of materials.</h2>
@@ -180,9 +170,6 @@ export default function Manual() {
                   <tr key={part.name}>
                     <th scope="row">
                       {part.name}
-                      {/* A part can be stocked in several shops, so the links sit under the name
-                          rather than on it: adding a second one to `parts` in `lib/site.ts`
-                          changes nothing about how the row is laid out. */}
                       {part.links.length > 0 && (
                         <ul className={styles.partLinks}>
                           {part.links.map((link) => (
@@ -205,7 +192,6 @@ export default function Manual() {
 
         </section>
 
-        {/* ================= PART ONE ================= */}
         <section id="card" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">Part one — the memory card</p>
           <h2 className={`${styles.sectionTitle} rise`}>Put the software on first.</h2>
@@ -288,7 +274,6 @@ export default function Manual() {
           </div>
         </section>
 
-        {/* ================= PART TWO ================= */}
         <section id="hardware" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">Part two — the hardware</p>
           <h2 className={`${styles.sectionTitle} rise`}>Now put it together.</h2>
@@ -462,7 +447,6 @@ export default function Manual() {
           </div>
         </section>
 
-        {/* ================= PART THREE ================= */}
         <section id="setup" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">Part three — Wi-Fi, WhatsApp, people</p>
           <h2 className={`${styles.sectionTitle} rise`}>Finish it from your phone.</h2>
@@ -537,7 +521,7 @@ export default function Manual() {
             <Step n={10} title="Link WhatsApp">
               <p>
                 Back on your normal Wi-Fi, on a phone or a laptop, open{' '}
-                <code>http://bloopbox.local:3000/admin/</code>. Sign in with the settings password
+                <code>http://bloopbox.local</code>. Sign in with the settings password
                 you just chose — any username works, only the password is checked.
               </p>
               <p>
@@ -605,8 +589,7 @@ export default function Manual() {
           </div>
         </section>
 
-        {/* ---- the lights: the page's one dark band ---- */}
-        <section className={styles.night}>
+        <section id="lights" className={styles.night}>
           <div className="wrap">
             <p className={`eyebrow ${styles.nightEyebrow} rise`}>Keep this bit</p>
             <div className={`${styles.split} rise`}>
@@ -626,7 +609,6 @@ export default function Manual() {
           </div>
         </section>
 
-        {/* ---- closing ---- */}
         <section className={`wrap ${styles.closing}`}>
           <img src="/bloopbox-logo-light.svg" alt="" className={styles.mark} />
           <h2 className={styles.closingTitle}>That’s the whole thing.</h2>

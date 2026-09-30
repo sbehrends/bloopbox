@@ -5,9 +5,6 @@ import { site } from '@/lib/site'
 
 import './globals.css'
 
-/* The brand asks for an ultra-bold rounded geometric sans. The box settles for `ui-rounded`
-   because it serves its pages off a Pi over its own hotspot; the site can afford the real
-   thing. next/font self-hosts it into the export, so there is no third-party request. */
 const nunito = Nunito({
   subsets: ['latin'],
   weight: ['400', '600', '800', '900'],
@@ -34,7 +31,6 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  // The page is cream in a light OS and deep navy in a dark one; the browser chrome follows.
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#f7f4ef' },
     { media: '(prefers-color-scheme: dark)', color: '#131a2c' },

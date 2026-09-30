@@ -45,7 +45,14 @@ export type BlockReason =
    * been heard (PRODUCT.md §1). No microphone ever opened, so nothing was recorded and there
    * is nothing to discard. The queue is not consumed here either — a *tap* asks for it.
    */
-  | 'unread';
+  | 'unread'
+  /**
+   * No contact is assigned to this button, so a message could never be sent. Refused at the
+   * threshold like `readOnly`, so the microphone never opens: this used to record, encode and
+   * only then fail in the bridge — which sounded like any refusal but had kept the child's voice
+   * in RAM for nothing.
+   */
+  | 'unassigned';
 
 export type CancelReason =
   /**
@@ -120,6 +127,14 @@ export type ButtonInterpreterOptions = {
    * restarts the daemon — there is no state here that can change under a running press.
    */
   readonly readOnly?: boolean;
+  /**
+   * Whether this button has somewhere to send to. A button that does not refuses the hold at
+   * `recordThresholdMs` (reason `unassigned`), exactly as `readOnly` does for the whole box.
+   *
+   * A query like `hasUnread`, though the answer is fixed at boot: config is snapshot and saving it
+   * restarts the daemon. Absent means every button can send.
+   */
+  readonly canSend?: (index: ButtonIndex) => boolean;
   /**
    * Which button's notes are playing right now, if any. While they play the other buttons are
    * locked out exactly as they are behind a held press: the child is listening, and a bip, an
@@ -208,6 +223,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
   readonly #maxRecordingMs: number;
   readonly #hasUnread: (index: ButtonIndex) => boolean;
   readonly #readOnly: boolean;
+  readonly #canSend: (index: ButtonIndex) => boolean;
   readonly #listeningTo: () => ButtonIndex | null;
   readonly #active = new Map<ButtonIndex, ActivePress>();
   /** Confirmed recordings waiting out their resume window. */
@@ -227,6 +243,7 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
     this.#maxRecordingMs = options.maxRecordingSeconds * 1000;
     this.#hasUnread = options.hasUnread;
     this.#readOnly = options.readOnly ?? false;
+    this.#canSend = options.canSend ?? (() => true);
     this.#listeningTo = options.listeningTo ?? (() => null);
     this.#stuckPressMs = stuckPressMs(options.timings, options.maxRecordingSeconds);
   }
@@ -321,6 +338,17 @@ export class ButtonInterpreter extends EventEmitter<ButtonInterpreterEvents> {
        */
       if (this.#hasUnread(index)) {
         press.withheld = true;
+        return;
+      }
+
+      /*
+       * No contact: refused here, at the bip moment, like read-only — nothing is left to learn
+       * by waiting, and a press that cannot send must never open a microphone. Checked after the
+       * unread rule on purpose: a button still holding notes stays playable by a tap.
+       */
+      if (!this.#canSend(index)) {
+        press.blocked = true;
+        this.emit('recordBlocked', { index, reason: 'unassigned' });
         return;
       }
 

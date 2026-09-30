@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { AudioCue, shouldPlayCue } from '../audio/cues.ts';
 import { AudioQueueManager, type QueuedNote } from '../audio/queueManager.ts';
 import type { ConfigManager } from '../config/configManager.ts';
-import type { ButtonIndex, DeviceConfig } from '../config/schema.ts';
+import { enabledContacts, type ButtonIndex, type DeviceConfig } from '../config/schema.ts';
 import type { Hal, RecordingHandle } from '../hal/types.ts';
 import { ButtonInterpreter } from './buttonInterpreter.ts';
 import { DeviceState, type DeviceStatus } from './deviceState.ts';
@@ -195,12 +195,16 @@ export class DeviceController {
       },
     });
 
+    // Buttons with a contact to send to: enabled, with a target that resolves.
+    const sendable = new Set(enabledContacts(this.#config.current).map(({ index }) => index));
     this.#interpreter = new ButtonInterpreter({
       timings: this.#config.current.buttons,
       maxRecordingSeconds: this.#audio().maxRecordingSeconds,
       hasUnread: (index) => this.state.hasUnread(index),
       // Receive-only: no hold ever opens a microphone. Snapshot like every other setting.
       readOnly: this.#config.current.mode.readOnly,
+      // A button with no contact takes no message. Snapshot, like every other setting.
+      canSend: (index) => sendable.has(index),
       // While notes play, the other buttons wait for them to finish.
       listeningTo: () => this.#listeningTo,
     });

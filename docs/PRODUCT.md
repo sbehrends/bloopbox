@@ -163,6 +163,17 @@ The details, all of which are the difference between a rule and an annoyance:
   lamp is therefore an exact statement of the rule: blinking means "listen first".
 - Like every other refusal it is the "oops", so it is **suppressed in silent mode** (§7).
 
+### A button with no contact
+
+A button with no contact assigned (or a disabled one) takes no message, and it now says so the
+way read-only does: a hold is refused with the "oops" at the moment the bip would have played, and
+**the microphone never opens**. A quick tap answers "oops" as any empty button does, and notes still
+waiting on it — assigned before a contact was removed — still play with a tap.
+
+Before 2026-09-30 such a hold bipped, recorded, encoded, and was refused only by the bridge. The
+child heard the same "oops", a few seconds later, but their voice had been captured into RAM for a
+message that could never be sent. Found on the bench, through the `device fault` log.
+
 ### Read-only mode
 
 `mode.readOnly` switches the sending half off and leaves receiving untouched. Notes still arrive,

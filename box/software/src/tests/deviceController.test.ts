@@ -1138,6 +1138,33 @@ describe('the silent-mode chord', () => {
  * Failures the child never hears about beyond an "oops" still have to reach the journal. Each was
  * once caught and dropped here, which left a box on the bench answering "oops" with nothing logged.
  */
+describe('a button with no contact', () => {
+  it('never opens the microphone, answers "oops" and sends nothing', async () => {
+    // Bench finding 2026-09-30: it used to record, encode and fail in the bridge.
+    await config.update({ contacts: { button2: { enabled: false } } });
+    await controller.dispose();
+    controller = new DeviceController({
+      hal,
+      config,
+      send: (request) => {
+        sent.push(request);
+        return Promise.resolve();
+      },
+      onFault: (fault) => faults.push(fault),
+    });
+    controller.setStatus(DeviceStatus.Ready);
+    const start = vi.spyOn(hal, 'startRecording');
+    hal.clearHistory();
+
+    await press(1, HOLD_MS);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
+    expect(sent).toHaveLength(0);
+    expect(faults).toEqual([]);
+  });
+});
+
 describe('reported faults', () => {
   const kinds = (): string[] => faults.map((fault) => fault.kind);
 

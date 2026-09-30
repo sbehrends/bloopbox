@@ -543,6 +543,12 @@ know the mode exists or defend against a capture that should not have been opene
 The unread rule above reuses this path with the other reason. It is the same refusal in every
 respect except *when* it can be decided — see the table there.
 
+A **button with no contact** takes the same path per button, with reason `unassigned`: the
+controller hands the interpreter a `canSend(index)` query built once from `enabledContacts()` at
+boot, and the interpreter checks it at `recordThresholdMs`, after the unread rule — so a button still
+holding notes stays playable by a tap. Until 2026-09-30 nothing checked this before the bridge, which
+refused the finished take with `no contact assigned to that button`.
+
 Refusing in the controller instead would have meant opening the interpreter's capture path and then
 declining it, which leaves the "is there a microphone open" question answered differently in two
 places. It is also why the refusal lands at the threshold rather than at release: that is where the

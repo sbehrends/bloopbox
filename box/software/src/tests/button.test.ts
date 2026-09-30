@@ -40,6 +40,8 @@ function setup(
     timings?: Partial<ButtonTimings>;
     readOnly?: boolean;
     listeningTo?: () => ButtonIndex | null;
+    /** Buttons with no contact. Every other button can send. */
+    unassigned?: ButtonIndex[];
   } = {},
 ) {
   const unread = new Set(options.unread ?? []);
@@ -49,6 +51,9 @@ function setup(
     hasUnread: (index) => unread.has(index),
     readOnly: options.readOnly ?? false,
     ...(options.listeningTo ? { listeningTo: options.listeningTo } : {}),
+    ...(options.unassigned
+      ? { canSend: (index: ButtonIndex) => !(options.unassigned ?? []).includes(index) }
+      : {}),
   });
 
   const log: Recorded[] = [];
@@ -1007,6 +1012,63 @@ describe('robustness', () => {
 
     interpreter.handleButtonUp(1);
     expect(interpreter.isPressed(1)).toBe(false);
+  });
+});
+
+/**
+ * A button with no contact (found on the bench, 2026-09-30).
+ *
+ * It used to bip, open the microphone, record and encode a take that the bridge then refused —
+ * the child heard an ordinary "oops", but their voice had been captured for nothing. The hold is
+ * now refused at the bip moment, like read-only, and no capture event ever fires.
+ */
+describe('a button with no contact', () => {
+  it('refuses the hold at the record threshold instead of opening a capture', () => {
+    const { interpreter, names, find, log } = setup({ unassigned: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
+    expect(find('recordBlocked')?.payload).toEqual({ index: 1, reason: 'unassigned' });
+
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS + 50);
+
+    for (const event of ['captureConfirmed', 'captureCommit', 'captureCancel', 'playQueue']) {
+      expect([event, names().includes(event)]).toEqual([event, false]);
+    }
+    // One answer to one gesture: the refusal, and nothing after it at release.
+    expect(counts(log, 'recordBlocked')).toBe(1);
+    expect(names()).not.toContain('cancelBeep');
+  });
+
+  it('answers a quick tap the way any empty button does', () => {
+    const { interpreter, names } = setup({ unassigned: [1] });
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).toContain('cancelBeep');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('still plays notes left waiting on it: listening comes first', () => {
+    const { interpreter, names } = setup({ unassigned: [1], unread: [1] });
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(LONG_TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).toContain('playQueue');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('leaves the buttons that do have a contact alone', () => {
+    const { interpreter, names } = setup({ unassigned: [1] });
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
+
+    expect(names()).toContain('captureConfirmed');
+    expect(names()).not.toContain('recordBlocked');
   });
 });
 

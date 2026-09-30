@@ -29,10 +29,10 @@ import type { Logger } from 'pino';
 /**
  * ============================ UNVERIFIED ON HARDWARE ============================
  *
- * TODO(hardware): written against opengpio@2.0.2's published API. Proven on one board — a Pi 3B+
- * with the WM8960 HAT, where the six lines are claimed and button 1 registers — and never run on a
- * Pi Zero 2 W, on buttons 2–3 or on any lamp. Work through `docs/hardware-bringup.md` before
- * trusting those. Most likely first failures:
+ * TODO(hardware): written against opengpio@2.0.2's published API. On the reference board (Pi 3B+,
+ * WM8960 HAT, three buttons, three lamps) the six lines are claimed and button 1 registers; buttons
+ * 2–3, the lamps and the Pi Zero 2 W are not yet recorded as working. Work through
+ * `docs/hardware-bringup.md` before trusting those. Most likely first failures:
  *   - LEDs inverted -> set LED_ACTIVE_HIGH=false.
  *   - Buttons read backwards or float -> the firmware pull-ups are not applied (see below).
  *   - ALSA device names differ -> set ALSA_CAPTURE_DEVICE / ALSA_PLAYBACK_DEVICE.

@@ -95,9 +95,10 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
 - **Do not write `cmd | grep -q` in the shell scripts.** `grep -q` exits at the first match, the
   producer takes a SIGPIPE, and `set -o pipefail` fails the whole check. This bit three separate
   checks during bring-up.
-- **`gpioDriver.ts` is proven on one button of one board.** It has run on a Pi 3B+ with the WM8960
-  HAT since 2026-08-10: button 1 and audio work. Buttons 2–3, every lamp and the Zero 2 W never have.
-  Do not add code paths that only work with real GPIO — development runs on the simulator.
+- **`gpioDriver.ts` is only partly proven on hardware.** On the reference board (Pi 3B+, WM8960 HAT,
+  three buttons and three lamps) button 1 and audio are proven; buttons 2–3, the lamps and the
+  Zero 2 W are not yet. Do not add code paths that only work with real GPIO — development runs on
+  the simulator.
 - **The whitelist in `src/whatsapp/whitelist.ts` is the safety boundary of the product.** A toddler
   must not be reachable by strangers. Change it only deliberately, and read its tests first.
 - **Timing values live in exactly one place and are exported**, so tests assert against the same

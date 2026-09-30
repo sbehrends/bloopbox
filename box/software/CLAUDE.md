@@ -271,15 +271,18 @@ examples most guides show:
   `node.attrs.offline ? 'append' : 'notify'`, so everything queued while disconnected arrives as
   `append`. `messageTimestamp` is a protobuf Long — arithmetic straight on it yields `NaN`.
 
-## Hardware status: one MVP board, partly proven
+## Hardware status: one reference board, partly proven
 
-All development happens on macOS through the **simulator** HAL driver. One real device exists: a
-**Pi 3B+ with the WM8960 HAT**, installed `--audio-hat wm8960 --no-leds`, using the HAT's own switch
-as button 1 and no lamps. On it, since 2026-08-10, `gpioDriver.ts` claims all six lines, button 1
-registers presses, and audio works in both directions, all under the hardened unit.
+All development happens on macOS through the **simulator** HAL driver. One real device exists: the
+**reference board** (`docs/hardware.md`) — a Pi 3B+ with the WM8960 HAT and, since 2026-08-17,
+**all three buttons and all three lamps wired**. Install and build images for it with
+`--audio-hat wm8960` and **never `--no-leds`**: that flag belongs to the first, lampless bring-up
+board of 2026-08-10, which no longer exists.
 
-**Never run anywhere:** buttons 2 and 3 (GPIO 27, 22), every lamp (polarity, colour order), and the
-Pi Zero 2 W target — so the lockout, the chord and the lamp code are proven only in tests.
+**Proven on it:** `gpioDriver.ts` claims all six lines, button 1 registers presses, and audio works
+in both directions, all under the hardened unit. **Not yet recorded as proven:** buttons 2 and 3,
+the lamps (polarity, colour order) and the Pi Zero 2 W target — so the lockout, the chord and the
+lamp code are proven only in tests until a bench session says otherwise.
 `docs/hardware-bringup.md` is the gate-by-gate plan, with the debugging kit (`bloopbox-doctor`,
 `bloopbox-audio-test`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`).
 

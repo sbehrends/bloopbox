@@ -60,8 +60,7 @@ bundle from each gate. It is designed for exactly that — see the bottom of thi
 ## Gate 0 — a Pi you can reach
 
 **Prefer the stock image for a new device.** A `release:image` card has booted on the 3B+
-(2026-08-10), but the `--audio-hat wm8960 --no-leds` variant and the per-device ssh password never
-have, and if a card does not boot you will not know whether the fault is the image, the install, or
+(2026-08-10), but the per-device ssh password and the Phase 0–1 units never have, and if a card does not boot you will not know whether the fault is the image, the install, or
 the app. Prove a new image against a device you already trust, on a spare card.
 
 1. Raspberry Pi Imager → **Raspberry Pi OS Lite (64-bit)**, which must be **Trixie** (see
@@ -354,8 +353,8 @@ are one `peak` value each in `scripts/generate-sounds.ts`; the tone gains are th
 
 ## Gate 4 — buttons and LEDs
 
-Now the wiring. `src/hal/gpioDriver.ts` has run on the 3B+, where button 1 (the HAT's switch)
-registers presses; buttons 2–3 and the lamps below have never been wired, so this gate is still
+Now the wiring. `src/hal/gpioDriver.ts` has run on the 3B+, where button 1 registers presses;
+buttons 2–3 and the lamps below are wired but not yet recorded as working, so this gate is still
 mostly open.
 
 GPIO 17, 27, 22 for the buttons, pulled up in firmware; the 3 V lamps straight off

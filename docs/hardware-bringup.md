@@ -353,9 +353,9 @@ are one `peak` value each in `scripts/generate-sounds.ts`; the tone gains are th
 
 ## Gate 4 — buttons and LEDs
 
-Now the wiring. `src/hal/gpioDriver.ts` has run on the 3B+, where button 1 registers presses;
-buttons 2–3 and the lamps below are wired but not yet recorded as working, so this gate is still
-mostly open.
+Now the wiring. **Passed on the reference board, 2026-09-30:** on the 3B+, all three buttons
+register and all three lamps light with the default polarity, in the colour order below. The gate
+is still open for the Pi Zero 2 W, which has not run it.
 
 GPIO 17, 27, 22 for the buttons, pulled up in firmware; the 3 V lamps straight off
 GPIO 23, 24, 25, one leg on the pin and one on ground. [`hardware.md`](./hardware.md) has the wiring and the reason the pull-ups come

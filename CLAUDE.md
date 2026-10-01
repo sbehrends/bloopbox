@@ -96,10 +96,10 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
   producer takes a SIGPIPE, and `set -o pipefail` fails the whole check. This bit three separate
   checks during bring-up. `src/tests/shellScripts.test.ts` now fails on it in any script with
   pipefail on.
-- **`gpioDriver.ts` is only partly proven on hardware.** On the reference board (Pi 3B+, WM8960 HAT,
-  three buttons and three lamps) button 1 and audio are proven; buttons 2–3, the lamps and the
-  Zero 2 W are not yet. Do not add code paths that only work with real GPIO — development runs on
-  the simulator.
+- **`gpioDriver.ts` is proven on the reference board, not on the target.** On the Pi 3B+ with the
+  WM8960 HAT, all three buttons, all three lamps and audio work (bench, 2026-09-30); the Pi Zero 2 W
+  has never run it. Do not add code paths that only work with real GPIO — development runs on the
+  simulator.
 - **The whitelist in `src/whatsapp/whitelist.ts` is the safety boundary of the product.** A toddler
   must not be reachable by strangers. Change it only deliberately, and read its tests first.
 - **Timing values live in exactly one place and are exported**, so tests assert against the same

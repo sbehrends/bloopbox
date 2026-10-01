@@ -121,9 +121,9 @@ All physical I/O — buttons, LEDs, **and audio in and out** — sits behind one
 import it statically — importing the HAL factory has to stay safe on a dev machine.
 
 `gpioDriver.ts` has run on the reference board — a Pi 3B+ with the WM8960 HAT, three buttons and
-three lamps (`box/software/CLAUDE.md` § Hardware status). Only button 1 and audio are recorded as
-proven; buttons 2–3, the lamps and the Zero 2 W are not yet, so do not add code paths that only
-work with real GPIO.
+three lamps (`box/software/CLAUDE.md` § Hardware status). The bench session of 2026-09-30 proved
+all three buttons, all three lamps and audio there (`PENDING.md` has the record); the Pi Zero 2 W
+target has not run it yet, so do not add code paths that only work with real GPIO.
 
 ### Domain logic is pure
 

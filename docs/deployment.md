@@ -479,7 +479,7 @@ a download either.
 ## What none of this proves
 
 Everything above has been exercised: the tarball builds, installs and boots on arm64 Trixie, and
-the image has been mounted back and booted from inside. What has **not** happened is any of it
-running on a Raspberry Pi with buttons attached. Pin numbers, lamp polarity and ALSA device
-names remain unverified, `arecord`/`aplay`/`amixer` have never been called against real
-hardware, and no WhatsApp account has been paired. See `PENDING.md`.
+the image has been mounted back and booted from inside. Since 2026-09-30 a card flashed from it has
+also booted the reference board (a Pi 3B+ with the WM8960 HAT), made its ssh password on first
+boot, onboarded through the hotspot and linked WhatsApp, with all three buttons and lamps working.
+What has **not** happened is any of it on the Pi Zero 2 W the product targets. See `PENDING.md`.

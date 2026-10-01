@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { ButtonIndex } from '../config/schema.ts';
 import type { AudioCue } from '../audio/cues.ts';
-import type { Hal, HalEvents, RecordingHandle, RecordingResult } from './types.ts';
+import type { Hal, HalEvents, PlaybackOutcome, RecordingHandle, RecordingResult } from './types.ts';
 
 /**
  * In-memory HAL for tests. Records every call with a timestamp so LED patterns, cue
@@ -35,6 +35,16 @@ export class MockHal extends EventEmitter<HalEvents> implements Hal {
 
   /** Set to make play()/playCue() reject, exercising error paths. */
   failPlayback = false;
+  /**
+   * Set to make `play()` hold the note open until a cue, `stopPlayback()` or another `play()`
+   * interrupts it — or until {@link finishPlayback} lets it complete. Off by default, where
+   * notes complete at once, which is what most tests want.
+   *
+   * With it on, the mock behaves like the real speaker: one output, and a cue cuts off a note.
+   * The controller tests would otherwise be blind to anything that plays over a message.
+   */
+  holdPlayback = false;
+  #playing: { path: string; settle: (outcome: PlaybackOutcome) => void } | null = null;
   /** Set to make recording fail. */
   failRecording = false;
   /** Simulated duration reported by stopRecording, when not derived from the clock. */
@@ -94,10 +104,33 @@ export class MockHal extends EventEmitter<HalEvents> implements Hal {
     return Promise.resolve();
   }
 
-  play(path: string): Promise<void> {
+  play(path: string): Promise<PlaybackOutcome> {
     if (this.failPlayback) return Promise.reject(new Error(`mock: cannot play ${path}`));
+    this.#interrupt();
     this.filesPlayed.push({ path, at: Date.now() });
-    return Promise.resolve();
+    if (!this.holdPlayback) return Promise.resolve('completed');
+    return new Promise<PlaybackOutcome>((settle) => {
+      this.#playing = { path, settle };
+    });
+  }
+
+  /** The note `play()` is holding open, if any. */
+  get nowPlaying(): string | null {
+    return this.#playing?.path ?? null;
+  }
+
+  /** Lets a held note play to its end. */
+  finishPlayback(): void {
+    const playing = this.#playing;
+    this.#playing = null;
+    playing?.settle('completed');
+  }
+
+  /** One output, as on the device: anything new cuts off the note that is playing. */
+  #interrupt(): void {
+    const playing = this.#playing;
+    this.#playing = null;
+    playing?.settle('interrupted');
   }
 
   /** Records the request. Never rejects, per the contract — not even with `failPlayback`. */
@@ -113,12 +146,13 @@ export class MockHal extends EventEmitter<HalEvents> implements Hal {
 
   playCue(cue: AudioCue): Promise<void> {
     if (this.failPlayback) return Promise.reject(new Error(`mock: cannot play cue ${cue}`));
+    this.#interrupt();
     this.cuesPlayed.push({ cue, at: Date.now() });
     return Promise.resolve();
   }
 
   stopPlayback(): Promise<void> {
-    // Nothing to interrupt in the mock.
+    this.#interrupt();
     return Promise.resolve();
   }
 

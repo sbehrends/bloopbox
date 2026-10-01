@@ -89,6 +89,22 @@ jobs:
           # Must land where build-sd-image.sh looks for it: <its own root>/release.
           path: box/software/release
 
+      - name: Refuse to publish a Wi-Fi passphrase
+        # CI images are published, so the build step below takes no network. A WIFI_PSK secret
+        # left over from when it did must fail loudly rather than be silently ignored, so
+        # whoever set it learns why it no longer applies.
+        env:
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PSK: ${{ secrets.WIFI_PSK }}
+        run: |
+          if [[ -n "${WIFI_PSK}" ]]; then
+            echo "::error::a WIFI_PSK secret is set, and CI images are published — delete the secret; see docs/deployment.md"
+            exit 1
+          fi
+          if [[ -n "${WIFI_SSID}" ]]; then
+            echo "::warning::the WIFI_SSID secret is no longer used by CI images and can be deleted"
+          fi
+
       - name: Install image build tools
         run: |
           sudo apt-get update -qq
@@ -103,16 +119,17 @@ jobs:
           sudo ./scripts/build-sd-image.sh \
             --work-dir /mnt/bloopbox-image \
             --output "release/$(basename "$(ls release/*.tar.gz)" .tar.gz | sed 's/-linux-arm64//')-sd.img.xz" \
-            ${WIFI_SSID:+--wifi-ssid "$WIFI_SSID"} \
-            ${WIFI_PSK:+--wifi-psk "$WIFI_PSK"} \
             ${WIFI_COUNTRY:+--wifi-country "$WIFI_COUNTRY"} \
             ${IMAGE_PASSWORD:+--password "$IMAGE_PASSWORD"}
         env:
-          # All optional. Set them as repository secrets to bake your own network and ssh
-          # password into the image; otherwise the image ships with a fillable
-          # bloopbox-wifi.txt and a generated password.
-          WIFI_SSID: ${{ secrets.WIFI_SSID }}
-          WIFI_PSK: ${{ secrets.WIFI_PSK }}
+          # Both optional. Without IMAGE_PASSWORD each device generates its own ssh password
+          # on first boot and shows it in the admin panel; with it, every card flashed from
+          # this image shares that one, which is only for debugging before the panel is up.
+          #
+          # There is deliberately no Wi-Fi network here. This image is published, and a
+          # passphrase baked into it would be readable by anyone who downloads it: a parent
+          # fills in bloopbox-wifi.txt on the boot partition, or joins through the hotspot.
+          # Bake a network in with a local build (docs/deployment.md) instead.
           WIFI_COUNTRY: ${{ secrets.WIFI_COUNTRY }}
           IMAGE_PASSWORD: ${{ secrets.IMAGE_PASSWORD }}
 
@@ -127,13 +144,9 @@ jobs:
             box/software/release/*.img.xz.sha256
           if-no-files-found: error
 
-      # Kept out of the image artifact above and never attached to a release: it holds the
-      # generated ssh password.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sd-card-credentials
-          path: box/software/release/*.credentials.txt
-          if-no-files-found: warn
+      # No credentials artifact: on a public repository every signed-in GitHub user can download
+      # a workflow's artifacts, so "kept out of the release" was never private. Nothing in the
+      # image needs one now — each device shows its own password in the admin panel.
 
   release:
     name: attach to the GitHub release
@@ -188,8 +201,8 @@ jobs:
           ```
 
           Or flash the `-sd.img.xz` for a card that needs no install step. See
-          `docs/deployment.md`. The ssh password for a CI-built image is in the
-          `sd-card-credentials` build artifact, not here.
+          `docs/deployment.md`. Each device makes its own ssh password on first
+          boot; the admin panel shows it under Advanced → SSH access.
           EOF
           )
 

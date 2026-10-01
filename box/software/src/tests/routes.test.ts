@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AudioCue } from '../audio/cues.ts';
 import { QR_LIFETIME_MS } from '../ipc/events.ts';
 import { readField, readString } from '../ipc/payload.ts';
+import { qrIdentifier } from '../server/routes.ts';
 import { netReading, startApi, type Harness } from './support/apiHarness.ts';
 
 /**
@@ -71,21 +72,35 @@ describe('GET /whatsapp', () => {
     api.whatsapp = { state: 'connected', qr: 'secret-payload' };
     expect(await (await fetch(api.url('/api/whatsapp'))).json()).toEqual({
       state: 'connected',
-      qr: null,
+      qrId: null,
       qrAgeMs: null,
       qrLifetimeMs: QR_LIFETIME_MS,
     });
   });
 
-  it('hands over the QR while pairing is pending', async () => {
+  it('names the pending code without ever handing it over', async () => {
+    /*
+     * This route is open, so it must never carry the payload: anyone on the LAN could draw it
+     * and scan it first during a re-pair. The image is `qr.svg`, behind the gate.
+     */
     api = await startApi({ configured: false });
     api.whatsapp = { state: 'awaitingPairing', qr: 'secret-payload', qrAgeMs: 3_000 };
-    expect(await (await fetch(api.url('/api/whatsapp'))).json()).toEqual({
+    const response = await fetch(api.url('/api/whatsapp'));
+    const text = await response.text();
+
+    expect(text).not.toContain('secret-payload');
+    expect(JSON.parse(text)).toEqual({
       state: 'awaitingPairing',
-      qr: 'secret-payload',
+      qrId: qrIdentifier('secret-payload'),
       qrAgeMs: 3_000,
       qrLifetimeMs: QR_LIFETIME_MS,
     });
+  });
+
+  it('gives each code its own name, so the panel can tell a rotation', () => {
+    expect(qrIdentifier('code-one')).toMatch(/^[0-9a-f]{12}$/);
+    expect(qrIdentifier('code-one')).toBe(qrIdentifier('code-one'));
+    expect(qrIdentifier('code-one')).not.toBe(qrIdentifier('code-two'));
   });
 
   it('reports the age of the code, so the panel can count down without a shared clock', async () => {
@@ -571,7 +586,8 @@ describe('POST /factory-reset', () => {
 
     const response = await fetch(api.url('/api/factory-reset'), {
       method: 'POST',
-      headers: { authorization: api.basic('hunter2') },
+      headers: { authorization: api.basic('hunter2'), 'content-type': 'application/json' },
+      body: '{}',
     });
 
     expect(response.status).toBe(200);
@@ -727,6 +743,21 @@ describe('GET /api/system', () => {
     const payload: unknown = await (await fetch(api.url('/api/system'))).json();
     expect(payload).toMatchObject({ wifi: null });
   });
+
+  it("reports the agent's view of the clock, and unknown where there is none", async () => {
+    api = await startApi({ configured: false });
+    const unknown: unknown = await (await fetch(api.url('/api/system'))).json();
+    // Present and null, not absent: the card says "unknown", never "not synced".
+    expect(unknown).toMatchObject({ timeSynced: null });
+
+    api.netState = netReading({ timeSynced: false });
+    const unsynced: unknown = await (await fetch(api.url('/api/system'))).json();
+    expect(unsynced).toMatchObject({ timeSynced: false });
+
+    api.netState = netReading({ timeSynced: true });
+    const synced: unknown = await (await fetch(api.url('/api/system'))).json();
+    expect(synced).toMatchObject({ timeSynced: true });
+  });
 });
 
 describe('POST /api/system/power', () => {
@@ -767,5 +798,48 @@ describe('POST /api/system/power', () => {
 
     const response = await send(api, 'POST', '/api/system/power', { action: 'poweroff' });
     expect(response.status).toBe(503);
+  });
+});
+
+describe('failures behind a 500', () => {
+  it('reach the log with the error, not only the panel', async () => {
+    /*
+     * The panel shows a parent one sentence. Without this the reason existed nowhere, and a box
+     * that "would not reset" could only be debugged by guessing.
+     */
+    api = await startApi({ configured: false });
+    const cause = new Error('EROFS: read-only file system');
+    vi.spyOn(api.config, 'factoryReset').mockRejectedValue(cause);
+
+    const response = await send(api, 'POST', '/api/factory-reset', {});
+    expect(response.status).toBe(500);
+    expect(api.logged).toEqual([
+      ['error', 'factory reset failed', { err: cause, route: 'POST /factory-reset' }],
+    ]);
+  });
+});
+
+describe('GET /api/system/ssh', () => {
+  it('shows the password this device generated on first boot, and forbids caching it', async () => {
+    api = await startApi({ configured: false });
+    api.sshAccess = { user: 'bloop', password: 'Xy7kQ2mN4pR8sT' };
+
+    const response = await fetch(api.url('/api/system/ssh'));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual({
+      available: true,
+      user: 'bloop',
+      password: 'Xy7kQ2mN4pR8sT',
+    });
+  });
+
+  it('reports nothing to show on a box whose login it did not make', async () => {
+    // A tarball install, or an image built with --password. Normal, not a failure.
+    api = await startApi({ configured: false });
+
+    const response = await fetch(api.url('/api/system/ssh'));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ available: false });
   });
 });

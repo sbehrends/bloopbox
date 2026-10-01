@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { probeDurationMs } from './ffmpeg.ts';
 import type { QueuedNote } from './queueManager.ts';
 import type { ButtonIndex } from '../config/schema.ts';
@@ -34,18 +34,45 @@ import type { ButtonIndex } from '../config/schema.ts';
 export const RECOVERY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
 /**
+ * What a message id may look like before it becomes part of a file name.
+ *
+ * The id is chosen by the *sender's* client — Baileys only checks that one exists — and any
+ * member of an assigned group counts as a sender. Real ids are hex or base32-ish runs, so this
+ * refuses nothing genuine; what it refuses is `/../../x`, which `join` would happily resolve to
+ * a file outside the notes directory.
+ */
+const SAFE_MESSAGE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isSafeMessageId(messageId: string): boolean {
+  return SAFE_MESSAGE_ID.test(messageId);
+}
+
+/**
  * `wa-<index>-<messageId>.ogg`.
  *
- * The index leads because it is fixed-width and the message id is not: WhatsApp ids are
- * opaque and may contain anything, so the id takes the whole remainder and cannot be confused
- * with the field before it.
+ * The index leads because it is fixed-width and the message id is not, so the id takes the whole
+ * remainder and cannot be confused with the field before it. Throws on an id that is not
+ * {@link isSafeMessageId}: a name that could leave the directory is never built at all.
  */
 export function recordingName(index: ButtonIndex, messageId: string): string {
+  if (!isSafeMessageId(messageId)) throw new Error('refusing an unsafe message id as a file name');
   return `wa-${String(index)}-${messageId}.ogg`;
 }
 
+/**
+ * Where a note for this button and message lives — the one path both daemons agree on.
+ *
+ * The hardware server compares what the bridge reports against this rather than trusting it,
+ * because it goes on to play that file and then delete it: a path taken on faith would let
+ * whatever holds the bridge token delete any file this daemon can write. `null` for an id that
+ * could never have been written.
+ */
+export function notePath(directory: string, index: ButtonIndex, messageId: string): string | null {
+  return isSafeMessageId(messageId) ? resolve(directory, recordingName(index, messageId)) : null;
+}
+
 /** Matches the above. Notes written before the index was encoded do not match, on purpose. */
-const RECORDING_PATTERN = /^wa-([0-2])-(.+)\.ogg$/;
+const RECORDING_PATTERN = /^wa-([0-2])-([A-Za-z0-9_-]{1,128})\.ogg$/;
 
 /** An explicit map rather than a cast, so the digit narrows to a real index or to nothing. */
 const INDEX_BY_DIGIT: Readonly<Record<string, ButtonIndex>> = { '0': 0, '1': 1, '2': 2 };
@@ -109,7 +136,12 @@ export async function recoverUnplayedNotes(options: RecoveryOptions): Promise<Re
     let receivedAt: number;
     try {
       const info = await stat(path);
-      if (!info.isFile()) continue;
+      /*
+       * Empty is not a note. Downloads are renamed into place only once complete and synced, so
+       * this should not happen — but a file from before that rule, or a card that lost blocks,
+       * would otherwise light a lamp for a tap that plays nothing. Left for the purge.
+       */
+      if (!info.isFile() || info.size === 0) continue;
       // mtime is when the download finished, which is when the note arrived.
       receivedAt = info.mtimeMs;
     } catch {

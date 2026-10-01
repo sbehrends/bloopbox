@@ -2,18 +2,7 @@ import { waitlist } from '@/lib/site'
 
 import styles from './WaitlistForm.module.css'
 
-/**
- * "I would rather not build it myself."
- *
- * A plain HTML form, posting to a third-party endpoint. The site is a static export, so there is
- * no Route Handler to post to and no server action to call — and a form built out of `fetch`
- * would be a form that fails silently for anyone whose JavaScript has not arrived yet.
- *
- * **The copy is load-bearing.** `website/README.md` holds the line that nothing on this site may
- * imply the device is buyable or shipping, because it is not: no kit exists, no price exists, and
- * nobody has taken an order. So this collects interest and says exactly that, twice — once in the
- * body and once in the note under the button. Do not let it drift into sounding like a pre-order.
- */
+/** Plain HTML form: the site is a static export and this works without JavaScript. Copy must never imply the device is buyable (see `website/README.md`). */
 export function WaitlistForm() {
   return (
     <section className={styles.panel} aria-labelledby="kit-title">
@@ -48,7 +37,6 @@ export function WaitlistForm() {
           />
         </div>
 
-        {/* Honeypot. A person never sees this; a bot fills it and the endpoint drops the row. */}
         <input
           className={styles.trap}
           type="text"

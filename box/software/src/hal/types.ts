@@ -69,8 +69,16 @@ export type HalCore = {
   /** Abandon a recording and delete any partial file. */
   cancelRecording(handle: RecordingHandle): Promise<void>;
 
-  /** Play an audio file to completion. Rejects if playback fails. */
-  play(path: string): Promise<void>;
+  /**
+   * Play an audio file, and say whether it was heard to the end.
+   *
+   * `'interrupted'` whenever anything stopped it early: `stopPlayback()`, a cue, or another
+   * `play()`. The caller needs the difference, because a note counts as heard — and is then
+   * deleted and reported read to its sender — only when it `'completed'`. Treating a cut-off
+   * note as played is how a second note arriving used to delete the first one unheard.
+   * Rejects if playback fails outright.
+   */
+  play(path: string): Promise<PlaybackOutcome>;
 
   /**
    * Get a file ready to play, ahead of anyone asking for it.
@@ -92,15 +100,28 @@ export type HalCore = {
    */
   release(path: string): Promise<void>;
 
-  /** Play a built-in cue to completion. */
+  /**
+   * Play a built-in cue to completion.
+   *
+   * **Interrupts whatever is playing, a voice note included** — there is one speaker and one
+   * ALSA device, and a cue waiting behind a 30-second note would arrive meaningless. The note's
+   * `play()` then resolves `'interrupted'`. So a caller must not play a cue while a note it
+   * cares about is playing; `DeviceController` holds courtesy cues back for exactly that.
+   */
   playCue(cue: AudioCue): Promise<void>;
 
-  /** Stop any in-progress playback immediately. */
+  /**
+   * Stop any in-progress playback, and resolve once the player has actually let go of the
+   * device — so whatever plays next does not find it still held.
+   */
   stopPlayback(): Promise<void>;
 
-  /** Set output volume as a percentage. Callers must clamp to the config cap first. */
+  /** Set output volume as a percentage, 0-100. The schema bounds it; there is no other cap. */
   setVolume(percent: number): Promise<void>;
 };
+
+/** How a `play()` ended — see {@link HalCore.play}. */
+export type PlaybackOutcome = 'completed' | 'interrupted';
 
 /**
  * A hardware driver: the core surface plus event subscription.

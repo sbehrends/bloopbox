@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { hashAdminPassword, tokensMatch, verifyAdminPassword } from '../server/auth.ts';
+import {
+  ADMIN_AUTH_CACHE_MAX_ENTRIES,
+  ADMIN_AUTH_CACHE_TTL_MS,
+  ADMIN_AUTH_FAILURE_BURST,
+  ADMIN_AUTH_FAILURE_REFILL_MS,
+  AdminAuthenticator,
+  hashAdminPassword,
+  tokensMatch,
+  verifyAdminPassword,
+} from '../server/auth.ts';
 import { startApi, netReading, type Harness } from './support/apiHarness.ts';
 
 /**
@@ -155,6 +164,22 @@ describe('once the device is configured', () => {
     expect(response.status).toBe(200);
   });
 
+  it('accepts a password outside ASCII when the header carries its UTF-8 bytes', async () => {
+    /*
+     * What the portal sends since it stopped using a bare `btoa`, which encodes Latin-1: an "ä"
+     * then arrived as a lone 0xE4 byte and this guard read U+FFFD, so a German parent could
+     * never pass it. The panel and the portal must both encode the way this decodes.
+     */
+    const password = 'Kätzchen€ü';
+    api = await startApi({ adminPassword: password });
+    const utf8 = `Basic ${Buffer.from(`admin:${password}`, 'utf8').toString('base64')}`;
+    const latin1 = `Basic ${Buffer.from(`admin:${password}`, 'latin1').toString('base64')}`;
+
+    const accepted = await fetch(api.url('/api/config'), { headers: { authorization: utf8 } });
+    const refused = await fetch(api.url('/api/config'), { headers: { authorization: latin1 } });
+    expect([accepted.status, refused.status]).toEqual([200, 401]);
+  });
+
   it('stands aside when configured is true but no hash was ever written', async () => {
     /*
      * An open API, and a **deliberate** one. The guard reads an empty hash as "no password
@@ -211,6 +236,8 @@ describe('the endpoints that are open by design', () => {
       { path: '/api/stats/reset', method: 'POST' },
       { path: '/api/system', method: 'GET' },
       { path: '/api/system/power', method: 'POST' },
+      // A password for the whole machine.
+      { path: '/api/system/ssh', method: 'GET' },
     ];
     const results = await Promise.all(
       guarded.map(async ({ path, method }) => {
@@ -269,5 +296,164 @@ describe('the scan list, which is gated differently', () => {
     api.netState = null;
     const response = await fetch(api.url('/api/wifi/scan'));
     expect(response.status).toBe(401);
+  });
+});
+
+describe('the verification cache and the failure budget', () => {
+  /**
+   * A clock the test moves, and a verify that counts calls instead of paying bcrypt. `hold`
+   * parks every verification until `release`, so a test can have several in flight at once.
+   */
+  function rig(): {
+    auth: AdminAuthenticator;
+    clock: { now: number };
+    calls: { count: number };
+    hold: () => void;
+    release: () => void;
+  } {
+    const clock = { now: 1_000_000 };
+    const calls = { count: 0 };
+    let gate: Promise<void> = Promise.resolve();
+    const opener: { open?: () => void } = {};
+    const auth = new AdminAuthenticator({
+      now: () => clock.now,
+      verify: async (password) => {
+        calls.count += 1;
+        await gate;
+        return password === PASSWORD;
+      },
+    });
+    return {
+      auth,
+      clock,
+      calls,
+      hold: () => {
+        gate = new Promise((resolveGate) => {
+          opener.open = resolveGate;
+        });
+      },
+      release: () => {
+        opener.open?.();
+      },
+    };
+  }
+
+  it('runs bcrypt once for a header, until the TTL runs out', async () => {
+    const { auth, clock, calls } = rig();
+    expect(await auth.check('h', PASSWORD, 'hash')).toEqual({ outcome: 'ok' });
+    clock.now += ADMIN_AUTH_CACHE_TTL_MS - 1;
+    expect(await auth.check('h', PASSWORD, 'hash')).toEqual({ outcome: 'ok' });
+    expect(calls.count).toBe(1);
+
+    clock.now += 1;
+    expect(await auth.check('h', PASSWORD, 'hash')).toEqual({ outcome: 'ok' });
+    expect(calls.count).toBe(2);
+  });
+
+  it('forgets every remembered header when the stored hash changes', async () => {
+    // A new password must not be bypassed by a browser still holding the old one.
+    const { auth, calls } = rig();
+    await auth.check('h', PASSWORD, 'old-hash');
+    await auth.check('h', PASSWORD, 'new-hash');
+    expect(calls.count).toBe(2);
+  });
+
+  it('never remembers a failure', async () => {
+    const { auth, calls } = rig();
+    await auth.check('h', 'wrong', 'hash');
+    await auth.check('h', 'wrong', 'hash');
+    expect(calls.count).toBe(2);
+  });
+
+  it('stays bounded, dropping the oldest header first', async () => {
+    const { auth, calls } = rig();
+    for (let n = 0; n <= ADMIN_AUTH_CACHE_MAX_ENTRIES; n++) {
+      await auth.check(`h${String(n)}`, PASSWORD, 'hash');
+    }
+    const before = calls.count;
+    // The newest is still remembered; the very first was evicted to make room.
+    await auth.check(`h${String(ADMIN_AUTH_CACHE_MAX_ENTRIES)}`, PASSWORD, 'hash');
+    expect(calls.count).toBe(before);
+    await auth.check('h0', PASSWORD, 'hash');
+    expect(calls.count).toBe(before + 1);
+  });
+
+  it('throttles after the burst without running bcrypt, and says how long to wait', async () => {
+    const { auth, calls } = rig();
+    for (let n = 0; n < ADMIN_AUTH_FAILURE_BURST; n++) {
+      expect(await auth.check(`g${String(n)}`, 'wrong', 'hash')).toEqual({ outcome: 'invalid' });
+    }
+    expect(await auth.check('g-next', 'wrong', 'hash')).toEqual({
+      outcome: 'throttled',
+      retryAfterMs: ADMIN_AUTH_FAILURE_REFILL_MS,
+    });
+    // The budget protects the event loop, not just the hash.
+    expect(calls.count).toBe(ADMIN_AUTH_FAILURE_BURST);
+  });
+
+  it('earns one attempt back per refill interval', async () => {
+    const { auth, clock } = rig();
+    for (let n = 0; n < ADMIN_AUTH_FAILURE_BURST; n++) await auth.check('g', 'wrong', 'hash');
+    clock.now += ADMIN_AUTH_FAILURE_REFILL_MS / 2;
+    expect(await auth.check('g', 'wrong', 'hash')).toEqual({
+      outcome: 'throttled',
+      retryAfterMs: ADMIN_AUTH_FAILURE_REFILL_MS / 2,
+    });
+    clock.now += ADMIN_AUTH_FAILURE_REFILL_MS / 2;
+    expect(await auth.check('g', 'wrong', 'hash')).toEqual({ outcome: 'invalid' });
+    expect((await auth.check('g', 'wrong', 'hash')).outcome).toBe('throttled');
+  });
+
+  it('lets a remembered browser straight through while the budget is spent', async () => {
+    // The parent's open panel must keep working while somebody on the LAN guesses.
+    const { auth } = rig();
+    await auth.check('parent', PASSWORD, 'hash');
+    for (let n = 0; n < ADMIN_AUTH_FAILURE_BURST; n++) await auth.check('guest', 'wrong', 'hash');
+    expect((await auth.check('guest', 'wrong', 'hash')).outcome).toBe('throttled');
+    expect(await auth.check('parent', PASSWORD, 'hash')).toEqual({ outcome: 'ok' });
+  });
+
+  it('does not charge a correct password against the budget', async () => {
+    const { auth } = rig();
+    for (let n = 0; n < ADMIN_AUTH_FAILURE_BURST * 3; n++) {
+      expect(await auth.check(`p${String(n)}`, PASSWORD, 'hash')).toEqual({ outcome: 'ok' });
+    }
+  });
+
+  it('shares one verification between identical headers in flight', async () => {
+    // The panel's first load fires several requests with the same credentials at once; more of
+    // them than the budget holds, which must not matter.
+    const { auth, calls, hold, release } = rig();
+    hold();
+    const results = Promise.all(
+      Array.from({ length: ADMIN_AUTH_FAILURE_BURST + 3 }, async () =>
+        auth.check('h', PASSWORD, 'hash'),
+      ),
+    );
+    release();
+    expect((await results).map((result) => result.outcome)).toEqual(
+      Array.from({ length: ADMIN_AUTH_FAILURE_BURST + 3 }, () => 'ok'),
+    );
+    expect(calls.count).toBe(1);
+  });
+});
+
+describe('the guard under a guessing attack', () => {
+  it('answers 429 with Retry-After once the budget is spent, and no password prompt', async () => {
+    api = await startApi({ adminPassword: PASSWORD });
+    for (let n = 0; n < ADMIN_AUTH_FAILURE_BURST; n++) {
+      const response = await fetch(api.url('/api/config'), {
+        headers: { authorization: api.basic(`wrong-${String(n)}`) },
+      });
+      expect(response.status).toBe(401);
+    }
+    // Even the right password waits: it is not remembered yet, so it would cost a bcrypt.
+    const throttled = await fetch(api.url('/api/config'), {
+      headers: { authorization: api.basic(PASSWORD) },
+    });
+    expect(throttled.status).toBe(429);
+    expect(Number(throttled.headers.get('retry-after'))).toBeGreaterThan(0);
+    // A challenge would make the browser prompt again, inviting another guess.
+    expect(throttled.headers.get('www-authenticate')).toBeNull();
   });
 });

@@ -1,7 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdir, rm, stat } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
-import { pipeline } from 'node:stream/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import {
@@ -10,15 +8,25 @@ import {
   fetchLatestBaileysVersion,
   makeWASocket,
   useMultiFileAuthState,
+  WAMessageStubType,
   type AuthenticationCreds,
+  type AuthenticationState,
   type ConnectionState,
+  type UserFacingSocketConfig,
   type WAMessage,
+  type WAMessageUpdate,
   type WASocket,
+  type WAVersion,
+  type proto,
 } from 'baileys';
 import type { Logger } from 'pino';
-import { RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
+import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
 import { normalisePhone, type ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
+import { downloadToFile, MAX_INBOUND_BYTES, MediaTooLargeError } from './mediaDownload.ts';
+import { extractStatusCode } from './statusCode.ts';
+
+export { extractStatusCode };
 
 /**
  * Baileys connection lifecycle (PRODUCT.md §4, Process 2).
@@ -32,8 +40,77 @@ import type { WhatsAppConnectionState } from '../ipc/events.ts';
  */
 
 /** Backoff bounds for reconnecting. A device in a cupboard must not hammer WhatsApp. */
-const RECONNECT_BASE_MS = 2_000;
-const RECONNECT_MAX_MS = 60_000;
+export const RECONNECT_BASE_MS = 2_000;
+export const RECONNECT_MAX_MS = 60_000;
+/**
+ * Each delay is moved up to this fraction either way at random.
+ *
+ * Every box on a home router loses WhatsApp at the same instant when the line drops, and without
+ * jitter they all come back on the same schedule too.
+ */
+export const RECONNECT_JITTER = 0.2;
+/**
+ * How long a connection has to stay up before the backoff forgets earlier failures.
+ *
+ * Resetting on `open` alone let anything that opens and is then thrown off — a second box
+ * running a cloned card, answered with `connectionReplaced` — reconnect every two seconds
+ * for ever, each time knocking the other one off in turn.
+ */
+export const STABLE_CONNECTION_MS = 60_000;
+/**
+ * How long to wait to learn which WhatsApp Web version is current.
+ *
+ * `fetchLatestBaileysVersion` has no timeout of its own and takes no signal, and it sits in
+ * front of every connect: an unanswered fetch would leave the box not even trying. Past this
+ * the socket is opened with the version Baileys ships with, which is what a failed fetch
+ * already did.
+ */
+export const VERSION_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Disconnect reasons that retrying cannot fix, with what the admin panel should say.
+ *
+ * - `connectionReplaced` (440): another client logged in with these same credentials. On this
+ *   device that means the card was copied into a second box, and two boxes reconnecting against
+ *   each other replace one another for ever.
+ * - `forbidden` (403): WhatsApp refused the account. Asking again every minute is how an
+ *   account that is merely restricted becomes one that is banned.
+ *
+ * Both stay down until the daemon restarts — a reboot, or saving any setting.
+ */
+const TERMINAL_REASONS: ReadonlyMap<number, string> = new Map([
+  [
+    DisconnectReason.connectionReplaced,
+    'another device took over this WhatsApp session — if this card was copied into a second box, switch that one off, then restart this one',
+  ],
+  [
+    DisconnectReason.forbidden,
+    'WhatsApp refused this account — unlink and link again, or check the account on the phone',
+  ],
+]);
+
+/**
+ * The delay before reconnect attempt `attempt` (0-based): exponential from
+ * `RECONNECT_BASE_MS`, capped at `RECONNECT_MAX_MS`, then jittered by ±`RECONNECT_JITTER`.
+ *
+ * `random` is in [0, 1), as `Math.random` returns; 0.5 is no jitter at all.
+ */
+export function reconnectDelayMs(attempt: number, random: number): number {
+  const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
+  return Math.round(base * (1 + (random * 2 - 1) * RECONNECT_JITTER));
+}
+
+/**
+ * How long Baileys may wait on one media host during an upload.
+ *
+ * Has to sit well under the hardware side's `SEND_TIMEOUT_MS` (60 s, `server/bridgeLink.ts`):
+ * past that the child has already heard the "oops", and an upload that then finishes delivers
+ * a note the box said had failed. Baileys applies this **per host** and tries every host it was
+ * given in turn — and on Node it is the socket's idle timeout, not a deadline — so two hosts
+ * stalling back to back cost twice this. Twenty seconds keeps two of them under the minute; a
+ * voice note is tens of kilobytes, so a live upload never comes near it.
+ */
+export const MEDIA_UPLOAD_TIMEOUT_MS = 20_000;
 
 /** Voice notes longer than this are almost certainly not for a toddler; skip the download. */
 const MAX_INBOUND_SECONDS = 300;
@@ -134,6 +211,53 @@ export function isPaired(
   return typeof id === 'string' && id.length > 0 && creds.account !== undefined;
 }
 
+/**
+ * The voice note a message carries, or null if it is not one.
+ *
+ * A chat with disappearing messages turned on wraps every message in `ephemeralMessage`, so
+ * reading `audioMessage` off the top level ignored every note from such a chat, in silence — and
+ * turning disappearing messages on is a privacy setting a careful parent is exactly the person to
+ * choose. That one wrapper is unwrapped here, by name.
+ *
+ * **Deliberately not `normalizeMessageContent`**, which also unwraps view-once, edits,
+ * document-with-caption and more. Every wrapper it opens is another shape of message a group
+ * member can put on a child's button, and each one should be a decision, not a side effect of a
+ * helper. View-once in particular is an open product question — a note meant to be heard once,
+ * on a box that replays until the queue drains — so it stays ignored (PENDING.md).
+ *
+ * Only a PTT counts: a music file or an audio attachment is not what this device is for.
+ */
+export function voiceNoteContent(
+  content: WAMessage['message'],
+): proto.Message.IAudioMessage | null {
+  const unwrapped = content?.ephemeralMessage?.message ?? content;
+  const audio = unwrapped?.audioMessage;
+  return audio?.ptt === true ? audio : null;
+}
+
+/**
+ * The id of the message a `messages.update` entry says was deleted for everyone, or null.
+ *
+ * How Baileys 7.0.0-rc14 reports it (`Utils/process-message.js`, the `REVOKE` protocol message):
+ * `{ key: { ...the revoker's key, id: <the deleted message's id> }, update: { message: null,
+ * messageStubType: REVOKE } }`. So `key.remoteJid` is the chat, `key.participant` whoever
+ * deleted it in a group, and `key.id` the note to take back.
+ */
+export function revokedMessageId(entry: WAMessageUpdate): string | null {
+  if (entry.update.messageStubType !== WAMessageStubType.REVOKE) return null;
+  const id = entry.key.id;
+  return typeof id === 'string' && isSafeMessageId(id) ? id : null;
+}
+
+/** A sender deleted a message for everyone. Addressed like a `VoiceNote`, for the whitelist. */
+export type Revocation = {
+  readonly messageId: string;
+  readonly chatJid: string;
+  readonly chatJidAlt: string | undefined;
+  readonly participantJid: string | undefined;
+  readonly fromMe: boolean;
+};
+
 export type GroupSummary = { readonly id: string; readonly subject: string };
 
 export type WhatsAppClientEvents = {
@@ -141,23 +265,125 @@ export type WhatsAppClientEvents = {
   status: [{ state: WhatsAppConnectionState; detail?: string; qr?: string }];
   /** A voice note arrived. Filtering happens above — this fires for every chat. */
   voiceNote: [VoiceNote];
+  /** A message was deleted for everyone. Also unfiltered — the bridge decides if it matters. */
+  revoked: [Revocation];
 };
+
+/**
+ * The part of a Baileys socket this client uses — and so all a test double has to provide.
+ *
+ * `WASocket` itself is a few hundred members; naming the dozen this file touches is what lets
+ * `src/tests/support/fakeWASocket.ts` stand in for it without a cast, and it is a list worth
+ * having anyway: anything added here is a new way this client depends on the library.
+ */
+export type ClientSocket = {
+  readonly ev: Pick<WASocket['ev'], 'on'>;
+  readonly end: WASocket['end'];
+  readonly logout: WASocket['logout'];
+  readonly sendMessage: WASocket['sendMessage'];
+  readonly readMessages: WASocket['readMessages'];
+  readonly requestPairingCode: WASocket['requestPairingCode'];
+  readonly groupFetchAllParticipating: WASocket['groupFetchAllParticipating'];
+  readonly updateMediaMessage: WASocket['updateMediaMessage'];
+  readonly signalRepository: {
+    readonly lidMapping: Pick<WASocket['signalRepository']['lidMapping'], 'getPNForLID'>;
+  };
+};
+
+export type AuthStateFactory = (
+  directory: string,
+) => Promise<{ state: AuthenticationState; saveCreds: () => Promise<void> }>;
+
+/** What the media download needs from the socket, in the shape `downloadMediaMessage` takes. */
+export type MediaDownloadContext = {
+  readonly logger: Logger;
+  readonly reuploadRequest: (message: WAMessage) => Promise<WAMessage>;
+};
+
+/** Opens a media message as a stream of decrypted bytes. */
+export type MediaDownloader = (
+  message: WAMessage,
+  context: MediaDownloadContext,
+) => Promise<Readable>;
 
 export type WhatsAppClientOptions = {
   /** Directory for Baileys' multi-file auth state. Must be on the writable volume. */
   readonly authDirectory: string;
   readonly logger: Logger;
+  /*
+   * The four ways this client reaches Baileys, injectable so the lifecycle can be tested
+   * without a WhatsApp account. Every default is the real library call; production passes none.
+   */
+  readonly socketFactory?: (config: UserFacingSocketConfig) => ClientSocket;
+  readonly authStateFactory?: AuthStateFactory;
+  readonly download?: MediaDownloader;
+  /** The protocol version to announce, or undefined for the one Baileys ships with. */
+  readonly versionProvider?: () => Promise<WAVersion | undefined>;
+  /** Injectable so a test can say how long a connection stayed up without waiting for it. */
+  readonly now?: () => number;
+  /** Injectable so a test can pin the reconnect jitter. */
+  readonly random?: () => number;
+  /** Injectable so a test can time a download out, or retry one, without waiting. */
+  readonly downloadTiming?: {
+    readonly timeoutSignal?: () => AbortSignal;
+    readonly sleep?: (ms: number) => Promise<void>;
+  };
 };
+
+const defaultDownload: MediaDownloader = (message, context) =>
+  downloadMediaMessage(message, 'stream', {}, context);
+
+const defaultVersionProvider = async (): Promise<WAVersion | undefined> =>
+  (await fetchLatestBaileysVersion()).version;
+
+/** `promise`, or `fallback` if it has not settled within `ms`. Never rejects. */
+async function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([promise.catch(() => fallback), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   readonly #authDirectory: string;
   readonly #log: Logger;
+  readonly #socketFactory: (config: UserFacingSocketConfig) => ClientSocket;
+  readonly #authStateFactory: AuthStateFactory;
+  readonly #download: MediaDownloader;
+  readonly #versionProvider: () => Promise<WAVersion | undefined>;
+  readonly #now: () => number;
+  readonly #random: () => number;
+  readonly #downloadTiming: NonNullable<WhatsAppClientOptions['downloadTiming']>;
 
-  #socket: WASocket | null = null;
+  #socket: ClientSocket | null = null;
   #reconnectAttempts = 0;
   #reconnectTimer: NodeJS.Timeout | null = null;
   #stopping = false;
   #state: WhatsAppConnectionState = 'connecting';
+  /**
+   * Bumped by everything that decides which socket should exist: each `#connect`, `stop()` and
+   * `unlink()`.
+   *
+   * `#connect` awaits three things before it has a socket to show for it, and anything can
+   * happen in between — a second click on "link", an unlink, a shutdown. Each await is followed
+   * by a check that this is still the newest decision, and a connect that has been overtaken
+   * gives up rather than opening a second socket onto the same `creds.json`.
+   */
+  #generation = 0;
+  /** When the current socket reached `open`, or null while it has not. */
+  #openedAt: number | null = null;
+  /**
+   * Bumped whenever the auth directory is deleted. A socket opened before that must not write
+   * its credentials back afterwards: `saveCreds` recreates the directory, and the next boot
+   * would restore a session WhatsApp has already been told is gone.
+   */
+  #credentialsEpoch = 0;
   /**
    * The in-flight `requestPairingCode` call, if any.
    *
@@ -173,6 +399,13 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     super();
     this.#authDirectory = options.authDirectory;
     this.#log = options.logger;
+    this.#socketFactory = options.socketFactory ?? makeWASocket;
+    this.#authStateFactory = options.authStateFactory ?? useMultiFileAuthState;
+    this.#download = options.download ?? defaultDownload;
+    this.#versionProvider = options.versionProvider ?? defaultVersionProvider;
+    this.#now = options.now ?? Date.now;
+    this.#random = options.random ?? Math.random;
+    this.#downloadTiming = options.downloadTiming ?? {};
   }
 
   get state(): WhatsAppConnectionState {
@@ -195,7 +428,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   async start(): Promise<void> {
     this.#stopping = false;
     await mkdir(this.#authDirectory, { recursive: true });
-    const { state } = await useMultiFileAuthState(this.#authDirectory);
+    const { state } = await this.#authStateFactory(this.#authDirectory);
     if (isPaired(state.creds)) {
       await this.#connect();
     } else {
@@ -211,20 +444,9 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
 
   async stop(): Promise<void> {
     this.#stopping = true;
-    if (this.#reconnectTimer) {
-      clearTimeout(this.#reconnectTimer);
-      this.#reconnectTimer = null;
-    }
-    const socket = this.#socket;
-    this.#socket = null;
-    if (socket) {
-      /*
-       * `end` closes the socket without logging out, so credentials survive a restart. It is
-       * typed as returning a promise in this version but resolves synchronously in practice;
-       * voided rather than awaited so shutdown cannot hang on a socket that is already gone.
-       */
-      void socket.end(undefined);
-    }
+    this.#generation += 1;
+    this.#clearReconnectTimer();
+    this.#endSocket();
     await Promise.resolve();
   }
 
@@ -237,14 +459,23 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
    * nothing asks Baileys for a QR, without a parent choosing a method first.
    */
   async unlink(): Promise<void> {
+    // Overtakes any connect in flight and any reconnect waiting to fire: either would otherwise
+    // open a socket onto credentials this is about to delete.
+    this.#generation += 1;
+    const generation = this.#generation;
+    this.#credentialsEpoch += 1;
+    this.#clearReconnectTimer();
     const socket = this.#socket;
     this.#socket = null;
+    this.#openedAt = null;
     try {
       await socket?.logout();
     } catch (error: unknown) {
       this.#log.warn({ err: error }, 'logout failed; clearing credentials anyway');
     }
     await rm(this.#authDirectory, { recursive: true, force: true });
+    // A parent who clicked "link" while this was logging out has already moved on from it.
+    if (generation !== this.#generation) return;
     this.#setState('notLinked', 'unlinked — choose a method in the admin panel to link again');
   }
 
@@ -254,13 +485,17 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     if (!socket || !this.connected) {
       throw new Error('WhatsApp is not connected');
     }
-    await socket.sendMessage(jid, {
-      audio: { url: path },
-      mimetype: 'audio/ogg; codecs=opus',
-      // Without ptt this arrives as a file attachment rather than a voice bubble.
-      ptt: true,
-      seconds: Math.max(1, Math.round(durationMs / 1000)),
-    });
+    await socket.sendMessage(
+      jid,
+      {
+        audio: { url: path },
+        mimetype: 'audio/ogg; codecs=opus',
+        // Without ptt this arrives as a file attachment rather than a voice bubble.
+        ptt: true,
+        seconds: Math.max(1, Math.round(durationMs / 1000)),
+      },
+      { mediaUploadTimeoutMs: MEDIA_UPLOAD_TIMEOUT_MS },
+    );
   }
 
   /** Marks messages read, so the sender sees the child heard them. */
@@ -313,19 +548,34 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
 
   /* ---- internals ---- */
 
+  /**
+   * Opens a socket, replacing any there is.
+   *
+   * The state goes to `connecting` **before** the first await, not after the last: `beginLinking`
+   * is guarded on `notLinked`, and with the state still `notLinked` across the awaits a
+   * double-click on "link" ran this twice and opened two sockets writing one `creds.json`.
+   */
   async #connect(): Promise<void> {
-    await mkdir(this.#authDirectory, { recursive: true });
-    const { state, saveCreds } = await useMultiFileAuthState(this.#authDirectory);
-    // A pinned protocol version is better than none, but a fetch failure must not block boot.
-    const version = await fetchLatestBaileysVersion()
-      .then((result) => result.version)
-      .catch(() => undefined);
+    this.#generation += 1;
+    const generation = this.#generation;
+    const current = (): boolean => generation === this.#generation;
 
+    this.#clearReconnectTimer();
+    this.#endSocket();
     this.#setState('connecting');
     // A stale lock from the superseded socket must not block pairing on the new one.
     this.#pairingCodeRequest = null;
 
-    const socket = makeWASocket({
+    await mkdir(this.#authDirectory, { recursive: true });
+    if (!current()) return;
+    const { state, saveCreds } = await this.#authStateFactory(this.#authDirectory);
+    if (!current()) return;
+    // A pinned protocol version is better than none, but neither a failed nor a hung fetch may
+    // stop the box connecting.
+    const version = await within(this.#versionProvider(), VERSION_FETCH_TIMEOUT_MS, undefined);
+    if (!current()) return;
+
+    const socket = this.#socketFactory({
       auth: state,
       // Spread rather than assigned: the config declares `version?: WAVersion`, which under
       // exactOptionalPropertyTypes will not accept an explicit undefined.
@@ -343,9 +593,17 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     });
     this.#socket = socket;
 
-    socket.ev.on('creds.update', () => {
-      void saveCreds();
-    });
+    const epoch = this.#credentialsEpoch;
+    const persist = (): void => {
+      if (epoch !== this.#credentialsEpoch) return;
+      // Not awaited — Baileys emits this mid-handshake — but never unhandled: a failed write is
+      // a pairing that may not survive the next restart, and that belongs in the log.
+      saveCreds().catch((error: unknown) => {
+        this.#log.error({ err: error }, 'could not save WhatsApp credentials');
+      });
+    };
+
+    socket.ev.on('creds.update', persist);
 
     socket.ev.on('connection.update', (update) => {
       /*
@@ -356,9 +614,16 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
        */
       if (update.connection === 'open' && !state.creds.registered) {
         state.creds.registered = true;
-        void saveCreds();
+        persist();
       }
-      this.#handleConnectionUpdate(update, socket);
+      this.#handleConnectionUpdate(update, socket, state.creds);
+    });
+
+    socket.ev.on('messages.update', (updates) => {
+      for (const entry of updates) {
+        const messageId = revokedMessageId(entry);
+        if (messageId !== null) void this.#handleRevoke(entry.key, messageId);
+      }
     });
 
     socket.ev.on('messages.upsert', ({ messages, type }) => {
@@ -370,7 +635,11 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     });
   }
 
-  #handleConnectionUpdate(update: Partial<ConnectionState>, socket: WASocket): void {
+  #handleConnectionUpdate(
+    update: Partial<ConnectionState>,
+    socket: ClientSocket,
+    creds: AuthenticationCreds,
+  ): void {
     if (this.#socket !== socket) return; // A superseded socket; ignore its events.
 
     if (update.qr) {
@@ -378,7 +647,8 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     }
 
     if (update.connection === 'open') {
-      this.#reconnectAttempts = 0;
+      // Not a reset of the backoff — see `STABLE_CONNECTION_MS`. That happens at the close.
+      this.#openedAt = this.#now();
       this.#setState('connected');
       return;
     }
@@ -387,9 +657,35 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
 
     const statusCode = extractStatusCode(update.lastDisconnect?.error);
     const loggedOut = statusCode === DisconnectReason.loggedOut;
+    const upForMs = this.#openedAt === null ? 0 : this.#now() - this.#openedAt;
 
-    this.#log.warn({ statusCode, loggedOut }, 'whatsapp connection closed');
+    this.#log.warn({ statusCode, loggedOut, upForMs }, 'whatsapp connection closed');
     this.#socket = null;
+    this.#openedAt = null;
+    if (upForMs >= STABLE_CONNECTION_MS) this.#reconnectAttempts = 0;
+
+    /*
+     * WhatsApp's "now reconnect": sent straight after a successful scan, before the new
+     * credentials have been used once. It is the pairing finishing, not a failure, so it goes
+     * first — before the unpaired check below, and without waiting out a backoff.
+     */
+    if (statusCode === DisconnectReason.restartRequired) {
+      this.#setState('connecting', describeStatus(statusCode));
+      if (!this.#stopping) this.#scheduleReconnect(true);
+      return;
+    }
+
+    /*
+     * Never paired, and closed for any other reason: nobody scanned the code. Baileys ends the
+     * socket itself once its QR refs run out, as `timedOut` (408) — which is also
+     * `connectionLost`, and so was retried, which opened a fresh socket, which started a new round
+     * of codes, for ever, with nobody at the panel to scan any of them. Back to where linking
+     * starts, and a parent picks a method again.
+     */
+    if (!isPaired(creds) && !loggedOut) {
+      this.#setState('notLinked', 'the code was not scanned in time — choose a method to link');
+      return;
+    }
 
     if (loggedOut) {
       // Credentials are dead. Clear them so a restored creds.json cannot be replayed against a
@@ -399,7 +695,15 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
         'notLinked',
         'this device was unlinked from WhatsApp — choose a method to link again',
       );
+      this.#credentialsEpoch += 1;
       void rm(this.#authDirectory, { recursive: true, force: true }).catch(() => undefined);
+      return;
+    }
+
+    const terminal = statusCode === undefined ? undefined : TERMINAL_REASONS.get(statusCode);
+    if (terminal !== undefined) {
+      this.#log.error({ statusCode }, 'not reconnecting: retrying cannot fix this');
+      this.#setState('disconnected', terminal);
       return;
     }
 
@@ -433,18 +737,45 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     }
   }
 
+  async #handleRevoke(key: WAMessageUpdate['key'], messageId: string): Promise<void> {
+    const chatJid = key.remoteJid;
+    if (!chatJid) return;
+    this.emit('revoked', {
+      messageId,
+      chatJid,
+      chatJidAlt: await this.#resolveAlt(chatJid, key.remoteJidAlt),
+      participantJid: key.participant ?? undefined,
+      fromMe: key.fromMe === true,
+    });
+  }
+
   async #handleMessage(message: WAMessage): Promise<void> {
-    const audio = message.message?.audioMessage;
-    // Only voice notes. A music file or a video note is not what this device is for.
-    if (!audio?.ptt) return;
+    const audio = voiceNoteContent(message.message);
+    if (audio === null) return;
 
     const messageId = message.key.id;
     const chatJid = message.key.remoteJid;
     if (!messageId || !chatJid) return;
+    // The sender's client picks the id and it becomes a file name, so a hostile one is dropped
+    // here rather than resolved to a path outside the notes directory.
+    if (!isSafeMessageId(messageId)) {
+      this.#log.warn({ chat: chatJid }, 'dropped a voice note with an unsafe message id');
+      return;
+    }
 
     const seconds = typeof audio.seconds === 'number' ? audio.seconds : null;
     if (seconds !== null && seconds > MAX_INBOUND_SECONDS) {
       this.#log.warn({ messageId, seconds }, 'skipping an unreasonably long voice note');
+      return;
+    }
+
+    // Refused before a byte is fetched. The count in the pipeline catches a sender that lies.
+    const declaredBytes = byteCount(audio.fileLength);
+    if (declaredBytes !== null && declaredBytes > MAX_INBOUND_BYTES) {
+      this.#log.warn(
+        { messageId, err: new MediaTooLargeError(declaredBytes) },
+        'skipping an oversized voice note',
+      );
       return;
     }
 
@@ -459,34 +790,23 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       download: async (directory: string, index: ButtonIndex) => {
         await mkdir(directory, { recursive: true });
         const path = join(directory, recordingName(index, messageId));
-        // Streamed rather than buffered: this runs on a 512MB Pi.
-        const stream = (await downloadMediaMessage(
-          message,
-          'stream',
-          {},
-          {
-            logger: this.#log.child({ lib: 'baileys-media' }),
-            reuploadRequest: (msg) => {
-              const socket = this.#socket;
-              if (!socket) throw new Error('cannot re-request media while disconnected');
-              return socket.updateMediaMessage(msg);
-            },
-          },
-        )) as Readable;
-
-        try {
-          await pipeline(stream, createWriteStream(path));
-        } catch (error: unknown) {
-          await rm(path, { force: true });
-          throw error;
-        }
-
-        const { size } = await stat(path);
-        if (size === 0) {
-          await rm(path, { force: true });
-          throw new Error('downloaded voice note was empty');
-        }
-        return { path, byteLength: size };
+        // Streamed rather than buffered: this runs on a 512MB Pi. Capped, timed out, retried
+        // and renamed into place — see `mediaDownload.ts`.
+        const byteLength = await downloadToFile({
+          path,
+          log: this.#log,
+          ...this.#downloadTiming,
+          openStream: () =>
+            this.#download(message, {
+              logger: this.#log.child({ lib: 'baileys-media' }),
+              reuploadRequest: (msg) => {
+                const socket = this.#socket;
+                if (!socket) throw new Error('cannot re-request media while disconnected');
+                return socket.updateMediaMessage(msg);
+              },
+            }),
+        });
+        return { path, byteLength };
       },
     });
   }
@@ -501,17 +821,19 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
   }
 
   /**
-   * Reconnects with exponential backoff.
+   * Reconnects with jittered exponential backoff — see `reconnectDelayMs`.
    *
-   * `immediate` is used after a logout, where the point is to produce a fresh QR promptly
-   * rather than to back off from a failing server.
+   * `immediate` is for `restartRequired`, which is WhatsApp asking for a reconnect rather than
+   * failing one. Only the first in a row is immediate: the attempt still counts, so a server
+   * that answered every connect with it would still be backed off from.
    */
   #scheduleReconnect(immediate: boolean): void {
     if (this.#reconnectTimer) return;
 
-    const delay = immediate
-      ? RECONNECT_BASE_MS
-      : Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.#reconnectAttempts);
+    const delay =
+      immediate && this.#reconnectAttempts === 0
+        ? 0
+        : reconnectDelayMs(this.#reconnectAttempts, this.#random());
     this.#reconnectAttempts = Math.min(this.#reconnectAttempts + 1, 10);
 
     this.#log.info({ delayMs: delay, attempt: this.#reconnectAttempts }, 'reconnecting');
@@ -524,15 +846,31 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     }, delay);
     this.#reconnectTimer.unref();
   }
-}
 
-/** Baileys wraps disconnect causes in a Boom error whose status code says why. */
-export function extractStatusCode(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null || !('output' in error)) return undefined;
-  const output = error.output;
-  if (typeof output !== 'object' || output === null || !('statusCode' in output)) return undefined;
-  const code = output.statusCode;
-  return typeof code === 'number' ? code : undefined;
+  #clearReconnectTimer(): void {
+    if (this.#reconnectTimer === null) return;
+    clearTimeout(this.#reconnectTimer);
+    this.#reconnectTimer = null;
+  }
+
+  /**
+   * Closes the current socket, if any, and forgets it — so its own close event, when it comes,
+   * is recognised as a superseded socket's and ignored.
+   */
+  #endSocket(): void {
+    const socket = this.#socket;
+    this.#socket = null;
+    this.#openedAt = null;
+    if (!socket) return;
+    /*
+     * `end` closes the socket without logging out, so credentials survive a restart. It is
+     * typed as returning a promise in this version but resolves synchronously in practice;
+     * not awaited so shutdown cannot hang on a socket that is already gone.
+     */
+    socket.end(undefined).catch((error: unknown) => {
+      this.#log.debug({ err: error }, 'ending a superseded socket failed');
+    });
+  }
 }
 
 function describeStatus(statusCode: number | undefined): string {
@@ -556,4 +894,11 @@ function describeStatus(statusCode: number | undefined): string {
     default:
       return statusCode === undefined ? 'unknown reason' : `status ${String(statusCode)}`;
   }
+}
+
+/** A protobuf size field as a number: `fileLength` is `number | Long`, and `Number(long)` is NaN. */
+function byteCount(value: number | { toNumber(): number } | null | undefined): number | null {
+  if (typeof value === 'number') return value;
+  if (value === null || value === undefined) return null;
+  return value.toNumber();
 }

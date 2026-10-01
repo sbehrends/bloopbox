@@ -1,5 +1,4 @@
-import { writeFile } from 'node:fs/promises';
-import { NET_REQUEST_PATH } from '../net/netState.ts';
+import { writeAgentRequest } from '../net/netState.ts';
 
 /**
  * Rebooting and shutting the box down, from a panel a parent can reach.
@@ -44,14 +43,6 @@ export async function requestPowerAction(
   action: PowerAction,
   options: { readonly path?: string } = {},
 ): Promise<boolean> {
-  try {
-    // Written whole in one call: the agent may read it at any moment, and half a document
-    // parses as nothing and is dropped.
-    await writeFile(options.path ?? NET_REQUEST_PATH, `${JSON.stringify({ action })}\n`, {
-      mode: 0o640,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  // The same writer as the network actions: atomic, and carrying the id the agent acknowledges.
+  return writeAgentRequest({ action }, options.path);
 }

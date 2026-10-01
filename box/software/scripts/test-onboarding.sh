@@ -75,6 +75,20 @@ docker run --rm \
       " "$1" "$2"
     }
     called() { grep -qF "$1" /run/fake-nm/calls.log; }
+    # How many times the agent asked nmcli for something. Read from the file, not a pipe.
+    times_called() { grep -cF "$1" /run/fake-nm/calls.log || true; }
+    acknowledged() {
+      /opt/bloopbox/node/bin/node -e "
+        const s = JSON.parse(require(\"node:fs\").readFileSync(\"/run/bloopbox-net/net-state.json\",\"utf8\"));
+        process.exit(typeof s.handledRequestId === \"string\" && s.handledRequestId.length > 0 ? 0 : 1);
+      "
+    }
+
+    # The room the fake radio finds. One neighbour has a tab in its SSID: SSIDs are arbitrary
+    # bytes chosen by strangers, and a raw control character once made the whole state file
+    # unparseable — which the daemon reads as "unknown", and unknown never raises the hotspot.
+    mkdir -p /run/fake-nm
+    printf "HomeNet:82:WPA2\nTab\tNeighbour:41:WPA2\nCafe:30:\n" > /run/fake-nm/ssids
 
     echo
     echo "--- 1. the root agent comes up and publishes a reading ---"
@@ -85,11 +99,24 @@ docker run --rm \
     await "net-state.json" test -f /run/bloopbox-net/net-state.json
     await "a reading that says the agent is alive" state_says available true
     echo "net-state.json: $(cat /run/bloopbox-net/net-state.json)"
+    # Always published, as true, false or null. A container has no timedated to ask, so null
+    # (cannot tell) is the honest answer here — and false would be a lie.
+    /opt/bloopbox/node/bin/node -e "
+      const s = JSON.parse(require(\"node:fs\").readFileSync(\"/run/bloopbox-net/net-state.json\",\"utf8\"));
+      process.exit(\"timeSynced\" in s && (s.timeSynced === null || typeof s.timeSynced === \"boolean\") ? 0 : 1);
+    " || fail "the reading carries no timeSynced"
+    echo "timeSynced is published"
 
     echo
     echo "--- 2. it scans, so the portal has something to offer ---"
     await "a scan list" bash -c "grep -q HomeNet /run/bloopbox-net/net-state.json"
     echo "scan reached the state file"
+    # Parsed, not grepped: the failure this guards against is a file that is not JSON at all.
+    /opt/bloopbox/node/bin/node -e "
+      const s = JSON.parse(require(\"node:fs\").readFileSync(\"/run/bloopbox-net/net-state.json\",\"utf8\"));
+      process.exit(s.scan.some((n) => n.ssid === \"Tab\tNeighbour\") ? 0 : 1);
+    " || fail "an SSID with a tab in it did not survive into valid JSON: $(cat /run/bloopbox-net/net-state.json)"
+    echo "an SSID with a control character is escaped, and the file still parses"
 
     echo
     echo "--- 3. ap-up raises the hotspot ---"
@@ -99,6 +126,18 @@ docker run --rm \
     called "802-11-wireless.mode ap" || fail "the AP profile was not put into ap mode"
     called "ipv4.method shared" || fail "the AP profile did not use NetworkManager shared mode (no DHCP for the phone)"
     echo "hotspot up, and asked for ap mode + shared ipv4"
+
+    echo
+    echo "--- 3b. the request runs once, and is acknowledged rather than deleted ---"
+    # On a device the agent cannot delete this file: the runtime directory of the daemon is read-only
+    # to it under ProtectSystem=strict. A request that ran again on every poll would bounce the
+    # radio every five seconds, so absence of a repeat is the thing to prove — which takes a
+    # wait of a few polls, not a condition.
+    await "an acknowledgement" acknowledged
+    sleep 3
+    [[ "$(times_called "802-11-wireless.mode ap")" == 1 ]] \
+      || fail "the agent ran the same ap-up more than once: $(times_called "802-11-wireless.mode ap") times"
+    echo "ap-up ran once; acknowledged as $(/opt/bloopbox/node/bin/node -p "JSON.parse(require(\"node:fs\").readFileSync(\"/run/bloopbox-net/net-state.json\",\"utf8\")).handledRequestId")"
 
     echo
     echo "--- 4. the daemon sees the hotspot and offers setup ---"
@@ -166,6 +205,20 @@ docker run --rm \
     await "the hotspot to stand down" state_says apActive false
     await "the device to come online" state_says online true
     echo "joined: $(cat /run/bloopbox-net/net-state.json)"
+    sleep 3
+    [[ "$(times_called "802-11-wireless.ssid HomeNet")" == 1 ]] \
+      || fail "the join ran more than once: $(times_called "802-11-wireless.ssid HomeNet") times"
+    echo "the join ran once"
+
+    echo
+    echo "--- 9. a raw 64-hex PSK reaches the profile whole ---"
+    # 8-63 characters is a passphrase; exactly 64 hex characters is the key itself. The agent
+    # used to cut every psk at 63, which turned a correct raw key into a wrong passphrase.
+    RAW_PSK="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    echo "{\"action\":\"join\",\"ssid\":\"HomeNet\",\"psk\":\"${RAW_PSK}\",\"id\":\"raw-psk-1\"}" \
+      > /run/bloopbox/net-request.json
+    await "the raw PSK to reach nmcli intact" called "wifi-sec.psk ${RAW_PSK}"
+    echo "all 64 characters arrived"
 
     kill "${SERVER_PID}" "${AGENT_PID}" 2>/dev/null || true
     wait "${SERVER_PID}" "${AGENT_PID}" 2>/dev/null || true

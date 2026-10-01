@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, rm, stat } from 'node:fs/promises';
+import { setPriority } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import type { Device, Output, Watch } from 'opengpio';
 import type { AudioCue } from '../audio/cues.ts';
@@ -11,6 +12,7 @@ import {
   toPlayableWav,
   toVoiceNote,
 } from '../audio/ffmpeg.ts';
+import { runProcess } from '../audio/process.ts';
 import { cuePath } from '../audio/soundFiles.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import type {
@@ -18,16 +20,20 @@ import type {
   Hal,
   HalEvents,
   HalOptions,
+  PlaybackOutcome,
   RecordingHandle,
   RecordingResult,
 } from './types.ts';
+import type { Logger } from 'pino';
+import { SettledLine } from './settledLine.ts';
 
 /**
  * ============================ UNVERIFIED ON HARDWARE ============================
  *
- * TODO(hardware): written against opengpio@2.0.2's published API,
- * but never run on a real Pi Zero 2 W. Work through `docs/hardware-bringup.md` before
- * trusting it. Most likely first failures:
+ * TODO(hardware): written against opengpio@2.0.2's published API. On the reference board (Pi 3B+,
+ * WM8960 HAT, three buttons, three lamps) the six lines are claimed and button 1 registers; buttons
+ * 2–3, the lamps and the Pi Zero 2 W are not yet recorded as working. Work through
+ * `docs/hardware-bringup.md` before trusting those. Most likely first failures:
  *   - LEDs inverted -> set LED_ACTIVE_HIGH=false.
  *   - Buttons read backwards or float -> the firmware pull-ups are not applied (see below).
  *   - ALSA device names differ -> set ALSA_CAPTURE_DEVICE / ALSA_PLAYBACK_DEVICE.
@@ -127,8 +133,44 @@ const ALSA_AMP_AC_MIXER_CONTROL = process.env['ALSA_AMP_AC_MIXER_CONTROL'] ?? ''
 const CAPTURE_RATE = parseRate('CAPTURE_RATE', 16_000);
 export const CAPTURE_FORMAT = { rate: CAPTURE_RATE, channels: 1, format: 'S16_LE' } as const;
 
-/** Grace period for arecord to finalise its WAV header before we SIGKILL. */
-const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
+/** Bytes in the canonical PCM WAV header `arecord -t wav` writes ahead of the samples. */
+const WAV_HEADER_BYTES = 44;
+
+/** `S16_LE`: two bytes per sample per channel. */
+const CAPTURE_BYTES_PER_SAMPLE = 2;
+
+/**
+ * How much audio a capture WAV of `sizeBytes` holds, in whole milliseconds.
+ *
+ * From the file size rather than the header's own length fields: a capture that had to be
+ * SIGKILLed never got its header finalised, but every sample it wrote is still on disk.
+ * Exported for tests.
+ */
+export function wavDurationMs(sizeBytes: number, format = CAPTURE_FORMAT): number {
+  const bytesPerSecond = format.rate * format.channels * CAPTURE_BYTES_PER_SAMPLE;
+  return Math.round((Math.max(0, sizeBytes - WAV_HEADER_BYTES) / bytesPerSecond) * 1000);
+}
+
+/** Grace period for arecord to finalise its WAV header before we SIGKILL. Exported for tests. */
+export const CAPTURE_FLUSH_TIMEOUT_MS = 2000;
+
+/**
+ * The niceness an arrival decode runs at: below the daemon, and below `arecord`.
+ *
+ * A `loudnorm` decode is the heaviest thing this box does, and on four slow cores it can starve
+ * a capture of the CPU it needs to drain the ALSA buffer — an overrun is a gap in the child's
+ * message. Nobody is waiting for an arrival decode, so it can wait for everything else.
+ */
+export const BACKGROUND_DECODE_NICENESS = 10;
+
+/** How much of arecord's stderr is kept for the log line when it exits on its own. */
+const CAPTURE_STDERR_TAIL_CHARS = 2048;
+
+/**
+ * How long a stopped aplay gets to exit before SIGKILL. It has nothing to finalise, so this only
+ * bounds how long a hung player can hold the device the next sound needs. Exported for tests.
+ */
+export const PLAYBACK_STOP_TIMEOUT_MS = 500;
 
 /**
  * The container formats `aplay` can read by itself: WAV, AU/SND and VOC. It is not a
@@ -155,15 +197,48 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   readonly #ledLines: (Output | null)[] = [null, null, null];
   readonly #buttonWatches: (Watch | null)[] = [null, null, null];
+  /** One settler per watched button: edges in, settled levels out — see `settledLine.ts`. */
+  readonly #buttonLines: (SettledLine | null)[] = [null, null, null];
 
   /** Note path -> the WAV `prepare()` decoded it into, both in the RAM disk. */
   readonly #decoded = new Map<string, string>();
   /** Serialises `prepare()`, so a boot's worth of notes is one decode at a time. */
   #prepareQueue: Promise<void> = Promise.resolve();
+  /**
+   * Note path -> settles when nothing is using its `play-<stem>.wav` any more.
+   *
+   * `prepare()` and `play()` decode a note into the **same** file, and nothing used to stop
+   * them doing it at once: a tap on a note whose arrival decode was still running started a
+   * second ffmpeg writing over the first, and one of them then deleted the file under the
+   * other's `aplay`. Whoever finds an entry here waits for it before touching that file. Never
+   * rejects.
+   */
+  readonly #decoding = new Map<string, Promise<void>>();
+  /**
+   * Notes released while their `prepare()` decode was still running. `release()` cannot remove
+   * a file that is still being written, so the decode removes its own output when it lands —
+   * otherwise the WAV of a note already heard and deleted stayed in the RAM disk.
+   */
+  readonly #releasedMidDecode = new Set<string>();
 
   #captureProcess: ChildProcess | null = null;
   #captureId: string | null = null;
+  /**
+   * Settles when {@link #captureProcess} has exited. Created at spawn, not at stop: arecord can
+   * exit on its own — the device went away, a format it refused — and a `'close'` listener
+   * attached after that has already fired waits forever. That is what used to make every
+   * commit after such an exit sit out the whole flush timeout.
+   */
+  #captureExited: Promise<void> | null = null;
+  /**
+   * Settles when the open capture has finished, so queued arrival decodes can wait for it.
+   * {@link #endCapture} is non-null exactly while a capture is open.
+   */
+  #captureEnded: Promise<void> = Promise.resolve();
+  #endCapture: (() => void) | null = null;
   #playbackProcess: ChildProcess | null = null;
+  /** Settles when {@link #playbackProcess} has exited, so a stop can wait for the device. */
+  #playbackExited: Promise<void> | null = null;
   /** Bumped by every `stopPlayback()`, so a decode still in flight knows it was cancelled. */
   #playbackEpoch = 0;
 
@@ -213,7 +288,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
        * 4ms debounce and leave the line floating. Both concerns are handled properly
        * elsewhere: pull-ups come from the firmware (`gpio=17,27,22=ip,pu` in
        * /boot/firmware/config.txt, applied by scripts/provision.sh) and debouncing is
-       * software-side in core/buttonInterpreter.ts.
+       * software-side: contact chatter is settled below (`settledLine.ts`), and press length is
+       * judged in core/buttonInterpreter.ts.
        */
       const watch = board.watch(pin, Edge.Both);
       this.#buttonWatches[index] = watch;
@@ -234,11 +310,16 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     await this.#stopCapture();
 
     // Prepared decodes are derived data, and a restart re-derives them from the notes.
-    await Promise.all([...this.#decoded.keys()].map(async (path) => this.release(path)));
+    await Promise.all(
+      [...this.#decoded.keys(), ...this.#decoding.keys()].map(async (path) => this.release(path)),
+    );
 
     // Contract: dispose leaves every LED off — before releasing the lines.
     for (const index of [0, 1, 2] as const) this.setLed(index, false);
 
+    // Settlers first, so no pending read lands on a watch that has already been stopped.
+    for (const line of this.#buttonLines) line?.stop();
+    this.#buttonLines.fill(null);
     for (const line of [...this.#ledLines, ...this.#buttonWatches]) {
       line?.stop();
     }
@@ -287,14 +368,47 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
       { stdio: ['ignore', 'ignore', 'pipe'] },
     );
 
+    let markExited: (() => void) | undefined;
+    const exited = new Promise<void>((resolve) => {
+      markExited = resolve;
+    });
+    this.#holdBackgroundDecodes();
+
+    /*
+     * Read, not just piped: an unread pipe fills and blocks the writer, and arecord reports
+     * every overrun there. Kept short, and only for the one log line below.
+     */
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString('utf8')).slice(-CAPTURE_STDERR_TAIL_CHARS);
+    });
+
     child.on('error', (error) => {
+      markExited?.();
+      if (this.#captureProcess !== child) return;
+      this.#releaseBackgroundDecodes();
       this.#captureProcess = null;
       this.#captureId = null;
+      this.#captureExited = null;
       this.emit('unavailable', { reason: `arecord failed: ${error.message}` });
+    });
+
+    child.on('close', (code, signal) => {
+      markExited?.();
+      // Still the active capture means nobody stopped it: it gave up by itself.
+      if (this.#captureProcess === child) {
+        // Nothing is capturing any more, so nothing is left to protect from a decode.
+        this.#releaseBackgroundDecodes();
+        logWarn(
+          { code, signal, stderr: stderr.trim() },
+          'arecord exited before the recording was stopped',
+        );
+      }
     });
 
     this.#captureProcess = child;
     this.#captureId = handle.id;
+    this.#captureExited = exited;
     return Promise.resolve(handle);
   }
 
@@ -309,9 +423,15 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
     const outputPath = join(this.#recordingDirectory, `${handle.id}.ogg`);
 
     try {
-      await toVoiceNote(wavPath, outputPath, this.#captureFilter);
+      /*
+       * Measured from the audio, not the clock. `Date.now() - startedAt` here would include the
+       * resume grace and — worse — the time `stopCapture` spent waiting, so a microphone that
+       * delivered nothing still reported seconds and `MIN_USABLE_AUDIO_MS` could never catch it.
+       */
+      const durationMs = wavDurationMs((await stat(wavPath)).size);
+      await toVoiceNote(wavPath, outputPath, this.#captureFilter, durationMs);
       const { size } = await stat(outputPath);
-      return { path: outputPath, durationMs: Date.now() - handle.startedAt, byteLength: size };
+      return { path: outputPath, durationMs, byteLength: size };
     } finally {
       // The intermediate WAV is several times larger than the Opus output.
       await rm(wavPath, { force: true });
@@ -333,6 +453,8 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
   async prepare(path: string): Promise<void> {
     if (APLAY_CONTAINERS.has(extname(path).toLowerCase())) return;
     if (this.#decoded.has(path)) return;
+    // Asked for again, so wanted again: a release that raced an earlier decode no longer holds.
+    this.#releasedMidDecode.delete(path);
 
     /*
      * One at a time. Boot recovery restores every unread note at once, and a dozen concurrent
@@ -345,6 +467,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   /** Drops a prepared decode. Never rejects (HAL contract). */
   async release(path: string): Promise<void> {
+    if (this.#decoding.has(path)) this.#releasedMidDecode.add(path);
     const decodedPath = this.#decoded.get(path);
     if (decodedPath === undefined) return;
     this.#decoded.delete(path);
@@ -356,13 +479,22 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
    * `APLAY_CONTAINERS`. `prepare()` will usually have done that already; when it has not, the
    * decode happens here and the file is cleaned up straight after.
    */
-  async play(path: string): Promise<void> {
+  async play(path: string): Promise<PlaybackOutcome> {
     await this.stopPlayback();
 
     if (APLAY_CONTAINERS.has(extname(path).toLowerCase())) {
-      await this.#spawnPlayback(path);
-      return;
+      return this.#spawnPlayback(path);
     }
+
+    const epoch = this.#playbackEpoch;
+
+    /*
+     * A decode already writing this note's WAV finishes first. Usually that is `prepare()`,
+     * still running because the tap came soon after the note arrived — and then waiting for it
+     * is also the fastest way to sound, since it is already partway through.
+     */
+    await this.#fileFree(path);
+    if (epoch !== this.#playbackEpoch) return 'interrupted';
 
     /*
      * Checked on disk, not just in the map: these live in a RAM disk the purge also sweeps,
@@ -370,8 +502,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
      */
     const prepared = this.#decoded.get(path);
     if (prepared !== undefined && (await exists(prepared))) {
-      await this.#spawnPlayback(prepared);
-      return;
+      return this.#spawnPlayback(prepared);
     }
     this.#decoded.delete(path);
 
@@ -382,37 +513,60 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
      * an unread message — and `audio/purge.ts` already sweeps `.wav` here.
      */
     const decodedPath = this.#decodedPath(path);
-    const epoch = this.#playbackEpoch;
+    // Held from the decode until the file is gone, so no prepare() writes it in between.
+    const done = this.#claimFile(path);
     try {
       await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter);
       /*
        * A `stopPlayback()` that lands mid-decode has no process to kill, so it is honoured
        * here instead. Without this, a button pressed to interrupt the queue would start the
-       * note playing a moment *after* the microphone opened.
+       * note playing a moment *after* the microphone opened. And it is an interruption, not a
+       * success: the note was never heard, so it must not be counted as played.
        */
-      if (epoch === this.#playbackEpoch) await this.#spawnPlayback(decodedPath);
+      if (epoch !== this.#playbackEpoch) return 'interrupted';
+      return await this.#spawnPlayback(decodedPath);
     } finally {
-      await rm(decodedPath, { force: true });
+      await rm(decodedPath, { force: true }).finally(done);
     }
   }
 
   async playCue(cue: AudioCue): Promise<void> {
-    // Cues are short; letting them interrupt each other beats queueing them.
-    // Always WAV (scripts/generate-sounds.ts), so they never need decoding.
+    // Cues are short; letting them interrupt each other beats queueing them. That includes a
+    // note — see the contract in types.ts. Always WAV (scripts/generate-sounds.ts), so they
+    // never need decoding.
     await this.stopPlayback();
     await this.#spawnPlayback(cuePath(cue));
   }
 
+  /**
+   * Stops the player and waits until it has exited.
+   *
+   * Waiting is the point. The device is `plughw`, which only one process can open, so spawning
+   * the next `aplay` while the last is still dying makes the new one fail with "device busy" —
+   * and a failed note used to be counted as played and deleted. SIGKILL if it will not go.
+   */
   async stopPlayback(): Promise<void> {
     this.#playbackEpoch += 1;
     const child = this.#playbackProcess;
-    if (!child) return;
+    const exited = this.#playbackExited;
     this.#playbackProcess = null;
+    this.#playbackExited = null;
+    if (!child || !exited) return;
+
     child.kill('SIGTERM');
-    await Promise.resolve();
+    let timer: NodeJS.Timeout | undefined;
+    const escalated = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve();
+      }, PLAYBACK_STOP_TIMEOUT_MS);
+      timer.unref();
+    });
+    await Promise.race([exited, escalated]);
+    clearTimeout(timer);
   }
 
-  /** Sets the ALSA mixer volume. Callers must clamp to the config cap first. */
+  /** Sets the ALSA mixer volume, 0-100. The schema bounds it; there is no other cap. */
   async setVolume(percent: number): Promise<void> {
     this.#volumePercent = percent;
     await runQuiet('amixer', ['-M', 'sset', ALSA_MIXER_CONTROL, `${percent}%`]);
@@ -420,65 +574,125 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   /* ---- internals ---- */
 
+  /**
+   * Reports settled presses only. Every edge restarts the button's settle timer; when the line has
+   * been quiet for `BUTTON_SETTLE_MS` its level is read afresh (`watch.value` is a live
+   * `get_value()`, not the last event) and a change, if any, becomes one `buttonDown` or
+   * `buttonUp`. The switches bounce hard and out of order — the figures are in `settledLine.ts`.
+   */
   #attachButton(watch: Watch, index: ButtonIndex): void {
+    const released = BUTTON_ACTIVE_LOW;
+    let initial = released;
+    try {
+      initial = watch.value;
+    } catch {
+      // Unreadable at start: assume released, the state a pull-up leaves an untouched button in.
+    }
+    const line = new SettledLine({
+      initial,
+      read: () => watch.value,
+      onChange: (value) => {
+        const pressed = BUTTON_ACTIVE_LOW ? !value : value;
+        this.emit(pressed ? 'buttonDown' : 'buttonUp', { index });
+      },
+    });
+    this.#buttonLines[index] = line;
     watch.on('change', (value: boolean) => {
-      const pressed = BUTTON_ACTIVE_LOW ? !value : value;
-      this.emit(pressed ? 'buttonDown' : 'buttonUp', { index });
+      line.edge(value);
     });
   }
 
   /** SIGTERM first so arecord writes a valid WAV header; SIGKILL only as a fallback. */
   async #stopCapture(): Promise<void> {
     const child = this.#captureProcess;
+    const exited = this.#captureExited;
     this.#captureProcess = null;
     this.#captureId = null;
-    if (!child) return;
+    this.#captureExited = null;
+    if (!child || !exited) return;
+    try {
+      await this.#endCaptureProcess(child, exited);
+    } finally {
+      this.#releaseBackgroundDecodes();
+    }
+  }
 
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = (): void => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
+  async #endCaptureProcess(child: ChildProcess, exited: Promise<void>): Promise<void> {
+    // Already gone by itself: nothing to signal, and the WAV is whatever it managed to write.
+    if (child.exitCode !== null || child.signalCode !== null) {
+      await exited;
+      return;
+    }
 
-      const timer = setTimeout(() => {
+    child.kill('SIGTERM');
+    let timer: NodeJS.Timeout | undefined;
+    const escalated = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
         child.kill('SIGKILL');
-        finish();
+        resolve();
       }, CAPTURE_FLUSH_TIMEOUT_MS);
       timer.unref();
+    });
+    await Promise.race([exited, escalated]);
+    clearTimeout(timer);
+  }
 
-      child.once('close', () => {
-        clearTimeout(timer);
-        finish();
-      });
-
-      child.kill('SIGTERM');
+  /** Called as a capture opens: arrival decodes that have not started yet wait for it to end. */
+  #holdBackgroundDecodes(): void {
+    if (this.#endCapture) return;
+    this.#captureEnded = new Promise<void>((resolve) => {
+      this.#endCapture = resolve;
     });
   }
 
-  async #spawnPlayback(path: string): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
+  #releaseBackgroundDecodes(): void {
+    const end = this.#endCapture;
+    this.#endCapture = null;
+    end?.();
+  }
+
+  async #spawnPlayback(path: string): Promise<PlaybackOutcome> {
+    const child = spawn('aplay', ['-D', ALSA_PLAYBACK_DEVICE, '-q', path], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let markExited: (() => void) | undefined;
+    const exited = new Promise<void>((resolve) => {
+      markExited = resolve;
+    });
+    this.#playbackProcess = child;
+    this.#playbackExited = exited;
+
+    /*
+     * Only ever clears its *own* child. The old code nulled the field unconditionally, so a
+     * note killed by a cue closed a moment after the cue's aplay had been spawned and wiped the
+     * reference to it — the next stop then killed nothing, and the device stayed busy.
+     */
+    const forget = (): void => {
+      if (this.#playbackProcess === child) {
+        this.#playbackProcess = null;
+        this.#playbackExited = null;
+      }
+      markExited?.();
+    };
+
+    return new Promise<PlaybackOutcome>((resolve, reject) => {
       let settled = false;
-      const child = spawn('aplay', ['-D', ALSA_PLAYBACK_DEVICE, '-q', path], {
-        stdio: ['ignore', 'ignore', 'pipe'],
-      });
-      this.#playbackProcess = child;
 
       child.on('error', (error) => {
+        forget();
         if (settled) return;
         settled = true;
-        this.#playbackProcess = null;
         reject(new Error(`aplay failed: ${error.message}`));
       });
 
       child.on('close', (code, signal) => {
+        forget();
         if (settled) return;
         settled = true;
-        this.#playbackProcess = null;
-        // A deliberate stopPlayback() arrives as a signal, which is not a failure.
-        if (code === 0 || signal !== null) resolve();
-        else reject(new Error(`aplay exited with code ${code}`));
+        // A stop arrives as a signal: not a failure, but not heard to the end either.
+        if (signal !== null) resolve('interrupted');
+        else if (code === 0) resolve('completed');
+        else reject(new Error(`aplay exited with code ${String(code)}`));
       });
     });
   }
@@ -533,22 +747,76 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
 
   /** One `prepare()`'s worth of work. Never throws: it is the tail of a shared chain. */
   async #decodeAhead(path: string): Promise<void> {
+    /*
+     * Not beside an open microphone — see `BACKGROUND_DECODE_NICENESS`. A loop, because the
+     * next take can open before this wakes. One already running when a capture opens carries
+     * on at its lowered priority; killing it would only mean doing it again.
+     */
+    while (this.#endCapture) await this.#captureEnded;
+    // A `play()` decoding on demand holds the file; its copy is temporary, so this one is not.
+    await this.#fileFree(path);
     // Re-checked here, not only in `prepare()`: two calls for the same note can queue before
     // either has run.
     if (this.#decoded.has(path)) return;
+    if (this.#releasedMidDecode.delete(path)) return;
 
     const decodedPath = this.#decodedPath(path);
+    const done = this.#claimFile(path);
     try {
-      await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter);
+      await toPlayableWav(path, decodedPath, PLAYBACK_DECODING, this.#playbackFilter, {
+        onSpawn: lowerPriority,
+      });
+      if (this.#releasedMidDecode.delete(path)) {
+        // The note was heard and deleted while this ran; nothing is left to play it for.
+        await rm(decodedPath, { force: true }).catch(() => undefined);
+        return;
+      }
       this.#decoded.set(path, decodedPath);
     } catch {
       // `play()` falls back to decoding on demand, exactly as it did before.
       await rm(decodedPath, { force: true }).catch(() => undefined);
+    } finally {
+      done();
     }
+  }
+
+  /** Waits until nothing is writing or playing a temporary copy of this note's WAV. */
+  async #fileFree(path: string): Promise<void> {
+    // A loop, not one await: whoever was waiting alongside may have claimed it first.
+    for (let busy = this.#decoding.get(path); busy; busy = this.#decoding.get(path)) {
+      await busy;
+    }
+  }
+
+  /** Marks this note's WAV as in use. Call the result exactly once, when finished with it. */
+  #claimFile(path: string): () => void {
+    let free: (() => void) | undefined;
+    const busy = new Promise<void>((resolve) => {
+      free = resolve;
+    });
+    this.#decoding.set(path, busy);
+    return () => {
+      if (this.#decoding.get(path) === busy) this.#decoding.delete(path);
+      free?.();
+    };
   }
 
   #decodedPath(path: string): string {
     return join(this.#recordingDirectory, `play-${stem(path)}.wav`);
+  }
+}
+
+/**
+ * Drops a background child to {@link BACKGROUND_DECODE_NICENESS}. Best effort: raising niceness
+ * needs no privilege, but a child that has already exited has no pid to renice, and failing to
+ * lower a priority is no reason to fail the decode.
+ */
+function lowerPriority(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  try {
+    setPriority(child.pid, BACKGROUND_DECODE_NICENESS);
+  } catch {
+    // Already gone, or a platform that refuses; the decode runs either way.
   }
 }
 
@@ -567,13 +835,52 @@ function stem(path: string): string {
   return basename(path, extname(path));
 }
 
-/** Runs a command, ignoring failure. Mixer controls differ across audio adapters. */
+/**
+ * How long one `amixer` call may take. It writes a register and exits in milliseconds; one
+ * that has not finished in five seconds is stuck on the card, and `init()` awaits these.
+ */
+export const AMIXER_TIMEOUT_MS = 5000;
+
+/**
+ * Runs a mixer command whose failure is not fatal. Mixer controls differ across audio adapters,
+ * so a name this card lacks is a supported configuration, not an error.
+ *
+ * Non-fatal is not the same as silent. This used to discard stderr, which is why naming a
+ * control the card does not have — `Master` on the WM8960, which has none — logged nothing at
+ * all while the volume quietly stayed wherever the card powered up.
+ */
 async function runQuiet(command: string, args: readonly string[]): Promise<void> {
-  await new Promise<void>((resolve) => {
-    const child = spawn(command, [...args], { stdio: 'ignore' });
-    child.on('error', () => resolve());
-    child.on('close', () => resolve());
-  });
+  try {
+    await runProcess({ command, args, timeoutMs: AMIXER_TIMEOUT_MS });
+  } catch (error: unknown) {
+    const log = await halLogger();
+    log.warn(
+      { command, args, err: error instanceof Error ? error.message : String(error) },
+      'mixer command failed; continuing without it',
+    );
+  }
+}
+
+let cachedLogger: Logger | undefined;
+
+/** Fire-and-forget warning, for event handlers that cannot await. Never rejects. */
+function logWarn(detail: object, message: string): void {
+  halLogger().then(
+    (log) => log.warn(detail, message),
+    () => undefined,
+  );
+}
+
+/**
+ * The driver's logger, loaded on first use rather than at import. Importing the logger starts
+ * pino's transport, and this module is imported — sometimes repeatedly, under
+ * `vi.resetModules()` — by tests that never log anything.
+ */
+async function halLogger(): Promise<Logger> {
+  if (cachedLogger) return cachedLogger;
+  const { childLogger } = await import('../logger.ts');
+  cachedLogger = childLogger('hal');
+  return cachedLogger;
 }
 
 /**

@@ -4,10 +4,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 
 import styles from './PrintPrepTool.module.css'
 
-// Physical spec of the button cutouts (see hardware docs): 29mm circles, cut from a single
-// 118 x 32mm block. On screen each slot's circle guide sits CIRCLE_GAP_MM apart, but the
-// printed block reserves each photo an equal third (BLOCK_WIDTH_MM / 3, clipped) so the 3
-// photos can never overlap regardless of how they're zoomed or panned.
+// 29 mm button cutouts in a 118 x 32 mm block; each photo is clipped to an equal third.
 const CIRCLE_DIAMETER_MM = 29
 const CIRCLE_GAP_MM = 42
 const BLOCK_WIDTH_MM = 118
@@ -16,9 +13,6 @@ const THIRD_WIDTH_MM = BLOCK_WIDTH_MM / 3
 
 const SLOT_LABELS = ['Left button', 'Middle button', 'Right button'] as const
 
-// The three channel colours, left to right (see box/software/public/shared/tokens.css
-// --ch-1/2/3 and docs/BRAND.md) — the guide is drawn in each button's own colour so it also
-// tells you which cutout is which.
 const SLOT_COLORS = ['#f7b733', '#ff6f61', '#00a7e1'] as const
 
 type Slot = {
@@ -119,7 +113,6 @@ export function PrintPrepTool() {
         </button>
       </div>
 
-      {/* Rendered again, outside the screen-only editor chrome, so @media print can show only this. */}
       <div className={styles.printOnly}>
         <PrintSheet slots={slots} />
       </div>
@@ -163,8 +156,6 @@ function SlotEditor({
       const drag = dragState.current
       if (!drag) return
       const box = event.currentTarget.getBoundingClientRect()
-      // Convert screen-pixel drag distance to percent of the circle's own box, then apply it
-      // as percent-of-image-box movement (matches how offsetX/Y are consumed in the transform).
       const dxPercent = ((event.clientX - drag.startX) / box.width) * 100
       const dyPercent = ((event.clientY - drag.startY) / box.height) * 100
       onChange({
@@ -227,10 +218,7 @@ function SlotEditor({
 }
 
 function imageStyle(slot: Slot): React.CSSProperties {
-  // Cover a square box at scale=1: the shorter natural dimension matches the box, the longer
-  // one overflows. Using height/width:auto lets the browser preserve intrinsic aspect ratio,
-  // so this needs no pixel math — it holds identically for the small editor circle and the
-  // true-size mm circle at print time.
+  // Cover-fit a square box; height/width:auto keeps the aspect ratio with no pixel math.
   const base =
     slot.aspect >= 1 ? { height: '100%', width: 'auto' } : { width: '100%', height: 'auto' }
   return {
@@ -241,15 +229,9 @@ function imageStyle(slot: Slot): React.CSSProperties {
 
 function PrintSheet({ slots }: { slots: Slot[] }) {
   return (
-    // The block guide: the whole 118 x 32mm piece gets cut from the sheet first. Each photo is
-    // confined (clipped) to its own equal third, so no amount of zoom/pan can make two photos
-    // overlap — the tradeoff for that hard guarantee is the photo no longer bleeds toward its
-    // neighbour the way it briefly did.
     <div className={styles.block} style={{ width: `${BLOCK_WIDTH_MM}mm`, height: `${BLOCK_HEIGHT_MM}mm` }}>
       {slots.map((slot, index) => (
         <div key={index} className={styles.printColumn} style={{ width: `${THIRD_WIDTH_MM}mm` }}>
-          {/* The 29mm frame is the same reference box imageStyle() cover-fits against, centred
-              in its third for framing — the circle drawn on it is a screen-only guide. */}
           <div
             className={styles.printFrame}
             style={{ width: `${CIRCLE_DIAMETER_MM}mm`, height: `${CIRCLE_DIAMETER_MM}mm` }}

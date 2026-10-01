@@ -327,6 +327,20 @@ Scope this one narrowly: it must forget Wi-Fi only. Anything that also touches c
 password or WhatsApp pairing is the factory-reset item below, and conflating the two means a parent
 who only wanted to change routers loses the whole device's setup.
 
+### A factory reset does not change the ssh password
+
+Added 2026-09-23 with the per-device ssh password (`docs/deployment.md` § The ssh password). The
+password lives in `/data/ssh-password` and in `/etc/shadow`, and the factory reset touches neither,
+so a box handed to a new family still accepts the old owner's ssh login, and the new owner's panel
+shows them the same password the old owner saw.
+
+The fix is a `rotate-ssh-password` action for the root agent — the daemon cannot run `chpasswd`,
+and must not be able to — which re-runs `deploy/ssh-password.sh` with a fresh marker. The factory
+reset would then ask for it alongside `forget`, and the panel could offer it on its own as
+"generate a new password". Deliberately not done in the same change: the agent's request channel
+has the open `ReadWritePaths` question in `docs/review-2026-09.md` (0.8), and a new root action
+should not be added on top of a channel that may be replaying its requests.
+
 ### A factory-reset control that wipes all user configuration
 
 Requested 2026-08-10, alongside the Wi-Fi-forget item above — related, but a different blast
@@ -412,9 +426,9 @@ device the admin guard is already standing aside (by design — onboarding has t
 first password), so anyone in radio range can complete onboarding. The window is short, the device
 holds nothing yet, and hardening is deferred. If it needs hardening later, the answer is physical
 presence — require a button press within N seconds to accept `POST /api/onboard` and
-`POST /api/wifi/join` — not a shared secret. Note that path depends on the buttons, which is the
-one subsystem never run on hardware, so it should not gate setup until bring-up proves a press
-registers.
+`POST /api/wifi/join` — not a shared secret. Note that path depends on the buttons, and only button 1 on the
+3B+ is recorded as registering a press; it should not gate setup until every button on every board
+it would ship on has proven the same.
 
 _The portal is its own UI._ **Built** — `public/portal/`, a third Vite entry: pick a network →
 passphrase → admin password → "joining". Not the admin panel: iOS/Android captive browsers are
@@ -567,13 +581,15 @@ argument yet for doing the subsetted WOFF2 work above, since the reference now e
 
 ### Coverage still fails its own thresholds
 
-`npm run test:coverage` reports 77% statements / 68% branches against declared thresholds of 80,
+`npm run test:coverage` reports 87% statements / 79% branches against declared thresholds of 80,
 and `npm run check` does not run it. What is left, in order of size:
 
-- **`src/whatsapp/` at 24%** — the Baileys client. The largest hole by far, and the hardest to
-  test honestly: most of it is an unofficial API surface that can only be exercised against a real
-  account. `whitelist.ts` (the safety boundary) is already well covered; what is not is the media
-  download, the reconnect ladder and the send path.
+- **`src/whatsapp/` at 86% / 77%** (from 58% / 49% on 2026-09-23). Baileys is injected into
+  `WhatsAppClient` and `tests/support/fakeWASocket.ts` drives the reconnect ladder, QR
+  exhaustion, the unlink race, the ephemeral unwrap and the download caps. What is left in
+  `client.ts` is mostly pairing-code and group-listing glue and LID resolution. The call site that
+  enforces *whitelist before download* is still in `src/processes/whatsapp-bridge.ts`, which is
+  excluded from coverage — moving it into `createBridge()` is review Phase 2F.
 - **`src/server/simulatorTransport.ts`** — no tests, and **deliberately not getting any**. It is
   the browser end of a debugging tool: it never runs on a device, and when it breaks the person
   looking at it is the one who broke it. `bridgeLink.test.ts` is the template if that ever stops
@@ -821,7 +837,130 @@ knowing more generally: the tripwire's "this bit three separate checks during br
 suggests a loud failure, but the dangerous version is this one — silent, passing, and waiting on
 a payload size.
 
+### A raw 64-hex Wi-Fi key gets through the agent, and nothing else lets it through yet
+
+Found 2026-09-24 (review Phase 1, Deploy). WPA2 takes either an 8-63 character passphrase or the
+64-hex-character key itself. `deploy/net-agent.sh` used to cut every `psk` at 63, turning a correct
+raw key into a wrong passphrase; it now passes exactly 64 hex characters through whole, and
+`scripts/test-onboarding.sh` step 9 proves it. But everything upstream still caps at 63 —
+`POST /api/wifi/join` in `src/server/routes.ts`, `wifiSchema.password` in `src/config/schema.ts`
+(so `wifi-apply.sh` never sees one either) and both `maxlength="63"` inputs in the portal and the
+admin panel — so today a raw key reaches the agent only in a hand-written request. Allowing it end to
+end is four small edits (accept `^[0-9A-Fa-f]{64}$` beside `.max(63)`), left for whoever next
+touches the join route rather than done blind across files another change is editing.
+
+### What quiet hours should do on a clock that has not synced — an open product decision
+
+A Pi has no real-time clock. Until NTP answers, it runs on the time its last shutdown saved, so a
+box unplugged overnight and plugged back in at 07:30 believes it is still 20:15, and quiet hours
+(`docs/PRODUCT.md` § Silence and quiet hours) keep it silent — or the reverse, audible at bedtime.
+The purge TTL and debug mode's deadline read the same clock. Since 2026-09-24 the root agent
+publishes `timeSynced` (`true` / `false` / `null` for cannot-tell) in `net-state.json`, `netState.ts`
+parses it, and the health card and `bloopbox-doctor` show it — **but nothing acts on it**, on
+purpose. The review (2026-09, Phase 1) proposed "treat quiet hours as unknown until synced", and
+"unknown" has no obvious meaning for a toddler's box: audible risks waking a sleeping child at
+night, silent risks a morning where Grandma's note never plays, and a box with no internet at all
+may never sync. Decide which failure is worse, and whether a box that has *ever* synced this boot
+(timesyncd keeps the clock running once set) should count, before writing code. Until then quiet
+hours behave exactly as before.
+
+### The units' `MemoryMax` values add up to more than the board has
+
+`MemoryMax` is 192M (hardware) + 288M (bridge) + 48M (net agent) + 48M (debug sampler) = 576M, on a
+Pi Zero 2 W with 512 MB — before the kernel, NetworkManager, journald and the page cache take theirs.
+So the caps cannot all be reached at once, and a real system-wide out-of-memory is possible below
+every one of them. Since 2026-09-24 the units say who dies first when that happens
+(`OOMScoreAdjust=-500` on the hardware unit, `+300` on the bridge — `docs/deployment.md` § The
+systemd units), but the values themselves are **unchanged on purpose**: they are guesses
+(`hardware-bringup.md` says so), and lowering them without a measurement would trade an unlikely
+OOM for a likely one. Measure first — debug mode's sampler records `memHardware` and `memWhatsapp`
+every 10 s, and the peak across a WhatsApp pairing plus a few inbound notes is the number to size
+from. Needs the memory cgroup controller actually on (`grep -o cgroup_enable=memory /proc/cmdline`),
+or none of this is enforced at all.
+
+### No liveness: a wedged daemon stays "active" forever
+
+Deliberately **not** done blind (review 2026-09, Phase 1, Deploy): switching a unit to
+`Type=notify` on a device that has never booted it risks a unit that never becomes active at all —
+if `READY=1` never arrives, systemd kills it at `TimeoutStartSec` and restarts it, forever. Today a
+daemon whose event loop is stuck (a sync loop, a wedged native call) keeps its unit `active`, the
+buttons dark, and nothing notices. `RuntimeWatchdogSec=15s` in `system.conf.d` covers a wedged
+kernel, not a wedged process.
+
+The design, for hardware bring-up (gate 1, once the plain units are proven):
+
+- **`Type=notify`, `NotifyAccess=all`, `WatchdogSec=30`** on `bloopbox-hardware` (and later the
+  bridge). `all` rather than `main` because of how the message is sent — next point.
+- **Sending it from Node with no native addon.** Node's `dgram` has no `AF_UNIX` datagram socket,
+  and every npm `sd-notify` is a native module, which this project avoids for anything that is not
+  opengpio. So spawn systemd's own `systemd-notify` (present on Trixie, 257):
+  `execFile('systemd-notify', ['--ready'])` and `execFile('systemd-notify', ['WATCHDOG=1'])`. The
+  child is not the main PID, hence `NotifyAccess=all`. 257's `systemd-notify` waits for the manager
+  to process the message by default (its `--help` offers `--no-block` to opt out), which is what
+  closes the old race where a short-lived sender exited before systemd could attribute it to the
+  unit — confirm that on the device, it is the assumption the whole design rests on. Guard every call on
+  `process.env.NOTIFY_SOCKET` so a dev machine and `npm run dev:hw` never spawn anything.
+- **`READY=1` after the HAL is initialised** and the HTTP server is listening — not at process
+  start — so "active" finally means "buttons answer".
+- **`WATCHDOG=1` from the event loop** on a `setInterval` of `WatchdogSec / 2` (read
+  `WATCHDOG_USEC` rather than hard-coding it), `unref()`'d. A timer is exactly the right probe: if it
+  cannot fire, the loop that times button presses cannot either. One spawn per 15 s is noise on this
+  board.
+- **Also wanted from it, not available on this OS:** `RESTART_RESET=1`, which would let a daemon that
+  has been healthy a while reset the `RestartSteps` ladder, so that settings saves late in a boot stop
+  paying the 5 s cap. It is newer than Trixie's systemd 257 — checked 2026-09-24: no
+  `RESTART_RESET` anywhere in 257.13's binaries.
+- **Verify on the device before trusting it:** `systemctl show bloopbox-hardware -p WatchdogUSec
+  -p NotifyAccess`, then `kill -STOP` the node process and watch systemd kill and restart it within
+  ~30 s (`journalctl -u bloopbox-hardware` shows `Watchdog timeout`).
+
 ## Verification gaps
+
+### Bench session 2026-09-30 — what the reference board proved, and two new findings
+
+A fresh card built with `--audio-hat wm8960` (three buttons, three lamps) on the Pi 3B+, onboarded
+through the setup hotspot, WhatsApp linked, button 3 assigned to a group, debug mode on.
+
+**Proven on hardware:** all three buttons register; all three lamps light, with correct polarity,
+yellow / coral / teal left to right (the setup double-pulse, the WhatsApp-error pair, the silent
+chase, a recording held solid, the sent flashes, an unread blink); the lockout (button 1 did nothing
+while button 3 was recording); the silent chord both ways; a ~5 s hold arriving as a ~4 s note
+(`sentMs: 4128`, the WAV-derived duration — not yet cross-checked with `ffprobe`); a short hold
+refused with the "oops"; the note-loss fix and the speaker-test interruption (entry below); the
+restart policy (`StartLimitIntervalUSec=0`, backoff 5/5/3 steps, caps 5 s / 1 min / 15 s), OOM
+scores (−500 / 300) and the journal drop-ins — **Pi OS ships
+`/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf`**, which sorts before both of ours,
+so `50-bloopbox` and debug mode's `90-` both apply as intended; `timeSynced: true` within a minute.
+Doctor: all green except the two known `Name=Value` false failures (entry above).
+
+**Finding 1 — the switches bounce hard. Fixed the same day, needs one bench pass.** Of 75 edge bursts
+in the session, 42 carried bounce: up to **12 edges within 15 ms** (median burst 1 ms), and **17 bursts
+began with an `up`**. Reading opengpio's native code afterwards corrected the first guess at why: the
+addon reports genuine kernel edge events with their type, so a burst opening with the "wrong" edge is
+simply the order the contact chattered in, not a stale level read. The interpreter coped every time
+(no stuck press, no ghost take), but by tolerating repeats, with the watchdog behind it, not by
+design. **Now settled in the HAL** (`hal/settledLine.ts`): every edge restarts a 20 ms quiet window
+(`BUTTON_SETTLE_MS`), and when it expires the line's level is read with `watch.value` — a live
+`get_value()` in the addon — and only a changed level is emitted. Covered by `settledLine.test.ts`
+and `gpioButtons.test.ts`, which drives the real driver's `init()` against a fake board. **Confirmed on
+the box the same evening** (installed as an in-place upgrade, `ff2630f`): a 3 s hold on button 1
+settled as one down and one up **2904 ms** apart, three taps on button 2 as three presses of 316,
+308 and 278 ms, nothing unpaired, and the extra 20 ms is not noticeable in use.
+
+**Finding 2 — a button with no contact recorded anyway. Fixed the same day.** Holding button 1 or 2
+(no contact assigned) bipped, opened the microphone, recorded, encoded, and only then failed in the
+bridge with `no contact assigned to that button` — three `device fault` `send` lines — before the
+"oops". It now refuses at `recordThresholdMs` like read-only, with `recordBlocked` reason
+`unassigned`, and never opens the microphone (`docs/PRODUCT.md` § A button with no contact).
+**Confirmed on the box:** holding unassigned button 1 for 3 s gave the "oops" at the bip moment, with
+no bip before it, and left no `device fault` line; a send on button 3 still went through.
+
+**Still open from the plan:** six config saves in a row to see the 5 s backoff cap; `ffprobe`
+against the reported duration at 48 kHz; the capture-hardening items (entry "The capture and
+helper-process hardening…"); and the ssh password of this card was pasted into a chat during the
+session, so rotate it once a rotation action exists (entry "A factory reset does not change the ssh
+password").
+
 
 These are things built but not proven. Not bugs — just claims that have not been tested.
 
@@ -1048,6 +1187,64 @@ worth ruling in or out first if this recurs. Worth wrapping `saveCreds` with an 
 keeping one last-good copy to fall back on; `WhatsAppClient` already owns the auth directory, so
 it is the natural place.
 
+### The connection lifecycle fixes of 2026-09-24 are verified against a fake socket only
+
+From `docs/review-2026-09.md` Phase 1: an unscanned QR now settles in `notLinked` instead of
+looping, `#connect` is generation-guarded, and 440 / 403 are terminal. All of it is locked by
+`whatsappLifecycle.test.ts` against `FakeWASocket`, and none of it has met a real account. Worth
+checking on hardware, cheapest first:
+
+- Leave a QR unscanned for the ~3 minutes Baileys' refs last and confirm the panel lands back on
+  the method picker, with one `whatsapp connection closed` at 408 and no `reconnecting` after it.
+- Scan a QR and confirm the 515 that follows reconnects at once (`delayMs: 0`) and ends
+  `connected`. That the in-memory `creds` are already paired at that 515 is not relied on — 515 is
+  checked first — but it is the assumption to question if a scan ever lands in `notLinked`.
+- Boot a copy of a linked card in a second box and confirm one side stops at 440 with the detail
+  string instead of both flapping.
+
+**The detail string does not reach the panel yet.** The bridge sends it on `wa:status`, and the
+hardware server logs it, but `onStatus` keeps only `state` and `qr`, and `GET /api/whatsapp` has no
+field for it. A parent sees `disconnected` with nothing saying that retrying will not help.
+Surfacing it is a hardware-server + routes + admin change, left out of this one.
+
+### "Delete for everyone" has only met a fake socket
+
+Built 2026-09-24 from the REVOKE shape in Baileys' source, and locked by unit tests on each hop.
+Not yet seen with a real account: that a revoke arrives on `messages.update` at all when the box
+is online, and — the more interesting one — when it was sent **while the box was off**, since the
+offline queue arrives as `append` and nobody has checked that `processMessage` runs the protocol
+message for it. Also unchecked: a group admin deleting someone else's note (it should work — the
+chat is what is whitelisted, not the revoker), and a revoke for a note older than the bridge's
+memory of revoked ids (200) while its download is still in flight, which cannot really happen.
+
+Not handled: the activity card's *received* total still counts a revoked note, and a revoke for a
+note that is mid-playback is dropped rather than applied once the note ends — it is deleted as
+heard at that point anyway.
+
+### The upload bound assumes at most two media hosts
+
+`MEDIA_UPLOAD_TIMEOUT_MS` (20 s) is applied by Baileys per host, in turn (`getWAUploadToServer`
+in `Utils/messages-media.js`), and as an idle timeout. With two hosts both stalling, a send fails in
+about 40 s, inside the hardware side's 60 s. How many hosts `media_conn` actually returns has not
+been looked at on a real account; with three or more, a send can still outlive the "oops". A
+`sendResult` that arrives after the hardware side gave up is dropped there silently, so the
+symptom would be a note the recipient got and the box said had failed. Log `hosts.length` once
+from a real send to settle it.
+
+### View-once voice notes are ignored — a product decision nobody has made
+
+`voiceNoteContent` in `whatsapp/client.ts` unwraps `ephemeralMessage` (disappearing chats) and
+nothing else, so a note a grandparent sends as **view once** never reaches the box, and the sender
+is told nothing. Options: keep ignoring it (today, and the safe default); accept it and play it
+once, deleting it even if the child stops half-way, which breaks the "interrupted goes back to the
+front" rule; or accept it as an ordinary note, which quietly ignores what the sender asked for.
+Not `normalizeMessageContent` either way — it unwraps edits and more besides, each a new shape a
+group member could put on a child's button.
+
+Also unverified with a real account: that a note from a disappearing chat arrives as
+`ephemeralMessage` at this layer at all, rather than already unwrapped by Baileys. The unwrap is
+harmless if it is — a plain `audioMessage` still matches.
+
 ### Read receipts do not survive a bridge restart
 
 `pendingReads` in `whatsapp-bridge.ts` is an in-memory `Map` from message id to the Baileys key
@@ -1075,6 +1272,13 @@ bubbles from 18:45 and 18:46 actually look like before adding it.
 
 Reported while pairing on 2026-08-01: the panel "felt a bit unresponsive". Not diagnosed, and no
 measurement was taken — this is a note to look, not a conclusion.
+
+**First suspect addressed, 2026-09-24, not yet measured on a device.** Every admin request ran a
+~300 ms bcryptjs check on the event loop — the pairing ticker's polls included — so the panel and
+the buttons were both waiting on it. `AdminAuthenticator` now runs it once per browser per 5 min
+(`docs/architecture.md`, "The server surface"). Also fixed the same day: at `http://bloopbox.local/`
+the panel's Socket.io never connected at all, because it was attached to `:3000` only. Close this
+entry only after timing the panel on a Pi; the causes below are still unexamined.
 
 First places to look, cheapest first. The pairing block now runs a 500 ms ticker that polls
 `/api/whatsapp` every 2 s and every tick once a code has lapsed, so a bridge that is down turns
@@ -1390,8 +1594,9 @@ before.
 That boot also settles the board map: `RaspberryPi_Zero2W` resolves BCM names to the right lines on a
 3B+, which is what `PI_BOARD` defaults to. The override exists for a board that does not agree.
 
-Still unproven, and needing a finger and an eye rather than a shell: whether a **press registers**
-(no button was pressed during this session), whether `BUTTON_ACTIVE_LOW` matches the wiring, and
+Since then **button 1 registers presses** on this board: it drove the cues on 2026-08-10 and worked
+through the 2026-09-08 upgrade. Buttons 2–3 and the three lamps have been wired since 2026-08-17
+(`docs/hardware.md` § The reference board), but nothing records them working yet: buttons 2 and 3, whether `BUTTON_ACTIVE_LOW` matches an external switch's wiring, and
 whether the LEDs light the right colour in the right order — `--ch-1/2/3` are yellow, coral, teal
 and nothing enforces it. The board also matters for what comes next: a 3B+ has an analog audio jack
 that a **Zero 2 W does not have at all**, so any playback verified here says nothing about the real
@@ -1532,6 +1737,92 @@ Two decisions worth not re-litigating:
   under `ProtectKernelTunables=yes` and the files are root-owned, so it needs a udev rule and a
   hardening exception; and two fixed-colour LEDs cannot express the matrix. Lamps on this board need
   no extra part: the HAT passes the header through, so 22/23/24/25/27 stay reachable with it seated.
+
+### ~~The root agent's request acknowledgement has only run in a container~~ — verified on the device, 2026-09-30
+
+On the reference board, from a fresh `wm8960` card: `systemd-run --wait -p ProtectSystem=strict
+touch /run/bloopbox/x` fails (exit 1, no file), which **confirms the diagnosis** — the old agent's
+`rm -f` could not have worked. The onboarding Wi-Fi join ran exactly once (`net-agent: joined …`
+once in the journal), `handledRequestId` was published, and `/run/bloopbox/net-request.json` was
+gone. The original notes follow.
+
+
+Changed 2026-09-23 (`docs/deployment.md` § the request channel). The agent no longer deletes
+`/run/bloopbox/net-request.json`: it acts once per request id, records the id in
+`/run/bloopbox-net/handled-request-id`, and publishes it as `handledRequestId`, and the daemon
+deletes its own file when that id comes back. The reason was reasoned from systemd's documented
+`ProtectSystem=strict` behaviour rather than measured, so the first thing to do on a device is to
+confirm it and then confirm the fix:
+
+- `sudo systemd-run --wait -p ProtectSystem=strict touch /run/bloopbox/x` should fail with EROFS.
+  If it succeeds, the old code was not replaying requests after all, and the acknowledgement is
+  belt and braces rather than a fix.
+- After a Wi-Fi join or a reboot request from the panel, `cat /run/bloopbox-net/net-state.json`
+  should carry `handledRequestId`, `/run/bloopbox/net-request.json` should be gone within a few
+  seconds, and `journalctl -u bloopbox-net` should show the action once.
+
+`scripts/test-onboarding.sh` now proves the action runs once and is acknowledged, but it runs the
+agent outside systemd, so it cannot show the sandbox itself.
+
+### ~~Playback interruption on the GPIO driver is tested against a fake aplay only~~ — verified on the device, 2026-09-30
+
+Both checks below passed on the reference board: a second note arriving mid-playback neither chimed
+nor cut the first off, and the lamp kept blinking for it; **Test speaker** mid-note stopped the note,
+left it unread and on the card, and the next tap played it from the start. The journal showed no
+`busy`, `aplay failed` or `device fault` of kind `playback`. The original notes follow.
+
+
+Also 2026-09-23. `GpioHal.stopPlayback()` now waits for `aplay` to exit (SIGKILL after 500 ms)
+before anything else plays, and a note cut off by a signal resolves `'interrupted'`. That is the
+fix for the device-busy and deleted-unheard bugs (`docs/architecture.md` § Nothing plays over a
+note), and `gpioPlayback.test.ts` covers it against a fake child process. On a device, check two
+things: tapping a blinking button, then pressing **Test speaker** in the panel mid-note, leaves the
+lamp blinking and the note on the card; and a second note sent while the first plays neither chimes
+nor cuts the first off.
+
+### The capture and helper-process hardening is tested against fake children only
+
+Added 2026-09-24. Each of these was written against a mocked `child_process` and none has run on a
+Pi. `docs/architecture.md` § Audio has the reasoning.
+
+- **`arecord` exiting by itself.** The driver now tracks the exit from spawn, so a stop after
+  arecord has died returns at once and logs `arecord exited before the recording was stopped` with
+  its stderr. Nobody has seen what a real early exit looks like, for example a USB adapter pulled
+  mid-take or a rate the codec refuses. Check that the take is refused with the "oops" (its WAV is
+  short, so its duration is short) and that the warning reaches the journal.
+- **Duration from the WAV size.** `(size − 44) / (rate × 2 × channels)` assumes `arecord -t wav`
+  writes the canonical 44-byte header. Check that a take's reported duration matches `soxi`/
+  `ffprobe` on the capture, at both `CAPTURE_RATE=16000` and `48000`.
+- **Deadlines.** ffmpeg gets 30 s + 2× the audio (5 min when the length is unknown) and amixer 5 s.
+  The margins come from desk measurements, not from a loaded Zero 2 W decoding with `loudnorm`
+  beside a capture.
+- **Arrival decodes beside a capture.** They are held while `arecord` is open and reniced to 10.
+  Nobody has measured whether a `loudnorm` decode that is already running when a take starts
+  still causes overruns at that niceness (look for `overrun!!!` in the journal). If it does, hold
+  capture-side work instead, or pause the decode with SIGSTOP. `setPriority` on a pid that is
+  already gone is swallowed, and that has only been exercised against a mock.
+- **amixer warnings.** A wrong control name now logs at `warn` with amixer's stderr. Check that a
+  deliberately wrong `ALSA_MIXER_CONTROL` logs the warning, and that a correctly configured box logs
+  nothing at boot.
+
+### ~~The first-boot ssh password has only run in a container~~ — verified on a real first boot, 2026-09-30
+
+From a freshly flashed `wm8960` image: `userconfig` finished renaming `pi` → `bloop` at 96.78 s,
+`bloopbox-ssh-password` ran 96.79 → 97.19 s (`Result=success`), `sshswitch` started at 97.20 s and
+sshd listened at 103.18 s — the order it was designed for. The record is `0640 root:bloopbox`, the
+marker is gone, and the password shown in the admin panel logged in. The original notes follow.
+
+
+`deploy/ssh-password.sh` was exercised on Debian Trixie in Docker, 2026-09-23: no marker, a user not
+yet renamed (marker kept, exit 1), a bad name (refused), a real run (record `0640 root:bloopbox`,
+the recorded password verified against `/etc/shadow`, marker removed), and a second boot (no-op).
+What that cannot show is the **ordering on a real first boot**: that `userconfig.service` has
+renamed `pi` before the unit runs, and that `sshswitch.service` / `ssh.service` wait for it. If the
+rename lands later, the unit exits 1 and succeeds on the next boot, and during that one boot the
+account keeps the throwaway password nobody knows, so it fails closed. Worth confirming on the first
+flashed card with `systemctl status bloopbox-ssh-password` and
+`journalctl -b -u userconfig -u bloopbox-ssh-password -u ssh`, and adding to
+`docs/hardware-bringup.md`'s image gate.
 
 ### An MVP-profile SD image now exists, but has never been booted
 

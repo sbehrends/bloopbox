@@ -55,6 +55,10 @@ LOG_LEVEL=info
 # Buttons reading pressed when idle (switches wired to 3V3 instead of ground):
 #BUTTON_ACTIVE_LOW=false
 #
+# One press registering as two, or a hold that drops out: the switches chatter for longer than the
+# 20 ms the driver waits for a line to go quiet (measured bounce on the reference board: <= 15 ms).
+#BUTTON_SETTLE_MS=40
+#
 # `arecord -l` / `aplay -l` show a device that is not the default, e.g. a USB speakerphone
 # that lands as card 1:
 #ALSA_CAPTURE_DEVICE=plughw:1,0

@@ -4,6 +4,8 @@ Description=bloopbox — WhatsApp bridge
 Documentation=file://@PREFIX@/deploy/doctor.sh
 After=network-online.target bloopbox-hardware.service
 Wants=network-online.target
+# Never give up; the backoff below paces it instead. See bloopbox-hardware.service.
+StartLimitIntervalSec=0
 
 # Deliberately not BindsTo/PartOf the hardware unit. WhatsApp is an unofficial API on a
 # release candidate; a crash here must not take the buttons and lights with it. The bridge
@@ -20,9 +22,16 @@ ExecStart=@PREFIX@/node/bin/node dist/processes/whatsapp-bridge.js
 
 Restart=always
 # Longer than the hardware unit: a reconnect storm against WhatsApp is worse than being
-# down for five seconds.
+# down for five seconds. And backed off to a minute over repeated crashes — nothing saves a
+# setting by restarting this unit, so unlike the hardware unit a long cap costs nothing.
 RestartSec=5
+RestartSteps=5
+RestartMaxDelaySec=60s
 TimeoutStopSec=10
+
+# The first thing the kernel kills when memory runs out: see bloopbox-hardware.service's -500.
+# The heavier process by far, and the one whose loss the box survives — it reconnects.
+OOMScoreAdjust=300
 
 # Same tmpfs as the hardware server — inbound voice notes are downloaded here and the path
 # is handed over IPC, so the two must agree. No RuntimeDirectorySize= here — see the long

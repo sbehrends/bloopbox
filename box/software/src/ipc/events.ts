@@ -137,6 +137,13 @@ export type BridgeToServerEvents = {
     durationMs: number | null;
     receivedAt: number;
   }) => void;
+  /**
+   * The sender deleted a note for everyone. The hardware server drops it from that button's
+   * queue and from disk — if it is still waiting there. Sent only for a chat the whitelist
+   * resolves to `index`; an id no queue holds is ignored at the other end, and a note already
+   * playing is left to finish.
+   */
+  'wa:revoked': (payload: { index: ButtonIndex; messageId: string }) => void;
   /** Answers `wa:requestPairingCode`. `code` is absent when pairing could not start. */
   'wa:pairingCode': (payload: { requestId: string; code?: string; error?: string }) => void;
   /** Groups the linked account belongs to, answering `wa:listGroups`. */
@@ -186,7 +193,20 @@ export type ServerToBridgeEvents = {
   'wa:requestPairingCode': (payload: { requestId: string; phone: string }) => void;
 };
 
+/**
+ * Random per process, so a request id can never be reissued by a later boot.
+ *
+ * The counters behind these ids restart at 1 every time the hardware server does, and it
+ * restarts on every config save — while the bridge, a separate process, stays up. Without this a
+ * `wa:sendResult` for the previous boot's `send-1`, still in flight when the server exited, would
+ * resolve this boot's `send-1`: a child's note reported delivered that never left the box.
+ *
+ * `crypto.randomUUID` is the web global rather than `node:crypto`, because the browser bundles
+ * compile this file too.
+ */
+export const REQUEST_ID_BOOT = crypto.randomUUID().slice(0, 8);
+
 /** Generates a short correlation id for send requests and playback tokens. */
 export function createRequestId(prefix: string, counter: number): string {
-  return `${prefix}-${counter.toString(36)}`;
+  return `${prefix}-${REQUEST_ID_BOOT}-${counter.toString(36)}`;
 }

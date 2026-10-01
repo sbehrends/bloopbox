@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   optionalString,
+  readRevoked,
   readBoolean,
   readButtonIndex,
   readField,
@@ -133,5 +134,28 @@ describe('optionalString', () => {
 
   it('renames the key when asked', () => {
     expect(optionalString({ psk: 'secret' }, 'psk', 'password')).toEqual({ password: 'secret' });
+  });
+});
+
+describe('readRevoked', () => {
+  it('reads a button and a message id', () => {
+    expect(readRevoked({ index: 1, messageId: '3A77C7FB' })).toEqual({
+      index: 1,
+      messageId: '3A77C7FB',
+    });
+  });
+
+  it('refuses anything without both, or with an index that is not a button', () => {
+    for (const payload of [
+      { messageId: 'X' },
+      { index: 1 },
+      { index: 3, messageId: 'X' },
+      { index: 0, messageId: '' },
+      { index: 0, messageId: 'x'.repeat(129) },
+      null,
+      'wa:revoked',
+    ]) {
+      expect(readRevoked(payload)).toBeNull();
+    }
   });
 });

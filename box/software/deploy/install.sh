@@ -481,6 +481,46 @@ EOF
   info "hardware watchdog: 15s"
 fi
 
+step "pinning the journal to RAM"
+# Said explicitly rather than inherited. Pi OS happens to keep the journal in RAM today, but that
+# is a vendor drop-in this box does not own, and plain Debian defaults to `auto` — persistent the
+# moment /var/log/journal exists — which on an SD card is a month of writes nobody asked for.
+#
+# Two drop-ins, one owner each, and file names chosen so they never fight: journald reads every
+# *.conf across /etc, /run and /usr/lib in file-name order and the last assignment wins. This one
+# is 50-, to sort after a vendor file numbered the usual way (whether Pi OS Trixie ships one is
+# unverified — `systemd-analyze cat-config systemd/journald.conf` on a device answers it);
+# debug-mode.sh's is 90-, so
+# `bloopbox-debug on` overrides Storage= here without touching this file, and removing it
+# (`off --purge`) is all it takes to come back to RAM.
+#
+# RuntimeMaxUse is small on purpose: /run is one tmpfs, and it is also where the recordings live
+# (RuntimeDirectory=bloopbox). journald's own default is a tenth of /run, which moves with the
+# board's RAM; 8M is a fixed few thousand lines.
+JOURNALD_DROPIN_DIR=/etc/systemd/journald.conf.d
+install -d -m 0755 "${JOURNALD_DROPIN_DIR}"
+cat > "${JOURNALD_DROPIN_DIR}/50-bloopbox.conf" <<'EOF'
+# Installed by bloopbox. The journal lives in RAM and is lost on reboot — deliberately: this is
+# an SD card. `sudo bloopbox-debug on` makes it persistent for a while (90-bloopbox-debug.conf).
+[Journal]
+Storage=volatile
+RuntimeMaxUse=8M
+EOF
+# Releases before 2026-09-24 named debug mode's drop-in 10-, which sorts BEFORE this one and
+# would be silently overridden by it. Carried across so a box upgraded mid-debug stays in debug.
+if [[ -f "${JOURNALD_DROPIN_DIR}/10-bloopbox-debug.conf" ]]; then
+  mv -f "${JOURNALD_DROPIN_DIR}/10-bloopbox-debug.conf" "${JOURNALD_DROPIN_DIR}/90-bloopbox-debug.conf"
+  info "moved debug mode's journal drop-in to 90-bloopbox-debug.conf"
+fi
+if [[ "${SYSTEMD_RUNNING}" == true ]]; then
+  systemctl restart systemd-journald 2>/dev/null || warn "could not restart journald — the setting applies at the next boot"
+fi
+if [[ -f "${JOURNALD_DROPIN_DIR}/90-bloopbox-debug.conf" ]]; then
+  info "debug mode is on, so the journal stays persistent until: sudo bloopbox-debug off --purge"
+else
+  info "volatile, capped at 8M"
+fi
+
 if [[ "${SYSTEMD_RUNNING}" == true ]]; then
   systemctl daemon-reload
 fi
@@ -488,7 +528,7 @@ if [[ "${HAS_SYSTEMCTL}" == true ]]; then
   # Works offline too: inside a mounted image systemctl just writes the symlinks.
   systemctl enable bloopbox-hardware.service bloopbox-whatsapp.service \
                    bloopbox-firstboot.service bloopbox-net.service \
-                   bloopbox-audio-init.service >/dev/null
+                   bloopbox-audio-init.service bloopbox-ssh-password.service >/dev/null
   info "enabled at boot"
 else
   warn "no systemctl here — the unit files are installed but nothing is enabled"
@@ -516,6 +556,11 @@ else
     fi
     {
       echo '# >>> bloopbox >>>'
+      # Appended, so without this the block would inherit whatever conditional filter the file
+      # ended on. Stock Pi OS config.txt closes on `[all]` today, but a `[cm4]` or `[pi5]` section
+      # left last by an edit would quietly make every line below apply to that board only.
+      echo '# Applies to every board, whatever section the lines above left open.'
+      echo '[all]'
       echo '# Button inputs with firmware pull-ups. This is where the pull-ups come from:'
       echo '# opengpio 2.0.2 transposes bias and debounce when calling its native binding,'
       echo '# so asking the library for them leaves the lines floating. Applied before'

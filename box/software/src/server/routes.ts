@@ -1,4 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { createHash } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import { toString as qrToString } from 'qrcode';
 import { ALL_AUDIO_CUES } from '../audio/cues.ts';
@@ -13,9 +14,11 @@ import {
 import { readBoolean, readField, readString } from '../ipc/payload.ts';
 import type { NetState } from '../net/netState.ts';
 import { isPowerAction, type PowerAction } from '../system/power.ts';
+import type { SshAccess } from '../system/sshAccess.ts';
 import type { SystemInfo } from '../system/systemInfo.ts';
 import type { StatsSnapshot } from '../stats/statsStore.ts';
 import { hashAdminPassword, requireAdmin } from './auth.ts';
+import { denyFraming, requireSameOrigin } from './csrf.ts';
 
 /**
  * REST API for the admin panel and captive portal.
@@ -81,6 +84,20 @@ export type RoutesContext = {
    * to ask — a development machine — which the panel reports rather than treating as an error.
    */
   readonly requestPower: (action: PowerAction) => Promise<boolean>;
+  /** The ssh login this device generated on first boot, or null where it made none. */
+  readonly sshAccess: () => Promise<SshAccess | null>;
+  /**
+   * Where a failure behind a 4xx/5xx goes. The panel shows the parent a sentence; the journal is
+   * where the reason has to be, or a box that "would not save" can only be debugged by guessing.
+   * Optional so the test harness stays quiet.
+   */
+  readonly log?: RouteLogger;
+};
+
+/** The two levels routes log at. A pino logger satisfies it. */
+export type RouteLogger = {
+  warn(details: object, message: string): void;
+  error(details: object, message: string): void;
 };
 
 export function buildStatusPayload(context: RoutesContext): DeviceStatusPayload {
@@ -100,9 +117,28 @@ export function buildStatusPayload(context: RoutesContext): DeviceStatusPayload 
   };
 }
 
+/**
+ * A short, stable name for a pairing code that says nothing about it.
+ *
+ * A digest rather than a counter so it needs no state: the same code always names the same way,
+ * and a rotation always changes the name. The code is high-entropy, so twelve hex characters of
+ * its hash do not help anyone reconstruct it.
+ */
+export function qrIdentifier(qr: string): string {
+  return createHash('sha256').update(qr).digest('hex').slice(0, 12);
+}
+
 export function createApiRouter(context: RoutesContext): Router {
   const router = Router();
   const admin = requireAdmin(context.config);
+
+  /*
+   * Ahead of every route, the open ones included: `POST /onboard` sets the first password, so
+   * it is as worth forging as anything behind the gate. Mounted here rather than in the process
+   * so the test harness, which builds its app from this router, gets exactly what ships.
+   */
+  router.use(denyFraming());
+  router.use(requireSameOrigin());
 
   /* ---- status, readable without credentials ---- */
 
@@ -115,8 +151,13 @@ export function createApiRouter(context: RoutesContext): Router {
     const awaiting = whatsapp.state === 'awaitingPairing';
     res.json({
       state: whatsapp.state,
-      // The QR is a pairing secret; only expose it while it is actually needed.
-      qr: awaiting ? whatsapp.qr : null,
+      /*
+       * Which code is current, never the code itself. This route is open — the portal reads the
+       * state before any password exists — and whoever scans the QR becomes the account this
+       * device speaks as, so a LAN guest reading the payload here could win a re-pair. The panel
+       * only needs to notice a rotation; the image comes from the gated `qr.svg`.
+       */
+      qrId: awaiting && whatsapp.qr !== null ? qrIdentifier(whatsapp.qr) : null,
       /*
        * How old the code is and how long one lives, so the panel can run a countdown and
        * swap in the next image the moment Baileys rotates. Both are needed: the panel polls
@@ -162,6 +203,7 @@ export function createApiRouter(context: RoutesContext): Router {
         res.status(400).json({ error: error.message, issues: error.issues });
         return;
       }
+      context.log?.error({ err: error, route: 'PUT /config' }, 'configuration save failed');
       res.status(500).json({ error: 'failed to save configuration' });
     }
   });
@@ -188,6 +230,7 @@ export function createApiRouter(context: RoutesContext): Router {
       res.json({ ok: true, restarting: true });
       context.requestRestart('onboarding completed');
     } catch (error: unknown) {
+      context.log?.warn({ err: error, route: 'POST /onboard' }, 'onboarding failed');
       res.status(400).json({ error: error instanceof Error ? error.message : 'onboarding failed' });
     }
   });
@@ -305,6 +348,7 @@ export function createApiRouter(context: RoutesContext): Router {
         res.status(400).json({ error: error.message, issues: error.issues });
         return;
       }
+      context.log?.warn({ err: error, route: 'POST /wifi/join' }, 'wi-fi join failed');
       res.status(400).json({ error: error instanceof Error ? error.message : 'could not join' });
     }
   });
@@ -324,6 +368,7 @@ export function createApiRouter(context: RoutesContext): Router {
       await context.controller.playTestCue();
       res.json({ played: true });
     } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'POST /audio/test' }, 'speaker test failed');
       res.status(500).json({
         error: error instanceof Error ? error.message : 'could not play the test sound',
       });
@@ -369,7 +414,8 @@ export function createApiRouter(context: RoutesContext): Router {
         color: { dark: '#000000ff', light: '#ffffffff' },
       });
       res.type('image/svg+xml').set('cache-control', 'no-store').send(svg);
-    } catch {
+    } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'GET /whatsapp/qr.svg' }, 'QR render failed');
       res.status(500).json({ error: 'could not render the pairing code' });
     }
   });
@@ -427,8 +473,9 @@ export function createApiRouter(context: RoutesContext): Router {
   router.post('/factory-reset', admin, async (_req, res) => {
     try {
       await context.config.factoryReset();
-    } catch {
+    } catch (error: unknown) {
       // Nothing has been torn down yet, so this is still a recoverable, reportable failure.
+      context.log?.error({ err: error, route: 'POST /factory-reset' }, 'factory reset failed');
       res.status(500).json({ error: 'factory reset failed' });
       return;
     }
@@ -445,9 +492,10 @@ export function createApiRouter(context: RoutesContext): Router {
     void (async (): Promise<void> => {
       try {
         await context.requestForgetNetwork();
-      } catch {
+      } catch (error: unknown) {
         // Swallowed rather than left to reject: the restart below is what finishes the reset,
         // and abandoning it would leave the device running on a config that is already gone.
+        context.log?.warn({ err: error }, 'factory reset could not forget the Wi-Fi network');
       }
       context.requestRestart('factory reset');
     })();
@@ -485,7 +533,8 @@ export function createApiRouter(context: RoutesContext): Router {
     try {
       await context.resetStats();
       res.json({ ok: true, stats: context.stats() });
-    } catch {
+    } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'POST /stats/reset' }, 'counter reset failed');
       res.status(500).json({ error: 'could not reset the counters' });
     }
   });
@@ -521,8 +570,14 @@ export function createApiRouter(context: RoutesContext): Router {
                 ageSeconds: Math.max(0, Math.round((Date.now() - net.updatedAtMs) / 1000)),
                 lastError: net.lastError,
               },
+        /*
+         * Whether the clock is trustworthy yet. From the same reading, because only the root agent
+         * can ask timedated; null — "cannot tell" — whenever there is no reading at all.
+         */
+        timeSynced: net?.timeSynced ?? null,
       });
-    } catch {
+    } catch (error: unknown) {
+      context.log?.error({ err: error, route: 'GET /system' }, 'health reading failed');
       res.status(500).json({ error: 'could not read the device state' });
     }
   });
@@ -556,6 +611,19 @@ export function createApiRouter(context: RoutesContext): Router {
     }
 
     res.json({ ok: true, action });
+  });
+
+  /**
+   * The device's own ssh password, for whoever holds the admin password.
+   *
+   * A password for the whole machine, so behind the gate and never cached. `available: false`
+   * is the normal answer on a tarball install or an image built with `--password`: the login
+   * there is not one this device made, and the panel says so rather than showing an error.
+   */
+  router.get('/system/ssh', admin, async (_req, res) => {
+    const access = await context.sshAccess();
+    res.set('Cache-Control', 'no-store');
+    res.json(access === null ? { available: false } : { available: true, ...access });
   });
 
   /* ---- diagnostics ---- */

@@ -16,20 +16,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * `opengpio` is never loaded here: only `init()` imports it, and playback does not need it.
  */
 
-const spawned: { command: string; args: readonly string[] }[] = [];
+type FakeChild = EventEmitter & { kills: string[] };
+
+const spawned: { command: string; args: readonly string[]; child: FakeChild }[] = [];
+
+/**
+ * How spawned players behave. `ends` plays to the end at once, which is what most tests want.
+ * `holds` keeps playing until killed — a real note is seconds long — and closes by signal when
+ * it is, as aplay does. `stubborn` ignores SIGTERM, so only SIGKILL ends it.
+ */
+const player = { mode: 'ends' as 'ends' | 'holds' | 'stubborn' };
 
 /** Just enough of a ChildProcess for the driver: it listens, and it kills. */
-function fakeChild(): EventEmitter {
-  const child = new EventEmitter();
-  return Object.assign(child, { stderr: null, kill: () => true });
+function fakeChild(): FakeChild {
+  const child = Object.assign(new EventEmitter(), { stderr: null, kills: [] as string[] });
+  const mode = player.mode;
+  return Object.assign(child, {
+    kill: (signal: string) => {
+      child.kills.push(signal);
+      if (mode === 'stubborn' && signal !== 'SIGKILL') return true;
+      setImmediate(() => child.emit('close', null, signal));
+      return true;
+    },
+  });
 }
+
+/** Commands that fail, mapped to what they print on stderr — a mixer control the card lacks. */
+const failing = new Map<string, string>();
 
 vi.mock('node:child_process', () => ({
   spawn: (command: string, args: readonly string[]) => {
-    spawned.push({ command, args });
     const child = fakeChild();
+    spawned.push({ command, args, child });
+    const complaint = failing.get(command);
+    if (complaint !== undefined) {
+      const stderr = new EventEmitter();
+      Object.assign(child, { stderr });
+      setImmediate(() => {
+        stderr.emit('data', Buffer.from(complaint));
+        child.emit('close', 1, null);
+      });
+      return child;
+    }
     // A real aplay exits when the file ends; nothing here awaits a timer.
-    setImmediate(() => child.emit('close', 0, null));
+    if (player.mode === 'ends') setImmediate(() => child.emit('close', 0, null));
     return child;
   },
 }));
@@ -53,6 +83,9 @@ vi.mock('../audio/ffmpeg.ts', () => ({
   PLAYBACK_FILTER_CHAIN: 'loudnorm=I=-16:TP=-1.5:LRA=11',
 }));
 
+const warned = vi.fn<(detail: object, message: string) => void>();
+vi.mock('../logger.ts', () => ({ childLogger: () => ({ warn: warned }) }));
+
 let directory: string;
 
 async function makeHal() {
@@ -62,6 +95,8 @@ async function makeHal() {
 
 beforeEach(async () => {
   spawned.length = 0;
+  player.mode = 'ends';
+  failing.clear();
   decoded.mockClear();
   directory = await mkdtemp(join(tmpdir(), 'bloopbox-playback-'));
 });
@@ -123,8 +158,9 @@ describe('play', () => {
     // The interrupt a button press causes: there is no process to kill yet.
     await hal.stopPlayback();
     release?.();
-    await playing;
 
+    // Never heard, so never counted as played — it used to resolve as if it had been.
+    await expect(playing).resolves.toBe('interrupted');
     expect(spawned.some(({ command }) => command === 'aplay')).toBe(false);
   });
 
@@ -234,6 +270,109 @@ describe('prepare', () => {
     expect(decoded).toHaveBeenCalledTimes(3);
   });
 
+  /** Makes the next decode wait until the returned function is called. */
+  function holdNextDecode(): { started: () => boolean; finish: () => void } {
+    let finish: (() => void) | undefined;
+    decoded.mockImplementationOnce(async (_input, output) => {
+      await writeFile(output, '');
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    return { started: () => finish !== undefined, finish: () => finish?.() };
+  }
+
+  describe('one decode per note at a time', () => {
+    /*
+     * prepare() and play() write the same play-<stem>.wav. A tap soon after an arrival used to
+     * start a second ffmpeg over the first, and one of them then deleted the file under the
+     * other's aplay.
+     */
+    it('a tap during the arrival decode waits for it instead of decoding again', async () => {
+      const note = join(directory, 'wa-0-RACE01.ogg');
+      await writeFile(note, '');
+      const hold = holdNextDecode();
+      const hal = await makeHal();
+
+      const preparing = hal.prepare(note);
+      await vi.waitFor(() => expect(hold.started()).toBe(true));
+      const playing = hal.play(note);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(decoded).toHaveBeenCalledOnce();
+      expect(spawned.some(({ command }) => command === 'aplay')).toBe(false);
+
+      hold.finish();
+      await preparing;
+
+      await expect(playing).resolves.toBe('completed');
+      expect(decoded).toHaveBeenCalledOnce();
+      const played = spawned.find(({ command }) => command === 'aplay');
+      expect(played?.args).toContain(join(directory, 'play-wa-0-RACE01.wav'));
+    });
+
+    it('an arrival decode waits for a tap that is already decoding the same note', async () => {
+      const note = join(directory, 'wa-1-RACE02.ogg');
+      await writeFile(note, '');
+      const hold = holdNextDecode();
+      const hal = await makeHal();
+
+      const playing = hal.play(note);
+      await vi.waitFor(() => expect(hold.started()).toBe(true));
+      const preparing = hal.prepare(note);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(decoded).toHaveBeenCalledOnce();
+
+      hold.finish();
+      await expect(playing).resolves.toBe('completed');
+      await preparing;
+
+      // The tap's copy was temporary and is gone; the arrival's is kept for the next listen.
+      expect(decoded).toHaveBeenCalledTimes(2);
+      const { readdir } = await import('node:fs/promises');
+      expect((await readdir(directory)).toSorted()).toEqual([
+        'play-wa-1-RACE02.wav',
+        'wa-1-RACE02.ogg',
+      ]);
+    });
+
+    it('a stop while the tap waits on the arrival decode still counts as interrupted', async () => {
+      const note = join(directory, 'wa-2-RACE03.ogg');
+      await writeFile(note, '');
+      const hold = holdNextDecode();
+      const hal = await makeHal();
+
+      const preparing = hal.prepare(note);
+      await vi.waitFor(() => expect(hold.started()).toBe(true));
+      const playing = hal.play(note);
+      // Past play()'s own opening stop, so this is the button press that interrupts the wait.
+      await new Promise((resolve) => setImmediate(resolve));
+      await hal.stopPlayback();
+      hold.finish();
+      await preparing;
+
+      await expect(playing).resolves.toBe('interrupted');
+      expect(spawned.some(({ command }) => command === 'aplay')).toBe(false);
+    });
+  });
+
+  it('release() during the decode still removes the WAV once the decode lands', async () => {
+    // The note was heard and deleted while its arrival decode was running; the decode used to
+    // land afterwards and leave its WAV in the RAM disk for good.
+    const note = join(directory, 'wa-0-LATE01.ogg');
+    await writeFile(note, '');
+    const hold = holdNextDecode();
+    const hal = await makeHal();
+
+    const preparing = hal.prepare(note);
+    await vi.waitFor(() => expect(hold.started()).toBe(true));
+    await hal.release(note);
+    hold.finish();
+    await preparing;
+
+    const { readdir } = await import('node:fs/promises');
+    expect(await readdir(directory)).toEqual(['wa-0-LATE01.ogg']);
+  });
+
   it('release() frees the decode once the note it came from is gone', async () => {
     const note = join(directory, 'wa-1-YZA567.ogg');
     await writeFile(note, '');
@@ -248,6 +387,82 @@ describe('prepare', () => {
 });
 
 describe('playCue', () => {
+  it('says a note played to the end was heard', async () => {
+    const wav = join(directory, 'rec-2.wav');
+    await writeFile(wav, '');
+    const hal = await makeHal();
+
+    await expect(hal.play(wav)).resolves.toBe('completed');
+  });
+
+  /*
+   * One speaker, one plughw device. A cue cuts a note off, and the driver has to say so: a note
+   * cut off by an arrival chime used to resolve as played and be deleted unheard.
+   */
+  describe('a cue over a note', () => {
+    it('reports the note as interrupted, and plays the cue only once it has let go', async () => {
+      player.mode = 'holds';
+      const wav = join(directory, 'rec-3.wav');
+      await writeFile(wav, '');
+      const hal = await makeHal();
+
+      const note = hal.play(wav);
+      await vi.waitFor(() => expect(spawned).toHaveLength(1));
+      const cue = hal.playCue('notify');
+
+      await expect(note).resolves.toBe('interrupted');
+      await vi.waitFor(() => expect(spawned).toHaveLength(2));
+      expect(spawned[0]?.child.kills).toEqual(['SIGTERM']);
+      expect(spawned[1]?.args.at(-1)).toMatch(/notify\.wav$/);
+
+      await hal.stopPlayback();
+      await cue;
+    });
+
+    it('still stops the cue afterwards: the dying note must not wipe the new player', async () => {
+      /*
+       * The note's close handler used to null the player field unconditionally — after the cue's
+       * aplay had been spawned. The next stop then killed nothing, and the device stayed busy.
+       */
+      player.mode = 'holds';
+      const wav = join(directory, 'rec-4.wav');
+      await writeFile(wav, '');
+      const hal = await makeHal();
+
+      const note = hal.play(wav);
+      await vi.waitFor(() => expect(spawned).toHaveLength(1));
+      const cue = hal.playCue('notify');
+      await note;
+      await vi.waitFor(() => expect(spawned).toHaveLength(2));
+
+      await hal.stopPlayback();
+      expect(spawned[1]?.child.kills).toEqual(['SIGTERM']);
+      await cue;
+    });
+
+    it('kills a player that will not stop, rather than waiting on it forever', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        player.mode = 'stubborn';
+        const { PLAYBACK_STOP_TIMEOUT_MS } = await import('../hal/gpioDriver.ts');
+        const wav = join(directory, 'rec-5.wav');
+        await writeFile(wav, '');
+        const hal = await makeHal();
+
+        const note = hal.play(wav);
+        await vi.waitFor(() => expect(spawned).toHaveLength(1));
+        const stopped = hal.stopPlayback();
+        await vi.advanceTimersByTimeAsync(PLAYBACK_STOP_TIMEOUT_MS);
+        await stopped;
+
+        expect(spawned[0]?.child.kills).toEqual(['SIGTERM', 'SIGKILL']);
+        await expect(note).resolves.toBe('interrupted');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('plays the cue WAV directly — cues are generated as WAV and never need ffmpeg', async () => {
     const hal = await makeHal();
 
@@ -255,5 +470,23 @@ describe('playCue', () => {
 
     expect(decoded).not.toHaveBeenCalled();
     expect(spawned.find(({ command }) => command === 'aplay')?.args.at(-1)).toMatch(/pop\.wav$/);
+  });
+});
+
+describe('mixer calls', () => {
+  it('logs a failed amixer call with its stderr, and carries on', async () => {
+    // Non-fatal by design — a card without this control is supported — but no longer silent:
+    // a wrong control name used to leave the volume where the card powered up and log nothing.
+    failing.set('amixer', "amixer: Unable to find simple control 'Master',0");
+    const hal = await makeHal();
+
+    await expect(hal.setVolume(40)).resolves.toBeUndefined();
+
+    expect(warned).toHaveBeenCalledOnce();
+    const [detail] = warned.mock.calls[0] ?? [];
+    expect(detail).toMatchObject({
+      command: 'amixer',
+      err: expect.stringContaining("Unable to find simple control 'Master'") as unknown,
+    });
   });
 });

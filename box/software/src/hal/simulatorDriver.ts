@@ -2,10 +2,17 @@ import { EventEmitter } from 'node:events';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AudioCue } from '../audio/cues.ts';
-import { CAPTURE_FILTER_CHAIN, toVoiceNote } from '../audio/ffmpeg.ts';
+import { CAPTURE_FILTER_CHAIN, probeDurationMs, toVoiceNote } from '../audio/ffmpeg.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import { createRequestId } from '../ipc/events.ts';
-import type { Hal, HalEvents, HalOptions, RecordingHandle, RecordingResult } from './types.ts';
+import type {
+  Hal,
+  HalEvents,
+  HalOptions,
+  PlaybackOutcome,
+  RecordingHandle,
+  RecordingResult,
+} from './types.ts';
 
 /**
  * HAL backed by a browser tab (PRODUCT.md §5).
@@ -43,7 +50,7 @@ type PendingCapture = {
 };
 
 type PendingPlayback = {
-  resolve: () => void;
+  resolve: (outcome: PlaybackOutcome) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 };
@@ -167,7 +174,9 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
     await this.#deleteIfPresent(this.#rawPath(handle.id));
   }
 
-  play(path: string): Promise<void> {
+  play(path: string): Promise<PlaybackOutcome> {
+    // One output, as on the device: a new sound cuts off the one playing.
+    this.#interruptPending();
     // The browser fetches the file over HTTP; the server exposes /audio/<name>.
     const url = `/audio/${encodeURIComponent(path.split('/').pop() ?? '')}`;
     return this.#awaitPlayback((token) =>
@@ -175,8 +184,11 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
     );
   }
 
-  playCue(cue: AudioCue): Promise<void> {
-    return this.#awaitPlayback((token) =>
+  async playCue(cue: AudioCue): Promise<void> {
+    // Interrupts a note, per the HAL contract. Without this the browser stopped the note but
+    // this side waited out the 15 s timeout and then reported the note as failed.
+    this.#interruptPending();
+    await this.#awaitPlayback((token) =>
       this.#transport.sendPlayCue(token, cue, this.#volumePercent),
     );
   }
@@ -195,13 +207,21 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
 
   async stopPlayback(): Promise<void> {
     this.#transport.sendStopPlayback();
+    this.#interruptPending();
+    await Promise.resolve();
+  }
+
+  /**
+   * Settles whatever this side is still waiting on as interrupted. Synchronous, so a new sound
+   * is sent in the same tick it was asked for; the browser replaces what it is playing itself.
+   */
+  #interruptPending(): void {
     for (const [token, playback] of this.#playbacks) {
       clearTimeout(playback.timer);
       this.#playbacks.delete(token);
-      // Treat an interruption as success: the caller asked for it.
-      playback.resolve();
+      // Not a failure — but not heard to the end either, which the caller needs to know.
+      playback.resolve('interrupted');
     }
-    await Promise.resolve();
   }
 
   setVolume(percent: number): Promise<void> {
@@ -248,13 +268,20 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
         throw new Error('browser delivered no audio');
       }
       await writeFile(rawPath, raw);
+      // Taken before the encode: the clock after it would count the encode as audio.
+      const elapsedMs = Date.now() - pending.handle.startedAt;
       // MediaRecorder gives WebM/Opus in Chrome; WhatsApp needs Ogg/Opus.
-      await toVoiceNote(rawPath, outputPath, this.#captureFilter);
+      await toVoiceNote(rawPath, outputPath, this.#captureFilter, elapsedMs);
       const { size } = await stat(outputPath);
 
       pending.resolve({
         path: outputPath,
-        durationMs: Date.now() - pending.handle.startedAt,
+        /*
+         * What the file holds, as on the device. The clock is only the fallback for a machine
+         * without ffprobe: it also counts the browser's flush, so a microphone that delivered
+         * almost nothing would still clear `MIN_USABLE_AUDIO_MS`.
+         */
+        durationMs: (await probeDurationMs(outputPath)) ?? elapsedMs,
         byteLength: size,
       });
     } catch (error: unknown) {
@@ -279,7 +306,7 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
     if (!pending) return;
     clearTimeout(pending.timer);
     this.#playbacks.delete(token);
-    pending.resolve();
+    pending.resolve('completed');
   }
 
   handlePlaybackError(token: string, reason: string): void {
@@ -305,16 +332,16 @@ export class SimulatorHal extends EventEmitter<HalEvents> implements Hal {
 
   /* ---- internals ---- */
 
-  #awaitPlayback(send: (token: string) => void): Promise<void> {
+  #awaitPlayback(send: (token: string) => void): Promise<PlaybackOutcome> {
     if (!this.#transport.connected) {
       // No tab: silently succeed rather than blocking the audio pipeline.
-      return Promise.resolve();
+      return Promise.resolve('completed');
     }
 
     this.#counter += 1;
     const token = createRequestId('simplay', this.#counter);
 
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<PlaybackOutcome>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#playbacks.delete(token);
         reject(new Error(`simulator: playback ${token} timed out`));

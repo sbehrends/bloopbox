@@ -2,12 +2,12 @@ import { rm } from 'node:fs/promises';
 import { AudioCue, shouldPlayCue } from '../audio/cues.ts';
 import { AudioQueueManager, type QueuedNote } from '../audio/queueManager.ts';
 import type { ConfigManager } from '../config/configManager.ts';
-import type { ButtonIndex, DeviceConfig } from '../config/schema.ts';
+import { enabledContacts, type ButtonIndex, type DeviceConfig } from '../config/schema.ts';
 import type { Hal, RecordingHandle } from '../hal/types.ts';
 import { ButtonInterpreter } from './buttonInterpreter.ts';
 import { DeviceState, type DeviceStatus } from './deviceState.ts';
 import { LedAnimator } from './ledAnimator.ts';
-import { isWithinQuietHours, minutesUntilNextTransition } from './quietHours.ts';
+import { isWithinQuietHours, msUntilNextTransition } from './quietHours.ts';
 
 /**
  * Wires the device together: HAL events in, intents out, LEDs and audio as a result.
@@ -44,6 +44,42 @@ export type StatsRecorder = {
   recordPlayed(index: ButtonIndex, count: number): void;
 };
 
+/**
+ * Everything that can go wrong on the interaction path without the child noticing more than an
+ * "oops" — or nothing at all.
+ *
+ * Each of these used to be caught and dropped here, which is the right answer for the child (one
+ * failure must never break the next press) and the wrong one for whoever is debugging the box: the
+ * journal said nothing. They are still caught; now they are also reported.
+ */
+export type DeviceFaultKind =
+  /** `startRecording` rejected: no microphone, a busy device, a wrong ALSA name. */
+  | 'capture-start'
+  /** `stopRecording` rejected: the take could not be finalised or encoded. */
+  | 'capture-finalise'
+  /** The take finalised with essentially no audio — a microphone that delivered nothing. */
+  | 'capture-empty'
+  /** `cancelRecording` rejected. The purge collects whatever it left. */
+  | 'capture-cancel'
+  /** WhatsApp did not accept a finished take. */
+  | 'send'
+  /** A note could not be played, or playback itself threw. */
+  | 'playback'
+  /** A cue could not be played. Cues are courtesy, so this never reaches the child. */
+  | 'cue'
+  /** A played or revoked note's file, or its decoded copy, could not be removed. */
+  | 'delete';
+
+export type DeviceFault = {
+  readonly kind: DeviceFaultKind;
+  /** The button involved, where there is one. */
+  readonly index: ButtonIndex | null;
+  /** What was thrown, if anything was. */
+  readonly error?: unknown;
+  /** Small facts that explain it — a duration, a cue name, a path. */
+  readonly detail?: Readonly<Record<string, string | number>>;
+};
+
 export type DeviceControllerOptions = {
   readonly hal: Hal;
   readonly config: ConfigManager;
@@ -53,10 +89,18 @@ export type DeviceControllerOptions = {
   readonly markRead?: (index: ButtonIndex, messageIds: readonly string[]) => void;
   /** Counts what the box sent, received and played. Absent means nothing is counted. */
   readonly stats?: StatsRecorder;
+  /**
+   * Told about every failure this controller swallows (see {@link DeviceFault}).
+   *
+   * A callback rather than a logger for the same reason `stats` is a structural type: `src/core/`
+   * does no I/O, and the composition root decides where faults go. Called synchronously on the
+   * interaction path, so it must return at once; anything it throws is ignored.
+   */
+  readonly onFault?: (fault: DeviceFault) => void;
 };
 
 /** How often the quiet-hours schedule is re-evaluated when no transition is imminent. */
-const QUIET_HOURS_MAX_SLEEP_MS = 15 * 60 * 1000;
+export const QUIET_HOURS_MAX_SLEEP_MS = 15 * 60 * 1000;
 
 /**
  * Below this much audio, a committed take is a failed capture rather than a short message.
@@ -73,6 +117,19 @@ const QUIET_HOURS_MAX_SLEEP_MS = 15 * 60 * 1000;
  */
 export const MIN_USABLE_AUDIO_MS = 150;
 
+/**
+ * One press's microphone, from the bip until it is committed or discarded.
+ *
+ * `token.cancelled` is what the bip checks before it opens anything. Awaiting the handle alone
+ * was not enough: a discard during the bip waited for it, found no handle yet, and returned —
+ * and then the bip finished and opened a microphone nobody would ever close, on top of the
+ * "oops" the release had just played, or after `stop()`.
+ */
+type Capture = {
+  readonly handle: Promise<RecordingHandle | null>;
+  readonly token: { cancelled: boolean };
+};
+
 export class DeviceController {
   readonly state = new DeviceState();
   readonly queue: AudioQueueManager;
@@ -84,6 +141,7 @@ export class DeviceController {
   readonly #send: (request: OutboundRequest) => Promise<void>;
   readonly #markRead: ((index: ButtonIndex, ids: readonly string[]) => void) | undefined;
   readonly #stats: StatsRecorder | undefined;
+  readonly #onFault: ((fault: DeviceFault) => void) | undefined;
 
   /**
    * In-flight captures, keyed by button.
@@ -96,12 +154,28 @@ export class DeviceController {
    * left the microphone open for the life of the process — and the next press on that button
    * reused the stale handle, shipping every second recorded since as one voice note.
    */
-  readonly #captures = new Map<ButtonIndex, Promise<RecordingHandle | null>>();
+  readonly #captures = new Map<ButtonIndex, Capture>();
   /** messageId -> file path, so played notes can be deleted ahead of the TTL. */
   readonly #pathsByMessageId = new Map<string, string>();
   /** The most recent capture teardown, awaited before playback. See `#playQueue`. */
   #teardown: Promise<void> | undefined;
+  /**
+   * The button whose queue a tap asked for, from that tap until playback ends.
+   *
+   * Not `state.playing`, which is only set once the first note starts: between the two sits
+   * the capture teardown `#playQueue` waits on, and a press on another button in that gap
+   * would open a microphone just as the note begins.
+   */
+  #listeningTo: ButtonIndex | null = null;
   #quietHoursTimer: NodeJS.Timeout | null = null;
+  /**
+   * What the schedule said at the last evaluation, or null before the first.
+   *
+   * The schedule is applied only when this *changes*. Re-asserting it on every wake — every
+   * 15 minutes at most — silently undid a parent's chord: they forced sound back on at 21:00
+   * and the box went quiet again by 21:15. An override now lasts until the next boundary.
+   */
+  #scheduleInWindow: boolean | null = null;
   #started = false;
 
   constructor(options: DeviceControllerOptions) {
@@ -110,19 +184,29 @@ export class DeviceController {
     this.#send = options.send;
     this.#markRead = options.markRead;
     this.#stats = options.stats;
+    this.#onFault = options.onFault;
 
     this.queue = new AudioQueueManager({
       hal: options.hal,
       // Silent mode gates cues only; playback itself always happens.
       playCues: () => !this.state.silentMode,
+      onPlaybackError: (index, path, error) => {
+        this.#fault('playback', index, error, { path });
+      },
     });
 
+    // Buttons with a contact to send to: enabled, with a target that resolves.
+    const sendable = new Set(enabledContacts(this.#config.current).map(({ index }) => index));
     this.#interpreter = new ButtonInterpreter({
       timings: this.#config.current.buttons,
       maxRecordingSeconds: this.#audio().maxRecordingSeconds,
       hasUnread: (index) => this.state.hasUnread(index),
       // Receive-only: no hold ever opens a microphone. Snapshot like every other setting.
       readOnly: this.#config.current.mode.readOnly,
+      // A button with no contact takes no message. Snapshot, like every other setting.
+      canSend: (index) => sendable.has(index),
+      // While notes play, the other buttons wait for them to finish.
+      listeningTo: () => this.#listeningTo,
     });
 
     this.#animator = new LedAnimator(options.hal, this.state.snapshot());
@@ -150,9 +234,30 @@ export class DeviceController {
       this.#quietHoursTimer = null;
     }
     this.#interpreter.reset();
+    /*
+     * `reset()` drops the presses without emitting a cancel, so the captures they opened are
+     * closed here — including one still behind its bip, which the token keeps from opening a
+     * microphone after the process has been told to stop.
+     */
+    await Promise.all([...this.#captures.keys()].map((index) => this.#discardCapture(index)));
     await this.queue.stop();
     this.#animator.stop();
     this.#animator.blank();
+  }
+
+  /**
+   * Stops, then lets go of the HAL for good: its button listeners are removed, so a press
+   * reaches nothing here any more.
+   *
+   * Separate from `stop()` because the listeners are attached at construction, not at
+   * `start()` — a stopped controller cannot get them back. Anything that builds a second
+   * controller on the same HAL must dispose of the first, or both answer every press: two bips,
+   * two microphones, two sends. The daemon never does, since a config save restarts the process.
+   */
+  async dispose(): Promise<void> {
+    this.#hal.off('buttonDown', this.#onButtonDown);
+    this.#hal.off('buttonUp', this.#onButtonUp);
+    await this.stop();
   }
 
   /** Which HAL driver is active, for the admin panel and logs. */
@@ -179,9 +284,8 @@ export class DeviceController {
    * any other way. Silenced at night like every other courtesy cue.
    */
   announceBoot(): void {
-    if (!shouldPlayCue(AudioCue.Boot, this.state.silentMode)) return;
     // Not awaited: nothing about coming up should wait on a speaker.
-    void this.#safeCue(AudioCue.Boot);
+    void this.#courtesyCue(AudioCue.Boot);
   }
 
   /**
@@ -220,10 +324,12 @@ export class DeviceController {
      */
     this.#stats?.recordReceived(index, note.durationMs);
 
-    // A courtesy, and silenced at night.
-    if (shouldPlayCue(AudioCue.Notify, this.state.silentMode)) {
-      void this.#safeCue(AudioCue.Notify);
-    }
+    /*
+     * A courtesy, silenced at night — and held back while a note is playing. The speaker is one
+     * output, so this chime used to cut off the note being listened to, which was then counted as
+     * heard, deleted and reported read. The lamp already says something new is waiting.
+     */
+    void this.#courtesyCue(AudioCue.Notify);
   }
 
   /**
@@ -253,6 +359,26 @@ export class DeviceController {
     return true;
   }
 
+  /**
+   * The sender deleted a note for everyone (PRODUCT.md §1): take it off the button and the card.
+   *
+   * Only a note this box is still holding for that button — an id it never queued, or queued on
+   * a different button, does nothing, so a revoke can only ever remove what its own chat sent.
+   * A note already playing is left to finish (see `AudioQueueManager.remove`) and is then deleted
+   * as heard, like any other. Never marked read: nothing was heard.
+   *
+   * Returns whether anything was removed.
+   */
+  revokeNote(index: ButtonIndex, messageId: string): boolean {
+    const note = this.queue.remove(index, messageId);
+    if (note === null) return false;
+    this.#pathsByMessageId.delete(messageId);
+    // The count follows the queue, as it does after playback: the lamp goes out if that was all.
+    this.state.setUnread(index, this.queue.count(index));
+    void this.#discard(note.path);
+    return true;
+  }
+
   /** Files still queued for playback, which the purge must not delete. */
   protectedFiles(): Set<string> {
     const paths = new Set<string>();
@@ -279,13 +405,17 @@ export class DeviceController {
     });
   }
 
+  // Fields rather than inline closures, so `dispose()` can hand the same functions to `off`.
+  readonly #onButtonDown = ({ index }: { index: ButtonIndex }): void => {
+    this.#interpreter.handleButtonDown(index);
+  };
+  readonly #onButtonUp = ({ index }: { index: ButtonIndex }): void => {
+    this.#interpreter.handleButtonUp(index);
+  };
+
   #wireButtons(): void {
-    this.#hal.on('buttonDown', ({ index }) => {
-      this.#interpreter.handleButtonDown(index);
-    });
-    this.#hal.on('buttonUp', ({ index }) => {
-      this.#interpreter.handleButtonUp(index);
-    });
+    this.#hal.on('buttonDown', this.#onButtonDown);
+    this.#hal.on('buttonUp', this.#onButtonUp);
   }
 
   #wireInterpreter(): void {
@@ -320,16 +450,13 @@ export class DeviceController {
      * be one more thing to learn for no extra information. The blinking lamp is what says
      * why, and it is already lit. Silenced during quiet hours exactly like the rest of them.
      */
-    this.#interpreter.on('recordBlocked', ({ reason }) => {
+    this.#interpreter.on('recordBlocked', () => {
       /*
-       * Except while one of those notes is actually playing. The child is being told to
-       * listen; an "oops" over the top would talk across the message mid-sentence, since
-       * cues interrupt playback. The lamp under their finger is the whole answer.
+       * Except while one of those notes is actually playing, which `#courtesyCue` holds back.
+       * The child is being told to listen; an "oops" over the top would cut the message off.
+       * The lamp under their finger is the whole answer.
        */
-      if (reason === 'unread' && this.state.playing !== null) return;
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        void this.#safeCue(AudioCue.Oops);
-      }
+      void this.#courtesyCue(AudioCue.Oops);
     });
 
     this.#interpreter.on('captureCommit', ({ index }) => {
@@ -348,9 +475,7 @@ export class DeviceController {
     });
 
     this.#interpreter.on('cancelBeep', () => {
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        void this.#safeCue(AudioCue.Oops);
-      }
+      void this.#courtesyCue(AudioCue.Oops);
     });
 
     this.#interpreter.on('toggleSilent', () => {
@@ -364,26 +489,42 @@ export class DeviceController {
     });
 
     this.queue.on('queueDrained', ({ index, messageIds }) => {
-      // Spec §1: the light goes out once the queue finishes.
-      this.state.clearUnread(index);
-      this.state.setPlaying(null);
       /*
-       * The receipt is the only way the sender learns a child heard them, and a parent can
-       * turn it off — playing a message should never depend on whether we are willing to
-       * report it, so the local half above happens either way.
+       * Spec §1: the light goes out once the queue finishes — unless a note arrived while it
+       * played. The count follows the queue rather than being zeroed: clearing it put that
+       * note's lamp out, and a tap on the dark button then got the "oops".
        */
-      if (this.#config.current.whatsapp.markPlayedAsRead) {
-        this.#markRead?.(index, messageIds);
-      }
-      // Local and unconditional, unlike the receipt above: what the child heard is this box's
-      // own business, and a parent who turned receipts off has not asked to stop counting.
-      this.#stats?.recordPlayed(index, messageIds.length);
-      void this.#deletePlayed(messageIds, index);
+      this.state.setUnread(index, this.queue.count(index));
+      this.state.setPlaying(null);
+      this.#notesHeard(index, messageIds);
     });
 
-    this.queue.on('playbackAborted', () => {
+    /*
+     * Stopped part-way. What was heard to the end is handled exactly like a drain; the rest,
+     * the cut-off note included, is back in the queue and still blinking.
+     */
+    this.queue.on('playbackAborted', ({ index, messageIds }) => {
+      this.state.setUnread(index, this.queue.count(index));
       this.state.setPlaying(null);
+      this.#notesHeard(index, messageIds);
     });
+  }
+
+  /** Notes the child listened to the end of: receipt, count, and delete. */
+  #notesHeard(index: ButtonIndex, messageIds: readonly string[]): void {
+    if (messageIds.length === 0) return;
+    /*
+     * The receipt is the only way the sender learns a child heard them, and a parent can turn
+     * it off — playing a message should never depend on whether we are willing to report it,
+     * so the local half happens either way.
+     */
+    if (this.#config.current.whatsapp.markPlayedAsRead) {
+      this.#markRead?.(index, messageIds);
+    }
+    // Local and unconditional, unlike the receipt above: what the child heard is this box's
+    // own business, and a parent who turned receipts off has not asked to stop counting.
+    this.#stats?.recordPlayed(index, messageIds.length);
+    void this.#deletePlayed(messageIds, index);
   }
 
   /* ---- capture lifecycle ---- */
@@ -399,20 +540,24 @@ export class DeviceController {
    * Both steps live inside the stored promise rather than being awaited here, because
    * `#commitCapture` and `#discardCapture` already await it (see `#captures`): a button
    * released during the bip finds a capture that is still opening and tears it down properly,
-   * which is exactly the case the promise was introduced for.
+   * which is exactly the case the promise was introduced for. What it finds is the token, not
+   * yet a microphone: the discard marks it cancelled, and the bip, once it ends, opens nothing.
    */
   #beginCapture(index: ButtonIndex): void {
     if (this.#captures.has(index)) return;
     const silent = this.state.silentMode;
+    const token = { cancelled: false };
     // No microphone, or no browser attached: the press simply produces nothing, and the
     // null is what commit and discard below check for.
-    this.#captures.set(
-      index,
-      (async (): Promise<RecordingHandle | null> => {
-        if (shouldPlayCue(AudioCue.Pop, silent)) await this.#safeCue(AudioCue.Pop);
-        return await this.#hal.startRecording(index).catch(() => null);
-      })(),
-    );
+    const handle = (async (): Promise<RecordingHandle | null> => {
+      if (shouldPlayCue(AudioCue.Pop, silent)) await this.#safeCue(AudioCue.Pop);
+      if (token.cancelled) return null;
+      return await this.#hal.startRecording(index).catch((error: unknown) => {
+        this.#fault('capture-start', index, error);
+        return null;
+      });
+    })();
+    this.#captures.set(index, { handle, token });
   }
 
   async #commitCapture(index: ButtonIndex): Promise<void> {
@@ -420,7 +565,7 @@ export class DeviceController {
     this.#captures.delete(index);
     this.state.setRecording(null);
 
-    const handle = pending ? await pending : null;
+    const handle = pending ? await pending.handle : null;
     if (!handle) return;
 
     /*
@@ -435,11 +580,10 @@ export class DeviceController {
       const result = await this.#hal.stopRecording(handle);
       path = result.path;
       durationMs = result.durationMs;
-    } catch {
+    } catch (error: unknown) {
       // Capture failed after the fact — tell the child nothing was sent.
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        await this.#safeCue(AudioCue.Oops);
-      }
+      this.#fault('capture-finalise', index, error);
+      await this.#courtesyCue(AudioCue.Oops);
       return;
     }
 
@@ -451,10 +595,12 @@ export class DeviceController {
      * sending a click.
      */
     if (durationMs < MIN_USABLE_AUDIO_MS) {
-      await rm(path, { force: true }).catch(() => undefined);
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        await this.#safeCue(AudioCue.Oops);
-      }
+      // Not an exception, but the one signal that a microphone is delivering nothing at all.
+      this.#fault('capture-empty', index, undefined, { durationMs });
+      await rm(path, { force: true }).catch((error: unknown) => {
+        this.#fault('delete', index, error, { path });
+      });
+      await this.#courtesyCue(AudioCue.Oops);
       return;
     }
 
@@ -466,9 +612,12 @@ export class DeviceController {
      * reported, visually: `reportMessageSent` flashes the lamp. Only a *failure* now adds a
      * second sound, which is the case actually worth interrupting a child for.
      */
-    if (shouldPlayCue(AudioCue.Whoosh, this.state.silentMode)) {
-      await this.#safeCue(AudioCue.Whoosh);
-    }
+    /*
+     * Held back if the child has already moved on to listening — finalising takes seconds on
+     * the Pi, and a whoosh then would cut off the note they tapped for. The lamp still flashes
+     * on delivery.
+     */
+    await this.#courtesyCue(AudioCue.Whoosh);
 
     try {
       await this.#send({ index, path, durationMs });
@@ -476,11 +625,11 @@ export class DeviceController {
       // Only a send WhatsApp accepted. A failed one already told the child "oops"; counting it
       // would make the panel disagree with what the box actually did.
       this.#stats?.recordSent(index, durationMs);
-    } catch {
-      // Delivery failed. The file stays for the purge to collect.
-      if (shouldPlayCue(AudioCue.Oops, this.state.silentMode)) {
-        await this.#safeCue(AudioCue.Oops);
-      }
+    } catch (error: unknown) {
+      this.#fault('send', index, error);
+      // Delivery failed. The file stays for the purge to collect. The "oops" can arrive up to a
+      // minute later, which is exactly when the child may be listening to something else.
+      await this.#courtesyCue(AudioCue.Oops);
     }
   }
 
@@ -488,31 +637,43 @@ export class DeviceController {
     const pending = this.#captures.get(index);
     this.#captures.delete(index);
     if (this.state.recording === index) this.state.setRecording(null);
+    if (!pending) return;
 
+    // Set before the await: a capture still behind its bip then never opens at all.
+    pending.token.cancelled = true;
     // Waits for a capture that is still opening, rather than walking away from it.
-    const handle = pending ? await pending : null;
+    const handle = await pending.handle;
     if (!handle) return;
 
     try {
       await this.#hal.cancelRecording(handle);
-    } catch {
+    } catch (error: unknown) {
       // Nothing more to do; the purge will collect any partial file.
+      this.#fault('capture-cancel', index, error);
     }
   }
 
   async #playQueue(index: ButtonIndex): Promise<void> {
+    // A second tap on the playing button asks for what is already playing. Returning here
+    // also keeps its `finally` from releasing the lock while the first run is still going.
+    if (this.#listeningTo !== null) return;
+    // Set before the first await, in the same tick as the tap's release.
+    this.#listeningTo = index;
+
     /*
      * Let any microphone this press opened close first. On the WM8960 both directions hang
      * off one I2S clock, so starting a note while `arecord` is still being torn down asks the
      * codec for two things at once. `#discardCapture` swallows its own errors, so this only
      * ever waits — and it is a SIGTERM and a process exit, not audio.
      */
-    await this.#teardown;
-
     try {
+      await this.#teardown;
       await this.queue.playQueue(index);
-    } catch {
+    } catch (error: unknown) {
+      this.#fault('playback', index, error);
       this.state.setPlaying(null);
+    } finally {
+      this.#listeningTo = null;
     }
   }
 
@@ -524,11 +685,23 @@ export class DeviceController {
       this.#playedPaths(messageIds)
         .filter((path) => !stillQueued.has(path))
         .map(async (path) => {
-          await rm(path, { force: true }).catch(() => undefined);
+          await rm(path, { force: true }).catch((error: unknown) => {
+            this.#fault('delete', index, error, { path });
+          });
           // The decode `prepare()` made is derived from a file that no longer exists.
           await this.#hal.release(path);
         }),
     );
+  }
+
+  /** Deletes one note's file and the decode `prepare()` made of it. Never rejects. */
+  async #discard(path: string): Promise<void> {
+    await rm(path, { force: true }).catch((error: unknown) => {
+      this.#fault('delete', null, error, { path });
+    });
+    await this.#hal.release(path).catch((error: unknown) => {
+      this.#fault('delete', null, error, { path });
+    });
   }
 
   #playedPaths(messageIds: readonly string[]): string[] {
@@ -546,8 +719,11 @@ export class DeviceController {
   /* ---- quiet hours ---- */
 
   /**
-   * Applies the schedule and sleeps exactly until the next boundary, rather than polling
-   * every minute — on a device that runs for months, that adds up.
+   * Applies the schedule on its edges and sleeps exactly until the next boundary, rather than
+   * polling every minute — on a device that runs for months, that adds up.
+   *
+   * Only an edge applies it (see `#scheduleInWindow`): the capped wake-ups in between exist to
+   * catch clock changes, not to overrule the chord.
    */
   #evaluateQuietHours(): void {
     if (this.#quietHoursTimer) {
@@ -558,13 +734,17 @@ export class DeviceController {
 
     const { quietHours } = this.#config.current;
     const now = new Date();
-    this.state.setScheduledSilent(isWithinQuietHours(quietHours, now));
+    const inWindow = isWithinQuietHours(quietHours, now);
+    if (inWindow !== this.#scheduleInWindow) {
+      this.#scheduleInWindow = inWindow;
+      this.state.setScheduledSilent(inWindow);
+    }
 
-    const minutes = minutesUntilNextTransition(quietHours, now);
-    if (minutes === null) return;
+    const untilBoundary = msUntilNextTransition(quietHours, now);
+    if (untilBoundary === null) return;
 
     // Cap the sleep so clock changes and DST shifts self-correct.
-    const delay = Math.min(minutes * 60 * 1000, QUIET_HOURS_MAX_SLEEP_MS);
+    const delay = Math.min(untilBoundary, QUIET_HOURS_MAX_SLEEP_MS);
     this.#quietHoursTimer = setTimeout(() => {
       this.#evaluateQuietHours();
     }, delay);
@@ -575,11 +755,47 @@ export class DeviceController {
     return this.#config.current.audio;
   }
 
+  /**
+   * Every cue that tells the child something, through one gate.
+   *
+   * Two rules, and this is the only place either is applied. Silent mode suppresses it
+   * (`shouldPlayCue`). And **nothing plays over a note**: the speaker is one output, a cue cuts
+   * off whatever is playing (`HalCore.playCue`), and a note cut off by a chime used to be counted
+   * as heard, deleted and reported read to its sender. While a queue plays, the lamp says
+   * everything these would. The bip, which the lockout keeps from ever coinciding with
+   * playback, and the admin panel's speaker test are the only cues that do not come through here.
+   */
+  async #courtesyCue(cue: AudioCue): Promise<void> {
+    if (!shouldPlayCue(cue, this.state.silentMode)) return;
+    if (this.#listeningTo !== null) return;
+    await this.#safeCue(cue);
+  }
+
   async #safeCue(cue: AudioCue): Promise<void> {
     try {
       await this.#hal.playCue(cue);
-    } catch {
+    } catch (error: unknown) {
       // Cues are non-essential; never let one break the interaction.
+      this.#fault('cue', null, error, { cue });
+    }
+  }
+
+  /** Reports a swallowed failure. A reporter that throws must not break the press either. */
+  #fault(
+    kind: DeviceFaultKind,
+    index: ButtonIndex | null,
+    error?: unknown,
+    detail?: Readonly<Record<string, string | number>>,
+  ): void {
+    try {
+      this.#onFault?.({
+        kind,
+        index,
+        ...(error === undefined ? {} : { error }),
+        ...(detail === undefined ? {} : { detail }),
+      });
+    } catch {
+      // Deliberately silent: reporting is the one thing here that is allowed to fail quietly.
     }
   }
 }

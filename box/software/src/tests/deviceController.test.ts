@@ -11,6 +11,7 @@ const {
   recordThresholdMs: RECORD_THRESHOLD_MS,
   minRecordingMs: MIN_RECORDING_MS,
   resumeGraceMs: RESUME_GRACE_MS,
+  silentComboMs: SILENT_COMBO_MS,
 } = DEFAULT_BUTTON_TIMINGS;
 
 /**
@@ -25,6 +26,8 @@ const HOLD_MS = RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 500;
 import {
   DeviceController,
   MIN_USABLE_AUDIO_MS,
+  type DeviceFault,
+  QUIET_HOURS_MAX_SLEEP_MS,
   type OutboundRequest,
   type StatsRecorder,
 } from '../core/deviceController.ts';
@@ -53,6 +56,8 @@ let sendResult: 'ok' | 'fail';
  * events count, not how they are written to a card. The store has its own suite.
  */
 let counted: { kind: 'sent' | 'received' | 'played'; index: number; value: number | null }[];
+/** Every failure the controller swallowed and reported, in order. */
+let faults: DeviceFault[];
 
 async function buildConfig(): Promise<DeviceConfig> {
   const template = configSchema.parse(
@@ -93,6 +98,7 @@ beforeEach(async () => {
   sent = [];
   marked = [];
   counted = [];
+  faults = [];
   sendResult = 'ok';
   const stats: StatsRecorder = {
     recordSent: (index, durationMs) => counted.push({ kind: 'sent', index, value: durationMs }),
@@ -112,12 +118,13 @@ beforeEach(async () => {
       marked.push({ index, messageIds: [...messageIds] });
     },
     stats,
+    onFault: (fault) => faults.push(fault),
   });
   controller.setStatus(DeviceStatus.Ready);
 });
 
 afterEach(async () => {
-  await controller.stop();
+  await controller.dispose();
   vi.useRealTimers();
   await rm(workDir, { recursive: true, force: true });
 });
@@ -142,6 +149,32 @@ async function waitFor(predicate: () => boolean, label: string, attempts = 500):
     await new Promise((resolve) => setImmediate(resolve));
   }
   throw new Error(`waitFor timed out waiting for: ${label}`);
+}
+
+/**
+ * Holds every cue open until the returned function is called, so a test can act while the bip
+ * is still playing. Every cue, not just the bip: releasing a press plays the "oops" too, and
+ * resolving only the most recent one would leave the bip — and the capture behind it — pending
+ * forever.
+ */
+function holdCues(): { release: () => void; restore: () => void } {
+  const pending: (() => void)[] = [];
+  const original = hal.playCue.bind(hal);
+  const spy = vi.spyOn(hal, 'playCue').mockImplementation(async (cue) => {
+    // Still logged by the mock, so `cueSequence()` shows what was asked for.
+    await original(cue);
+    await new Promise<void>((resolve) => {
+      pending.push(resolve);
+    });
+  });
+  return {
+    release: () => {
+      for (const resolve of pending.splice(0)) resolve();
+    },
+    restore: () => {
+      spy.mockRestore();
+    },
+  };
 }
 
 /**
@@ -358,16 +391,9 @@ describe('holds on a button with notes waiting', () => {
      * The child is being told to listen, so an "oops" here would cut across the message —
      * cues and playback share one output. The lamp under their finger is the whole answer.
      */
-    // Assigned synchronously by the executor below, which is why it is never undefined here.
-    let finishPlayback: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      finishPlayback = resolve;
-    });
     const path = queueNote();
-    hal.play = async (file: string): Promise<void> => {
-      hal.filesPlayed.push({ path: file, at: Date.now() });
-      await gate;
-    };
+    // The note stays playing until finishPlayback(), and a cue would cut it off, as on the device.
+    hal.holdPlayback = true;
 
     // A tap starts the queue, and it stays open until the gate is released.
     await press(0, 300);
@@ -385,8 +411,8 @@ describe('holds on a button with notes waiting', () => {
     expect(sent).toHaveLength(0);
 
     // And the message the hold interrupted nothing of finishes normally.
-    expect(finishPlayback).toBeTypeOf('function');
-    finishPlayback?.();
+    expect(hal.nowPlaying).toBe(path);
+    hal.finishPlayback();
     await waitFor(() => controller.state.unreadCount(0) === 0, 'the queue to drain');
   });
 
@@ -449,6 +475,183 @@ describe('taps', () => {
     await press(0, 50);
 
     expect(hal.cueSequence()).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * While a note plays, the other buttons wait for it. The speaker is centimetres from the
+ * microphone and cues share its output, so a bip, an "oops" or an open capture would all land
+ * on top of the message the child is listening to.
+ */
+describe('while a note is playing', () => {
+  /** Queues a note on button 0, taps it, and holds playback open until the returned call. */
+  async function startPlayback(): Promise<() => Promise<void>> {
+    hal.holdPlayback = true;
+    controller.handleIncoming(0, {
+      messageId: 'm-playing',
+      path: join(workDir, 'm-playing.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 5000,
+    });
+
+    await press(0, 300);
+    await waitFor(() => controller.state.playing === 0, 'playback to start');
+    hal.clearHistory();
+
+    return async () => {
+      hal.finishPlayback();
+      await waitFor(() => controller.state.playing === null, 'playback to finish');
+    };
+  }
+
+  it('ignores a hold on another button: no bip, no microphone, no send', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const finish = await startPlayback();
+
+    await press(1, HOLD_MS);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(hal.cueSequence()).toEqual([]);
+    expect(sent).toHaveLength(0);
+    await finish();
+  });
+
+  it('ignores a tap on another button, rather than beeping over the message', async () => {
+    const finish = await startPlayback();
+
+    await press(2, 100);
+
+    expect(hal.cueSequence()).toEqual([]);
+    await finish();
+  });
+
+  it('does not queue up another contact’s notes behind it', async () => {
+    const finish = await startPlayback();
+    controller.handleIncoming(1, {
+      messageId: 'm-waiting',
+      path: join(workDir, 'm-waiting.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+    hal.clearHistory();
+
+    await press(1, 100);
+    await finish();
+    await flush();
+
+    // The tap was nothing, so nothing plays after the first note: button 1 is still blinking.
+    expect(hal.playSequence()).toEqual([]);
+    expect(controller.state.unreadCount(1)).toBe(1);
+  });
+
+  it('frees the other buttons once the note has finished', async () => {
+    hal.fixedDurationMs = 3000;
+    const finish = await startPlayback();
+    await finish();
+
+    await press(1, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
+
+    expect(sent[0]).toMatchObject({ index: 1 });
+  });
+
+  /*
+   * The ordinary case that used to lose a message: a second note arrives while the child is
+   * listening to the first. The arrival chime cut the first note off — one speaker — and the cut
+   * note was counted as heard, deleted, and reported read. Then the drain zeroed the count, so
+   * the second note's lamp went dark as well.
+   */
+  it('does not let a note arriving mid-playback cut off the one being heard', async () => {
+    const finish = await startPlayback();
+
+    controller.handleIncoming(0, {
+      messageId: 'm-second',
+      path: join(workDir, 'm-second.ogg'),
+      receivedAt: Date.now(),
+      durationMs: 1200,
+    });
+    await flush();
+
+    // No chime over the note: it is still playing, and nothing was deleted or marked read.
+    expect(hal.cueSequence()).toEqual([]);
+    expect(hal.nowPlaying).toBe(join(workDir, 'm-playing.ogg'));
+    expect(marked).toEqual([]);
+
+    await finish();
+    await flush();
+
+    // The first note was heard to the end, so it is the only one reported and counted.
+    expect(marked).toEqual([{ index: 0, messageIds: ['m-playing'] }]);
+    expect(counted.filter((entry) => entry.kind === 'played')).toEqual([
+      { kind: 'played', index: 0, value: 1 },
+    ]);
+    // And the second is still waiting, with its lamp still lit.
+    expect(controller.queue.count(0)).toBe(1);
+    expect(controller.state.unreadCount(0)).toBe(1);
+  });
+
+  it('puts a note that was cut off back in the queue, unheard', async () => {
+    /*
+     * The admin panel's speaker test is the one cue allowed to play over anything. Whatever it
+     * interrupts must survive it: back in the queue, lamp lit, not deleted, not reported read.
+     */
+    const path = join(workDir, 'm-playing.ogg');
+    await writeFile(path, 'note');
+    await startPlayback();
+
+    await controller.playTestCue();
+    await waitFor(() => controller.state.playing === null, 'playback to stop');
+    await flush();
+
+    expect(controller.queue.count(0)).toBe(1);
+    expect(controller.state.unreadCount(0)).toBe(1);
+    expect(marked).toEqual([]);
+    expect(counted.filter((entry) => entry.kind === 'played')).toEqual([]);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it('holds back the "oops" of a send that fails while the child is listening', async () => {
+    // A failed send answers up to a minute later, which is exactly when a queue may be playing.
+    hal.fixedDurationMs = 3000;
+    sendResult = 'fail';
+    let failSend: (() => void) | undefined;
+    const pendingSend = new Promise<void>((_resolve, reject) => {
+      failSend = () => reject(new Error('bridge offline'));
+    });
+    const deferred = new DeviceController({
+      hal,
+      config,
+      send: () => pendingSend,
+    });
+    await controller.dispose();
+    controller = deferred;
+    controller.setStatus(DeviceStatus.Ready);
+
+    await press(1, HOLD_MS);
+    await waitFor(() => hal.cueSequence().includes(AudioCue.Whoosh), 'the send to start');
+    const finish = await startPlayback();
+
+    failSend?.();
+    await flush();
+    expect(hal.cueSequence()).not.toContain(AudioCue.Oops);
+    expect(hal.nowPlaying).toBe(join(workDir, 'm-playing.ogg'));
+    await finish();
+  });
+
+  it('keeps ignoring a button held down across the end of playback', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const finish = await startPlayback();
+
+    hal.pressButton(1);
+    await vi.advanceTimersByTimeAsync(100);
+    await finish();
+    await vi.advanceTimersByTimeAsync(HOLD_MS);
+    hal.releaseButton(1);
+    await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+    await flush();
+
+    expect(start).not.toHaveBeenCalled();
     expect(sent).toHaveLength(0);
   });
 });
@@ -604,6 +807,59 @@ describe('receiving', () => {
   });
 });
 
+describe('a note deleted for everyone', () => {
+  async function arrive(index: 0 | 1 | 2, messageId: string): Promise<string> {
+    const path = join(workDir, `wa-${String(index)}-${messageId}.ogg`);
+    await writeFile(path, 'ogg');
+    controller.handleIncoming(index, { messageId, path, receivedAt: Date.now(), durationMs: 900 });
+    return path;
+  }
+
+  it('comes off its button and off the card, and the lamp follows the queue', async () => {
+    const kept = await arrive(1, 'KEEP');
+    const revoked = await arrive(1, 'GONE');
+
+    expect(controller.revokeNote(1, 'GONE')).toBe(true);
+
+    expect(controller.queue.peek(1).map((note) => note.path)).toEqual([kept]);
+    expect(controller.state.unreadCount(1)).toBe(1);
+    await waitFor(() => !existsSync(revoked), 'the revoked file to be deleted');
+    await waitFor(() => hal.released.includes(revoked), 'its decode to be released');
+    expect(existsSync(kept)).toBe(true);
+  });
+
+  it('puts the lamp out when it was the only note', async () => {
+    await arrive(0, 'ONLY');
+
+    controller.revokeNote(0, 'ONLY');
+
+    expect(controller.state.unreadCount(0)).toBe(0);
+  });
+
+  it('does nothing for an id no queue holds, or one queued on another button', async () => {
+    const path = await arrive(2, 'MINE');
+
+    expect(controller.revokeNote(2, 'UNKNOWN')).toBe(false);
+    expect(controller.revokeNote(0, 'MINE')).toBe(false);
+
+    expect(controller.state.unreadCount(2)).toBe(1);
+    await flush();
+    expect(existsSync(path)).toBe(true);
+    expect(hal.released).toEqual([]);
+  });
+
+  it('is never reported read — nothing was heard', async () => {
+    await arrive(1, 'KEEP');
+    await arrive(1, 'GONE');
+
+    controller.revokeNote(1, 'GONE');
+    await press(1, 100);
+    await waitFor(() => marked.length > 0, 'the queue to drain');
+
+    expect(marked).toEqual([{ index: 1, messageIds: ['KEEP'] }]);
+  });
+});
+
 describe('boot announcement', () => {
   it('plays the boot sound once when the boot window opens', async () => {
     hal.clearHistory();
@@ -675,7 +931,7 @@ describe('silent mode', () => {
    * on every machine but Greenwich.
    */
   async function withQuietHours(now: Date): Promise<DeviceController> {
-    await controller.stop();
+    await controller.dispose();
     await config.update({
       quietHours: { enabled: true, startTime: '20:00', endTime: '07:00', timezone: 'UTC' },
     });
@@ -693,18 +949,67 @@ describe('silent mode', () => {
 
     expect(scheduled.state.silentMode).toBe(true);
     expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
-    await scheduled.stop();
+    await scheduled.dispose();
   });
 
   it('stays audible outside quiet hours', async () => {
     const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 12, 0, 0)));
 
     expect(scheduled.state.silentMode).toBe(false);
-    await scheduled.stop();
+    await scheduled.dispose();
+  });
+
+  it('falls silent on the boundary itself, not up to a minute after it', async () => {
+    // Thirty seconds before 20:00. Counting whole minutes slept a full one from here.
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 19, 59, 30)));
+    expect(scheduled.state.silentMode).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30 * 1000);
+    expect(scheduled.state.silentMode).toBe(true);
+    await scheduled.dispose();
+  });
+
+  /*
+   * The schedule used to be re-asserted on every wake, and the wakes are capped at 15 minutes,
+   * so a parent who forced sound back on at bedtime had it taken away again within a quarter
+   * of an hour. The override now lasts until the schedule next changes its mind.
+   */
+  it('keeps a chord override until the next boundary, then follows the schedule again', async () => {
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 22, 30, 0)));
+    expect(scheduled.state.silentMode).toBe(true);
+
+    hal.pressButton(0);
+    hal.pressButton(2);
+    await vi.advanceTimersByTimeAsync(SILENT_COMBO_MS + 100);
+    hal.releaseButton(0);
+    hal.releaseButton(2);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    // Past the capped re-evaluation, still inside the window: the override stands.
+    await vi.advanceTimersByTimeAsync(QUIET_HOURS_MAX_SLEEP_MS + 1000);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    /*
+     * The clock is moved rather than run: a night of 50 ms LED ticks is too slow to advance
+     * through. `setSystemTime` leaves pending timers where they were, so the next wake lands
+     * at most one cap after each jump — two caps is enough to cross the boundary.
+     */
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 16, 6, 59, 0)));
+    await vi.advanceTimersByTimeAsync(2 * QUIET_HOURS_MAX_SLEEP_MS);
+    // The window ended with sound already on; nothing to change, and nothing flipped.
+    expect(scheduled.state.silentMode).toBe(false);
+
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 16, 19, 59, 0)));
+    await vi.advanceTimersByTimeAsync(2 * QUIET_HOURS_MAX_SLEEP_MS);
+    // The next night starts as scheduled — the override was for one night, not for good.
+    expect(scheduled.state.silentMode).toBe(true);
+    expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
+    await scheduled.dispose();
   });
 
   it('reads the window in the configured zone, not the device clock', async () => {
-    await controller.stop();
+    await controller.dispose();
     await config.update({
       quietHours: {
         enabled: true,
@@ -720,7 +1025,7 @@ describe('silent mode', () => {
     await scheduled.start();
 
     expect(scheduled.state.silentMode).toBe(true);
-    await scheduled.stop();
+    await scheduled.dispose();
   });
 });
 
@@ -767,32 +1072,184 @@ describe('the silent-mode chord', () => {
    * not finished opening. Losing that cancel left a capture running for the life of the
    * process, and the next press on that button reused the stale handle — the child's next
    * voice note would have been everything recorded since.
+   *
+   * Closing it afterwards was the first fix; the microphone still opened, on top of the "oops"
+   * the release had just played. Now the cancel reaches the capture before the bip ends, and
+   * nothing opens at all.
    */
-  it('closes a capture that was still opening behind the bip', async () => {
-    // Every cue is held open, not just the bip: releasing the press plays the "oops" too, and
-    // resolving only the most recent one would leave the bip — and the capture behind it —
-    // pending forever.
-    const pendingCues: (() => void)[] = [];
-    vi.spyOn(hal, 'playCue').mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          pendingCues.push(resolve);
-        }),
-    );
+  it('never opens the microphone for a press released during the bip', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const cues = holdCues();
 
     hal.pressButton(0);
     await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 10);
     // The bip is still playing, so no microphone exists yet to cancel.
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop]);
     expect(hal.activeRecordings.size).toBe(0);
 
     hal.releaseButton(0);
-    for (const resolve of pendingCues) resolve();
+    cues.release();
     await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
     await flush();
 
-    expect(hal.cancelledRecordings).toHaveLength(1);
+    expect(start).not.toHaveBeenCalled();
     expect(hal.activeRecordings.size).toBe(0);
     expect(sent).toHaveLength(0);
+
+    // And the button still records afterwards, into a capture of its own.
+    cues.restore();
+    hal.fixedDurationMs = 3000;
+    await press(0, HOLD_MS);
+    await waitFor(() => sent.length === 1, 'the next recording to be sent');
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('never opens the microphone once stopped, even behind a bip still playing', async () => {
+    const start = vi.spyOn(hal, 'startRecording');
+    const cues = holdCues();
+
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 10);
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop]);
+
+    const stopped = controller.stop();
+    cues.release();
+    await stopped;
+    await flush();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(hal.activeRecordings.size).toBe(0);
+  });
+
+  it('closes a microphone that was already open when stopped', async () => {
+    hal.pressButton(0);
+    await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 100);
+    expect(hal.activeRecordings.size).toBe(1);
+
+    await controller.stop();
+
+    expect(hal.activeRecordings.size).toBe(0);
+    expect(hal.cancelledRecordings).toHaveLength(1);
+    expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * Failures the child never hears about beyond an "oops" still have to reach the journal. Each was
+ * once caught and dropped here, which left a box on the bench answering "oops" with nothing logged.
+ */
+describe('a button with no contact', () => {
+  it('never opens the microphone, answers "oops" and sends nothing', async () => {
+    // Bench finding 2026-09-30: it used to record, encode and fail in the bridge.
+    await config.update({ contacts: { button2: { enabled: false } } });
+    await controller.dispose();
+    controller = new DeviceController({
+      hal,
+      config,
+      send: (request) => {
+        sent.push(request);
+        return Promise.resolve();
+      },
+      onFault: (fault) => faults.push(fault),
+    });
+    controller.setStatus(DeviceStatus.Ready);
+    const start = vi.spyOn(hal, 'startRecording');
+    hal.clearHistory();
+
+    await press(1, HOLD_MS);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
+    expect(sent).toHaveLength(0);
+    expect(faults).toEqual([]);
+  });
+});
+
+describe('reported faults', () => {
+  const kinds = (): string[] => faults.map((fault) => fault.kind);
+
+  it('reports a microphone that would not open', async () => {
+    hal.failRecording = true;
+    await press(0, HOLD_MS);
+
+    expect(faults).toContainEqual(expect.objectContaining({ kind: 'capture-start', index: 0 }));
+    expect(faults.find((fault) => fault.kind === 'capture-start')?.error).toBeInstanceOf(Error);
+  });
+
+  it('reports a take that came back with no audio, with its length', async () => {
+    // Not an exception, but the one sign of a microphone that delivers nothing at all.
+    hal.fixedDurationMs = MIN_USABLE_AUDIO_MS - 50;
+    await press(1, HOLD_MS);
+    await waitFor(() => kinds().includes('capture-empty'), 'the empty take to be reported');
+
+    expect(faults.find((fault) => fault.kind === 'capture-empty')).toMatchObject({
+      index: 1,
+      detail: { durationMs: MIN_USABLE_AUDIO_MS - 50 },
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('reports a send WhatsApp did not accept', async () => {
+    hal.fixedDurationMs = 3000;
+    sendResult = 'fail';
+    await press(2, HOLD_MS);
+    await waitFor(() => kinds().includes('send'), 'the failed send to be reported');
+
+    expect(faults.find((fault) => fault.kind === 'send')).toMatchObject({ index: 2 });
+  });
+
+  it('reports a note that would not play', async () => {
+    const path = join(workDir, 'm-broken.ogg');
+    controller.handleIncoming(0, {
+      messageId: 'm-broken',
+      path,
+      receivedAt: Date.now(),
+      durationMs: 900,
+    });
+    hal.failPlayback = true;
+    await press(0, 300);
+    await waitFor(() => kinds().includes('playback'), 'the failed playback to be reported');
+
+    expect(faults.find((fault) => fault.kind === 'playback')).toMatchObject({
+      index: 0,
+      detail: { path },
+    });
+  });
+
+  it('reports a cue that would not play, naming it', async () => {
+    // The bip, on a button with nothing waiting: the press carries on without it.
+    hal.failPlayback = true;
+    await press(1, HOLD_MS);
+
+    expect(faults).toContainEqual(
+      expect.objectContaining({ kind: 'cue', detail: { cue: AudioCue.Pop } }),
+    );
+  });
+
+  it('keeps working when the reporter itself throws', async () => {
+    // Reporting must never be the thing that breaks the next press.
+    await controller.dispose();
+    const throwing = new DeviceController({
+      hal,
+      config,
+      send: (request) => {
+        sent.push(request);
+        return Promise.resolve();
+      },
+      onFault: () => {
+        throw new Error('the log is broken too');
+      },
+    });
+    controller = throwing;
+    controller.setStatus(DeviceStatus.Ready);
+    hal.failRecording = true;
+    await press(0, HOLD_MS);
+
+    hal.failRecording = false;
+    hal.fixedDurationMs = 3000;
+    await press(0, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the next press to send');
+    expect(sent[0]).toMatchObject({ index: 0 });
   });
 });
 
@@ -804,6 +1261,45 @@ describe('volume', () => {
   it('applies the configured volume to the HAL on start', async () => {
     await controller.start();
     expect(hal.volumeChanges).toContain(70);
+  });
+});
+
+describe('disposal', () => {
+  /*
+   * The listeners are attached at construction, so a controller that is only stopped keeps
+   * answering the HAL. Two on one HAL each bipped and opened a microphone for the same press.
+   */
+  it('lets go of the HAL, so a controller built after it is the only one answering', async () => {
+    await controller.dispose();
+    const start = vi.spyOn(hal, 'startRecording');
+    const rebuilt = new DeviceController({
+      hal,
+      config,
+      send: (request) => {
+        sent.push(request);
+        return Promise.resolve();
+      },
+    });
+    rebuilt.setStatus(DeviceStatus.Ready);
+    hal.fixedDurationMs = 3000;
+    hal.clearHistory();
+
+    await press(0, HOLD_MS);
+    await waitFor(() => sent.length > 0, 'the recording to be sent');
+    await flush();
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(1);
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop, AudioCue.Whoosh]);
+    expect(hal.listenerCount('buttonDown')).toBe(1);
+    await rebuilt.dispose();
+    expect(hal.listenerCount('buttonDown')).toBe(0);
+  });
+
+  it('is safe to call twice', async () => {
+    await controller.dispose();
+    await controller.dispose();
+    expect(hal.listenerCount('buttonUp')).toBe(0);
   });
 });
 
@@ -826,7 +1322,7 @@ describe('config is snapshot, not watched', () => {
     await config.update({ buttons: { recordThresholdMs: 1500 } });
 
     // Standing in for the restart.
-    await controller.stop();
+    await controller.dispose();
     const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
     rebuilt.setStatus(DeviceStatus.Ready);
 
@@ -840,7 +1336,7 @@ describe('config is snapshot, not watched', () => {
     hal.releaseButton(0);
     await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
     await flush();
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 });
 
@@ -855,12 +1351,12 @@ describe('read-only mode', () => {
   /**
    * Stands in for the restart a config save triggers, since config is snapshot at boot.
    *
-   * On a **fresh** HAL, not the shared one: `stop()` resets the interpreter but leaves the
-   * old controller's `buttonDown` listeners attached, so a press on the shared mock would be
-   * answered by the two-way controller as well and the cue log would carry both replies.
+   * On a **fresh** HAL, so the cue log starts empty. The two-way controller is disposed as
+   * well, not just stopped: `stop()` leaves its `buttonDown` listeners attached, and a press on
+   * a shared mock would be answered by both controllers.
    */
   async function readOnlyController(quietHours = false): Promise<DeviceController> {
-    await controller.stop();
+    await controller.dispose();
     await config.update({
       mode: { readOnly: true },
       ...(quietHours
@@ -910,7 +1406,7 @@ describe('read-only mode', () => {
     // Releasing adds nothing: no bip, no whoosh, no second oops, and nothing sent.
     expect(hal.cueSequence()).toEqual([AudioCue.Oops]);
     expect(sent).toHaveLength(0);
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 
   it('still plays a waiting note on a tap', async () => {
@@ -930,7 +1426,7 @@ describe('read-only mode', () => {
 
     expect(hal.playSequence()).toEqual([join(workDir, 'm-ro.ogg')]);
     expect(hal.cueSequence()).not.toContain(AudioCue.Oops);
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 
   it('says nothing at all during quiet hours', async () => {
@@ -948,7 +1444,7 @@ describe('read-only mode', () => {
     expect(hal.cueSequence()).toEqual([]);
     expect(hal.activeRecordings.size).toBe(0);
     expect(sent).toHaveLength(0);
-    await rebuilt.stop();
+    await rebuilt.dispose();
   });
 });
 

@@ -5,9 +5,11 @@ proven.
 
 > **The audio is measured; the GPIO is not.** Everything about the WM8960 HAT below — its mixer
 > control names, the 26 dB of amplifier stages, the three microphone settings — was measured on a
-> real board on 2026-08-10 and 2026-08-17, and each figure says so. Everything about **buttons and
-> lamps** was written from opengpio's published API and has never run on a real chip: pin numbers and LED polarity are both unverified, and `gpioDriver.ts` carries a
-> `TODO(hardware)` banner saying so. [`hardware-bringup.md`](./hardware-bringup.md) is the order to
+> real board on 2026-08-10 and 2026-08-17, and each figure says so. The GPIO is **partly proven**: on
+> the same Pi 3B+ the driver claims all six lines and button 1 (GPIO17) registers presses. Buttons 2
+> and 3 and the three lamps are wired but not yet recorded as working, so their switch polarity, LED
+> polarity and colour order are still unverified, and `gpioDriver.ts` carries a `TODO(hardware)`
+> banner saying so. [`hardware-bringup.md`](./hardware-bringup.md) is the order to
 > prove the rest in. The section at the foot of this page is the current line between the two.
 
 ---
@@ -93,6 +95,7 @@ changes in `/etc/bloopbox/environment` followed by a service restart:
 | ------------------------- | ------------------------------------------------------- |
 | `LED_ACTIVE_HIGH=false`   | The lamps are on when they should be off — a lamp wired between 3V3 and the pin sinks instead of sourcing |
 | `BUTTON_ACTIVE_LOW=false` | Presses read backwards, or the switches went to 3V3     |
+| `BUTTON_SETTLE_MS=40`     | One press registers as two, or a hold drops and resumes — the switch chatters longer than the 20 ms default |
 
 ### The lamps run at 3 V, straight off the pin
 

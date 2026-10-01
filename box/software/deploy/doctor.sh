@@ -352,6 +352,33 @@ if [[ -d /run/systemd/system ]]; then
   else
     fail "net state" "${NET_STATE_FILE} is missing — is bloopbox-net running?"
   fi
+
+  # A Pi has no clock battery. Until something sets the time from the network it runs on
+  # whatever the last shutdown saved, and quiet hours, the purge TTL and debug mode's deadline all
+  # read that clock. So *something* must be syncing it — Pi OS ships systemd-timesyncd — and
+  # its absence is a failure; not being synced *yet* is only a warning, because it is the normal
+  # state of every boot's first minute and of any box with no internet.
+  TIME_SERVICE=
+  for candidate in systemd-timesyncd chrony chronyd ntpsec ntp openntpd; do
+    if [[ "$(systemctl is-active "${candidate}.service" 2>/dev/null)" == active ]]; then
+      TIME_SERVICE="${candidate}"
+      break
+    fi
+  done
+  if [[ -n "${TIME_SERVICE}" ]]; then
+    pass "time sync service" "${TIME_SERVICE} active"
+  else
+    fail "time sync service" "none active — the clock is never set; sudo systemctl enable --now systemd-timesyncd"
+  fi
+  if command -v timedatectl >/dev/null 2>&1; then
+    case "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" in
+      yes) pass "clock" "synced from the network" ;;
+      no) warn "clock" "not synced yet — quiet hours read a clock that may be hours out" ;;
+      *) warn "clock" "timedatectl gave no answer" ;;
+    esac
+  else
+    warn "clock" "no timedatectl — cannot tell whether the clock is synced"
+  fi
 else
   warn "network" "no running systemd — not checked"
 fi

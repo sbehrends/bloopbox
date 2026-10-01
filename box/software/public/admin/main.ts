@@ -113,6 +113,8 @@ type SystemView = {
     ageSeconds: number;
     lastError: string | null;
   } | null;
+  /** Optional: a daemon older than this panel does not send it, which reads as unknown. */
+  timeSynced?: boolean | null;
 };
 
 type StatusView = {
@@ -144,6 +146,19 @@ async function getJson(path: string): Promise<unknown> {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`${path} -> ${String(response.status)}`);
   return response.json();
+}
+
+/**
+ * A POST the device will accept. It refuses anything not labelled JSON (`src/server/csrf.ts`) —
+ * that label is what a forged form on another site cannot send — so even an action with nothing
+ * to say sends an empty object.
+ */
+async function post(path: string, body: unknown = {}): Promise<Response> {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }
 
 async function putConfig(patch: unknown): Promise<void> {
@@ -352,7 +367,7 @@ function testSpeakerButton(): HTMLElement {
     actionButton(
       'Test speaker',
       async () => {
-        const response = await fetch('/api/audio/test', { method: 'POST' });
+        const response = await post('/api/audio/test');
         if (!response.ok) throw new Error('the device could not play the test sound');
       },
       reportError,
@@ -694,7 +709,7 @@ const QR_POLL_TICKS = 4;
  */
 async function beginLinking(): Promise<void> {
   try {
-    await fetch('/api/whatsapp/link', { method: 'POST' });
+    await post('/api/whatsapp/link');
   } catch {
     // The next poll's "unavailable" message covers this; nothing more to do here.
   }
@@ -995,7 +1010,9 @@ function renderWhatsApp(
 
       if (method !== 'qr') return; // chooser and phone-number flows have nothing to poll-sync
 
-      const qr = 'qr' in read ? asText(read.qr) : '';
+      // Only a name for the current code: the open route never carries the code itself, and
+      // the image comes from the gated qr.svg. A new name is a rotation.
+      const qr = 'qrId' in read ? asText(read.qrId) : '';
       if (qr.length === 0) {
         // Awaiting pairing but between codes — the bridge is mid-rotation or reconnecting.
         deadline = Date.now();
@@ -1066,7 +1083,7 @@ function renderWhatsApp(
       confirmLabel: 'Unlink',
       busyLabel: 'Unlinking…',
       run: async () => {
-        await fetch('/api/whatsapp/unlink', { method: 'POST' });
+        await post('/api/whatsapp/unlink');
         /*
          * The route returns as soon as it has told the bridge to unlink, not once the bridge has
          * actually logged out, deleted credentials and settled into `notLinked` — that involves a
@@ -1270,7 +1287,7 @@ function renderStats(initial: StatsView): HTMLElement {
       confirmLabel: 'Reset',
       busyLabel: 'Resetting…',
       run: async () => {
-        const response = await fetch('/api/stats/reset', { method: 'POST' });
+        const response = await post('/api/stats/reset');
         if (!response.ok) throw new Error('the box would not reset the counters');
         await refresh();
       },
@@ -1314,6 +1331,19 @@ function describeSignal(signal: number | null): string {
   const quality =
     signal >= 70 ? 'strong' : signal >= 45 ? 'usable' : signal >= 25 ? 'weak' : 'very weak';
   return `${String(signal)}% — ${quality}`;
+}
+
+/**
+ * Whether the box's clock can be trusted yet.
+ *
+ * A Pi has no clock battery: until the network time answers, it runs on the time it last shut
+ * down with, and quiet hours read that clock. A reading, not a warning — "not synced yet" is the
+ * normal first minute of every boot. Unknown stays unknown: no answer is not a "no".
+ */
+function describeClock(synced: boolean | null | undefined): string {
+  if (synced === true) return 'synced';
+  if (synced === false) return 'not synced yet';
+  return 'unknown';
 }
 
 /**
@@ -1372,6 +1402,7 @@ function renderHealth(): HTMLElement {
         `${info.memory.usedPercent.toFixed(0)}% used · ${formatBytes(info.memory.availableBytes)} free of ${formatBytes(info.memory.totalBytes)}`,
       ),
       readout('Sound card', describeAudio(info.audio)),
+      readout('Clock', describeClock(info.timeSynced)),
     );
     body.append(vitals);
 
@@ -1498,7 +1529,7 @@ function renderHealth(): HTMLElement {
     }
   });
 
-  section.append(renderPower());
+  section.append(renderPower(), renderSshAccess());
   return section;
 }
 
@@ -1569,6 +1600,89 @@ function renderPower(): HTMLElement {
       ],
     }),
   );
+
+  return block;
+}
+
+type SshAccessView = { available: false } | { available: true; user: string; password: string };
+
+function isSshAccessView(value: unknown): value is SshAccessView {
+  if (typeof value !== 'object' || value === null || !('available' in value)) return false;
+  if (value.available === false) return true;
+  return (
+    value.available === true &&
+    'user' in value &&
+    typeof value.user === 'string' &&
+    'password' in value &&
+    typeof value.password === 'string'
+  );
+}
+
+/**
+ * The box's own ssh login.
+ *
+ * A flashed card has no password baked in; the device made one on its first boot
+ * (`deploy/ssh-password.sh`), and this is the one place it can be read. Fetched only when asked
+ * for, so the password is not sitting in the page for anyone glancing at an open health card,
+ * and hidden again with the same button.
+ */
+function renderSshAccess(): HTMLElement {
+  const block = element('div', 'wa-section');
+  const details = element('div');
+  const toggle = element('button', 'link-button', 'Show the ssh password');
+  toggle.type = 'button';
+  block.append(
+    element('h3', undefined, 'SSH access'),
+    element(
+      'p',
+      'field-hint',
+      'For whoever is helping debug this box. Anyone with this password can change everything ' +
+        'on it, so only share it with someone you would hand the box to.',
+    ),
+    details,
+    toggle,
+  );
+
+  let shown = false;
+  toggle.addEventListener('click', () => {
+    void (async (): Promise<void> => {
+      if (shown) {
+        details.replaceChildren();
+        toggle.textContent = 'Show the ssh password';
+        shown = false;
+        return;
+      }
+
+      toggle.disabled = true;
+      try {
+        const payload = await getJson('/api/system/ssh');
+        if (!isSshAccessView(payload)) throw new Error('unexpected reply');
+        if (!payload.available) {
+          details.replaceChildren(
+            element(
+              'p',
+              'field-hint',
+              'This box did not make its own ssh password: it was installed by hand, or its card ' +
+                'was built with one. Use that one.',
+            ),
+          );
+          return;
+        }
+        details.replaceChildren(
+          element('p', 'mono-line', `ssh ${payload.user}@${window.location.hostname}`),
+          element('p', 'mono-line', `password  ${payload.password}`),
+        );
+        toggle.textContent = 'Hide the ssh password';
+        shown = true;
+      } catch {
+        details.replaceChildren(
+          element('p', 'field-hint is-bad', 'The box did not answer — it may be restarting.'),
+        );
+      } finally {
+        toggle.disabled = false;
+      }
+    })();
+  });
 
   return block;
 }
@@ -1735,7 +1849,7 @@ function renderFactoryReset(): HTMLElement {
       busyLabel: 'Erasing…',
       run: async () => {
         try {
-          const response = await fetch('/api/factory-reset', { method: 'POST' });
+          const response = await post('/api/factory-reset');
           if (!response.ok) throw new Error('the box would not accept that');
         } catch {
           /*

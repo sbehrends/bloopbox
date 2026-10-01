@@ -74,6 +74,17 @@ values below are the shipped defaults.
 
 7. A press shorter than `debounceMs` (60 ms) is ignored entirely, silently — that is a toddler
    brushing past.
+8. **One button at a time.** While a button is held, or its message is waiting out the carry-on
+   window, the other two do nothing at all — no lamp, no sound, no second message — and a button
+   that went down during that time stays ignored until it is let go, even if it is still held after
+   the first one finishes. A child clutching one button while grabbing at the others keeps the
+   message they are speaking. The one exception is the silent-mode chord (below): the other outer
+   button can still join, but only within the tap boundary of step 6. Past it the child is sending,
+   and the chord cannot cut them off.
+
+   **The same holds while messages are playing.** Until the last note of the queue has finished,
+   the other two buttons do nothing — the child is listening, and a bip, an "oops" or an open
+   microphone beside the speaker would all land on top of the message. The chord waits too.
 
 Bounds:
 
@@ -89,11 +100,19 @@ Bounds:
 ### Receiving a message
 
 1. A voice note arrives from a **whitelisted** contact (§4). Anything else is dropped before it is
-   downloaded.
-2. In audible mode a soft **"notify"** chime plays. The assigned lamp starts **blinking slowly**
-   (0.8 s on / 0.8 s off).
+   downloaded. A chat with **disappearing messages** on is an ordinary chat here — its notes arrive
+   like any other. A **view-once** note is ignored: whether a box that replays until the queue
+   drains may take one at all is an open question (`PENDING.md`).
+2. In audible mode a soft **"notify"** chime plays — **unless a note is already playing**, when it
+   is held back. The assigned lamp starts **blinking slowly** (0.8 s on / 0.8 s off).
+
+   > The speaker is one output, so a chime cuts off whatever is playing. It used to, and the note
+   > it cut off was counted as heard, deleted and reported read. Nothing plays over a note now —
+   > not the chime, the whoosh or the "oops" — and a note that is cut off anyway (the admin panel's
+   > speaker test is the one sound allowed to) goes back to the front of its queue, still unread.
 3. The child taps that button once. Every pending note from that sender plays **sequentially, oldest
-   first**, separated by a short soft chime, and the lamp goes out once the queue finishes.
+   first**, separated by a short soft chime, and the lamp goes out once the queue finishes — or
+   keeps blinking if another note arrived while it played.
 
    The note is **decoded to WAV when it arrives**, not when it is tapped. `aplay` reads no other
    container, and paying for an ffmpeg process at the tap put a visible pause between a child
@@ -103,6 +122,14 @@ Bounds:
    because it also reports *when* a small child is at the box.
 
 A played note's file is deleted immediately, which is what makes *present on disk* mean *unread*.
+
+**"Delete for everyone" is honoured.** If the sender deletes a note the box is still holding, it
+comes off the button and off the card, and the lamp follows what is left — out if that was the only
+one. Nothing is marked read. Only the chat that sent it can take it back: the revoke goes through
+the same whitelist, and must name a note queued on that chat's own button. A note that has
+**already started playing is left to finish** — cutting a voice off mid-word is a stranger thing
+for a child than hearing the end of it — and is then deleted as heard, like any other. A note later
+in the same run is skipped.
 
 ### Listening comes first
 
@@ -135,6 +162,17 @@ The details, all of which are the difference between a rule and an annoyance:
 - **The block lifts when the queue drains**, which is the same instant the lamp goes out (§6). The
   lamp is therefore an exact statement of the rule: blinking means "listen first".
 - Like every other refusal it is the "oops", so it is **suppressed in silent mode** (§7).
+
+### A button with no contact
+
+A button with no contact assigned (or a disabled one) takes no message, and it now says so the
+way read-only does: a hold is refused with the "oops" at the moment the bip would have played, and
+**the microphone never opens**. A quick tap answers "oops" as any empty button does, and notes still
+waiting on it — assigned before a contact was removed — still play with a tap.
+
+Before 2026-09-30 such a hold bipped, recorded, encoded, and was refused only by the bridge. The
+child heard the same "oops", a few seconds later, but their voice had been captured into RAM for a
+message that could never be sent. Found on the bench, through the `device fault` log.
 
 ### Read-only mode
 
@@ -169,7 +207,9 @@ Holding **Button 1 + Button 3** together for `silentComboMs` (3 s) toggles silen
 a single slow left-to-right chase. That chase is the **only** thing silent mode ever shows: once it
 has passed the box looks exactly like an audible idle box, with no lamp of its own (§6). Both
 presses are swallowed the instant the chord forms, so a child mashing the outer buttons can never
-send two voice notes; released early, nothing at all happens.
+send two voice notes; released early, nothing at all happens. The second button has to join within
+the tap boundary (§1 step 6, 1150 ms by default) — later than that, the first press is a message
+being sent and the second button is simply ignored.
 
 It can also be scheduled — see §7.
 
@@ -301,10 +341,12 @@ An *Advanced* card, collapsed until asked for and polling only while it is open.
 board says about itself — SoC temperature, how long the machine has been powered on, how long the
 *software* has been running (the two diverge on a settings save, and a service uptime that keeps
 resetting is a crash loop), processor busy time and load, memory, free space on the card and in the
-RAM disk, and the Wi-Fi network and signal. Every reading is nullable: a value the box cannot obtain
-is a dash, never a zero.
+RAM disk, the Wi-Fi network and signal, and whether the **clock** has been set from the network yet
+("synced", "not synced yet", or "unknown" where the box cannot tell — a Pi has no clock battery, and
+quiet hours read that clock). Every reading is nullable: a value the box cannot obtain is a dash or
+"unknown", never a zero or a "no".
 
-The same information is in `bloopbox-doctor`, which needs SSH — the tool a parent does not have.
+The same information is in `bloopbox-doctor`, which needs SSH — a tool a parent should never need.
 
 **Restart** and **Shut down** sit at the bottom of it, behind the same two-tap confirm as the factory
 reset. The box has no power button, and pulling the plug is what lost an unread note once already
@@ -313,6 +355,13 @@ unprivileged and cannot talk to systemd, so the request goes to the root agent b
 enum-validated file channel a Wi-Fi join uses; the agent stops the units the ordinary way, which is
 what flushes the counters and finalises anything mid-write. Where there is no agent — any development
 machine — the panel says the box cannot power itself off rather than reporting a failure.
+
+**SSH access** sits below them: the ssh login this box made for itself on its first boot, shown
+only when asked for and hidden again with the same button. A flashed card carries no password of
+its own, because one image is copied onto many cards, so this is the one place the password can be
+read — for whoever is helping debug the box, never needed for setup. On a box installed by hand, or
+from a card built with an explicit password, it says so and shows nothing. `docs/deployment.md` has
+the mechanism.
 
 ### First Boot
 
@@ -623,7 +672,10 @@ Mastering is a decision in `scripts/generate-sounds.ts`, not a filter's side eff
   and on a device with no screen that is indistinguishable from a broken one. Switching it on and
   choosing a zone is one visit to the admin panel.
 - The chord toggles the **effective** state, so during scheduled quiet hours a parent can force
-  audio back on without editing the schedule.
+  audio back on without editing the schedule. **The override lasts until the next boundary**: sound
+  stays on for the rest of that window, and the next window starts silent as scheduled. The
+  schedule is applied only when it changes its mind, never re-asserted in between — it used to be,
+  every 15 minutes, which took the sound away again before a parent had finished the bedtime story.
 
 Behaviour while silent:
 
@@ -668,7 +720,8 @@ else.
 | ------- | ------ |
 | **RAM disk for outbound audio (`tmpfs`)** | **Built.** Captures, ffmpeg conversion and decoded playback buffers live in `/run/bloopbox`, via `RuntimeDirectory=` in both units. `/run` is already a tmpfs, so **nothing the child records** ever touches the card or can fill it |
 | **Inbound notes on the card** | **Built 2026-09-06.** Arriving notes go to `/data/notes` so an unheard one survives a power cut — the most likely restart in a child's room. Bounded by the same 48 h purge, and deleted the moment they are played. See §1 |
-| **Automatic purge (TTL)** | **Built.** Audio is deleted 48 h after creation whether it has been heard or not, swept hourly. Playback deletes a note immediately |
+| **Inbound downloads bounded** | **Built 2026-09-24.** A note is refused over 2 MB — declared or delivered — and an attempt times out after 60 s, with two retries on a network failure. It is written as `<name>.part`, synced, and renamed into place only when complete, so a power cut mid-download never leaves something boot recovery would take for an unread note |
+| **Automatic purge (TTL)** | **Built.** Audio is deleted 48 h after creation whether it has been heard or not, swept hourly — except a note still queued behind a blinking lamp, which waits for the tap rather than vanishing from under it (the queue itself does not outlive a restart past the 8 h recovery window). Playback deletes a note immediately |
 | **Atomic config writes** | **Built.** Temp file → `fsync` → `rename`. A half-written config during power loss would brick the device |
 | **Shut down without pulling the plug** | **Built 2026-09-06.** The box has no power button, and an unplug mid-write is what motivated the row above it. *Device health* → **Shut down** stops the units the ordinary way, which flushes the activity counters and finalises anything in flight. See §3 |
 | **Fallback on invalid config** | **Built.** A missing or corrupt `/data/config.json` falls back to `config.default.json` **in RAM** and boots into onboarding. It never crashes the daemon |

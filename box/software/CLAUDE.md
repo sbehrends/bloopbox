@@ -102,7 +102,7 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
 
 | Layer          | Rule                                                                              |
 | -------------- | --------------------------------------------------------------------------------- |
-| `src/core/`    | Pure and I/O-free. Only calls `hal.setLed()`. This is what makes timing testable    |
+| `src/core/`    | Pure and I/O-free. Only calls `hal.setLed()`. This is what makes timing testable. A catch that swallows must report through `onFault` |
 | `src/hal/`     | All physical I/O — buttons, LEDs, **and audio** — behind `types.ts`. Load GPIO dynamically |
 | `src/ipc/`     | The daemon-to-daemon contract. **Adding an event means editing `events.ts` first**  |
 | `src/processes/hardware-server.ts` | Never imports Baileys                                         |
@@ -164,6 +164,15 @@ accepted risk**, because the guard cannot tell that state from mid-onboarding an
 would make the device recoverable only by pulling the SD card. Both halves are pinned by
 `src/tests/adminAuth.test.ts`; the watch item in `PENDING.md` has the reasoning.
 
+**Never call `verifyAdminPassword` per request.** bcrypt is ~300 ms on the Pi, on the loop that
+times button presses; `requireAdmin` goes through `AdminAuthenticator` (5 min success cache, global
+failure budget → 429). Its constants are exported and tested with an injected clock.
+
+**Every browser POST/PUT to `/api` sends `content-type: application/json`**, with a `{}` body if
+it has nothing to say. `requireSameOrigin` (`src/server/csrf.ts`) answers 415 otherwise and 403 to a
+cross-site `Sec-Fetch-Site` or a foreign `Origin` — the CSRF defence, since Basic credentials ride
+along on forged requests. Pinned by `csrf.test.ts`.
+
 **`/` is the settings panel and `:80` is the same app, not a second one.** The root route is
 `sendFile` of `dist/public/admin/index.html` and sits *after* the captive-portal middleware, so the
 hotspot still owns `/` during onboarding — that ordering is the safety property, and
@@ -176,9 +185,9 @@ separately with `BRIDGE_TOKEN` on the `x-bridge-token` header, compared in const
 ### Config
 
 `PUT /api/config` accepts **any subset of any section, to any depth**. Cross-field rules
-(volume ≤ cap, debounce < threshold, an enabled contact has a target) are checked by
-`ConfigManager.save()` against the **merged** config — the only place they can be, since a patch
-raising the volume does not carry the cap. Sections with a refinement are a plain `…Shape` object
+(debounce < threshold, an enabled contact has a target) are checked by `ConfigManager.save()`
+against the **merged** config — the only place they can be, since a patch raising `debounceMs`
+does not carry `recordThresholdMs`. Sections with a refinement are a plain `…Shape` object
 plus a refined `…Schema`, because `.partial()` exists only on a `ZodObject`.
 
 **Adding a section touches four places:** `configSchema`, `configUpdateSchema`, `ConfigPatch` and
@@ -251,16 +260,31 @@ examples most guides show:
   every outbound send, and a failure there arrives as an unhandled `'error'` event that kills the
   process. The unit sets `TMPDIR=/run/bloopbox-tmp`; under `ProtectSystem=strict`, `/tmp` is
   read-only. Keep it off `RECORDING_DIR` — `audio/recovery.ts` treats files there as unread notes.
+- **`DisconnectReason.timedOut` and `connectionLost` are both 408**, and 408 is how Baileys ends an
+  unscanned QR. An unpaired close other than 515 settles in `notLinked`; never retry it. Every
+  await in `#connect` is followed by a generation check — keep it that way when adding one
+  (`docs/architecture.md`, "The WhatsApp connection").
+- **"Delete for everyone" arrives on `messages.update`**, not `messages.upsert`, as a
+  `messageStubType: REVOKE` stub whose `key.id` is the deleted note. It goes through the whitelist
+  like a note, and `wa:revoked` carries the resolved button, never just an id.
 - `messages.upsert` must handle **both** `notify` and `append`. Baileys picks the type with
   `node.attrs.offline ? 'append' : 'notify'`, so everything queued while disconnected arrives as
   `append`. `messageTimestamp` is a protobuf Long — arithmetic straight on it yields `NaN`.
 
-## Hardware status: NOT ON HAND
+## Hardware status: one reference board, partly proven
 
-All development happens on macOS through the **simulator** HAL driver. `src/hal/gpioDriver.ts` is
-written but **has never run on real hardware** — treat it as unverified.
-`docs/hardware-bringup.md` is the gate-by-gate plan for the day that changes, with the debugging kit
-(`bloopbox-doctor`, `bloopbox-audio-test`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`).
+All development happens on macOS through the **simulator** HAL driver. One real device exists: the
+**reference board** (`docs/hardware.md`) — a Pi 3B+ with the WM8960 HAT and, since 2026-08-17,
+**all three buttons and all three lamps wired**. Install and build images for it with
+`--audio-hat wm8960` and **never `--no-leds`**: that flag belongs to the first, lampless bring-up
+board of 2026-08-10, which no longer exists.
+
+**Proven on it:** `gpioDriver.ts` claims all six lines, button 1 registers presses, and audio works
+in both directions, all under the hardened unit. **Not yet recorded as proven:** buttons 2 and 3,
+the lamps (polarity, colour order) and the Pi Zero 2 W target — so the lockout, the chord and the
+lamp code are proven only in tests until a bench session says otherwise.
+`docs/hardware-bringup.md` is the gate-by-gate plan, with the debugging kit (`bloopbox-doctor`,
+`bloopbox-audio-test`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`).
 
 **Audio is the WM8960 HAT from here on** (decided 2026-08-17) — `install.sh --audio-hat wm8960`,
 with all three buttons and all three lamps wired. Three things that follow from it, all in
@@ -307,8 +331,11 @@ which on a button input means garbage reads.
 
 `gpioDriver.ts` passes **no options at all** and handles both concerns elsewhere: pull-ups come from
 the firmware (`gpio=17,27,22=ip,pu`, written into `/boot/firmware/config.txt` by
-`deploy/install.sh`, effective only after a reboot), and debounce is software-side in
-`core/buttonInterpreter.ts`, which we need anyway for the tap-vs-hold distinction.
+`deploy/install.sh`, effective only after a reboot), and debounce is software-side in two layers:
+**contact chatter** is settled in the HAL (`hal/settledLine.ts`: a line must be quiet for
+`BUTTON_SETTLE_MS`, 20 ms, and its level is then *read*, so one press is one down and one up
+however the edges arrived — measured bounce was up to 12 edges in 15 ms), and **press length** is
+judged in `core/buttonInterpreter.ts`, which we need anyway for the tap-vs-hold distinction.
 
 ## Packaging: the device target is Trixie 64-bit, forced by opengpio
 
@@ -350,15 +377,20 @@ run on **fake timers** — never add a real sleep. Where a code path awaits real
 `waitFor` condition rather than a fixed number of yields: fixed flushes passed in isolation and
 failed intermittently under parallel load.
 
+A test that builds a second `DeviceController` on the same `MockHal` must **`dispose()`** the first,
+not just `stop()` it: the HAL listeners are attached at construction and only `dispose()` removes
+them, so a stopped controller still answers every press.
+
 Server-layer tests drive a **real Express app on an ephemeral port with `fetch`**, assembled the way
 `hardware-server.ts` assembles it — see `src/tests/support/apiHarness.ts`. No supertest.
 `bridgeLink.test.ts` uses a real Socket.io server and client, because the token gate is handshake
 middleware and only exists during a connection.
 
 `vitest.config.ts` declares 80% coverage thresholds but **`npm run check` does not run them** — it
-calls plain `vitest run`. Currently ~77% statements / 68% branches, so they still fail:
-`src/whatsapp/` (24%) is the large hole, `src/audio/` sits at 75%, and
-`src/server/simulatorTransport.ts` is untested on purpose. Known debt, not a passing gate.
+calls plain `vitest run`. Currently ~87% statements / 79% branches, so branches still fail:
+`src/whatsapp/` (86% / 77%, up from 58% once Baileys was injected — `tests/support/fakeWASocket.ts`)
+is the largest hole left, and `src/server/simulatorTransport.ts` is untested on purpose. Known
+debt, not a passing gate.
 
 ## Decisions the spec left open
 
@@ -372,13 +404,15 @@ work around it locally. Full reasoning for each is in
 | **LED priority ladder** | `PRODUCT.md` §6's patterns collide, so they resolve **per LED, first match wins**: recording → overlay → lifecycle status → unread → off. The setup hotspot outranks the Wi-Fi error. **Silent mode is not on the ladder**: only the moment it flips shows, as the transition overlay | `ledPriority.test.ts` |
 | **Tap vs. cancel** | `< debounceMs` ignored; `debounceMs`–`recordThresholdMs + minRecordingMs` plays the queue or beeps "oops"; beyond that it records. **The boundary is the sum, not the threshold** — the threshold is only where the bip plays. Defaults 60 / 150 / **1000** / 400 / 3000 ms, all in `config.buttons`; `minRecordingMs` was raised from 500 on 2026-09-08 after a child sent a run of empty notes | `button.test.ts` |
 | **A blinking button does not record** | Notes waiting on a button make it listen-only: `hasUnread` is read a second time at `recordThresholdMs` and **withholds the microphone**, then release emits `recordBlocked` with reason `unread` (a hold) or plays the queue (a tap). Refusing *at* the threshold instead would refuse every tap over 150 ms. Never re-read after the threshold, so a note landing mid-sentence cannot cancel a take; per contact, not per box; and the "oops" is skipped while that queue is playing | `button.test.ts`, `deviceController.test.ts` |
-| **Carry-on window** | A **confirmed** recording stays open `resumeGraceMs` after release; the same button resumes the *same* take. `maxRecordingSeconds` is **not** restarted by a resume. A different button commits what is waiting. `durationMs` counts held time only | `button.test.ts` |
-| **Bip before the mic** | `#beginCapture` awaits `playCue(Pop)` **then** calls `startRecording`, both inside the promise in `#captures` — the speaker is centimetres from the microphone, so a cue over an open capture is recorded into the message. Nothing said before the bip exists, which is why the bip is early (150 ms) and why the tap boundary moved off it | `button.test.ts`, `deviceController.test.ts` |
+| **Carry-on window** | A **confirmed** recording stays open `resumeGraceMs` after release; the same button resumes the *same* take. `maxRecordingSeconds` is **not** restarted by a resume. A different button is ignored, not a commit. `durationMs` counts held time only | `button.test.ts` |
+| **One button at a time** | While a press is down, its window is open, **or its queue is playing**, every other button is ignored until its own release — never adopted mid-hold, and its release cannot disarm the chord. Only the chord partner may join a press, and only before the owner reaches `recordThresholdMs + minRecordingMs`; nothing joins playback. The controller's `#listeningTo` is set at the tap, not at `state.playing`, to close the teardown gap. A press whose release is lost is dropped at `stuckPressMs()`, so one missed edge cannot freeze the box | `button.test.ts`, `deviceController.test.ts` |
+| **Bip before the mic** | `#beginCapture` awaits `playCue(Pop)` **then** calls `startRecording`, both inside the promise in `#captures` — the speaker is centimetres from the microphone, so a cue over an open capture is recorded into the message. Nothing said before the bip exists, which is why the bip is early (150 ms) and why the tap boundary moved off it. A discard (release, `stop()`) during the bip sets the capture's **cancel token**, checked after the pop, so the microphone never opens | `button.test.ts`, `deviceController.test.ts` |
+| **Nothing plays over a note** | A cue cuts off whatever is playing (one speaker), so every courtesy cue — notify, whoosh, oops, boot — goes through `#courtesyCue`, which drops it while `#listeningTo` is set. `hal.play()` resolves `'completed' \| 'interrupted'`: only a completed note is heard (deleted, marked read); an interrupted one goes back to the front of its queue. Unread follows `queue.count()` after playback, never a clear. `MockHal.holdPlayback` models the interruption | `deviceController.test.ts`, `audioQueue.test.ts`, `gpioPlayback.test.ts` |
 | **Whoosh after finalise** | `#commitCapture` finalises the capture **before** playing the whoosh — same reason at the other end of the take | `deviceController.test.ts` |
 | **One sound per send** | The whoosh means "sent"; delivery is `flashSent` on the lamp. The designed `swoosh` cue was retired 2026-08-17 — back to back the two read as noise, not as two facts. Only a failure adds a second sound | `deviceController.test.ts` |
 | **Notes are decoded on arrival** | `hal.prepare()` from `restoreUnread`, never awaited and never rejecting; `play()` still decodes on demand if the prepared WAV is missing (the purge sweeps `.wav` by age). `release()` from `#deletePlayed` | `gpioPlayback.test.ts`, `deviceController.test.ts` |
-| **Read-only mode** | `config.mode.readOnly` refuses the hold in `ButtonInterpreter`, not in `DeviceController`: `captureConfirmed` never fires, so no capture is ever opened and **none** of the capture events fire. The refusal is the "oops" at `recordThresholdMs`, and release does **not** fall through to tap handling. Tap-to-play is untouched. Same `recordBlocked` event as the unread rule above, distinguished by `reason` | `button.test.ts`, `deviceController.test.ts` |
-| **Silent chord** | Buttons 1 + 3 for `silentComboMs` toggles the **effective** state. Both presses are swallowed the instant the chord forms; released early, nothing happens | `button.test.ts` |
+| **Read-only mode** (and a **button with no contact**, reason `unassigned`, per button via `canSend`) | `config.mode.readOnly` refuses the hold in `ButtonInterpreter`, not in `DeviceController`: `captureConfirmed` never fires, so no capture is ever opened and **none** of the capture events fire. The refusal is the "oops" at `recordThresholdMs`, and release does **not** fall through to tap handling. Tap-to-play is untouched. Same `recordBlocked` event as the unread rule above, distinguished by `reason` | `button.test.ts`, `deviceController.test.ts` |
+| **Silent chord** | Buttons 1 + 3 for `silentComboMs` toggles the **effective** state. Both presses are swallowed the instant the chord forms; released early, nothing happens. During quiet hours the override lasts **until the next boundary**: the schedule is applied only on an edge, never re-asserted by the capped 15-minute wake | `button.test.ts`, `deviceController.test.ts` |
 | **Silent mode gating** | Suppressed: inbound chime, bip, sent, oops — and the bip being suppressed means capture opens *immediately* at the threshold in silent mode. **Not** suppressed: playback, nor the admin panel's **Test speaker** cue (`POST /api/audio/test`), the one deliberate bypass. `maxVolumeCapPercent` was removed 2026-08-17 | `hal.test.ts`, `audioQueue.test.ts`, `routes.test.ts` |
 | **Boot animation held** | Status resolves instantly, so `BOOTING` would never be seen. `BOOT_ANIMATION_MS` (2.6 s) holds it; the simulator has a Reboot injector to replay it | — |
 | **Beyond the spec** | `notify.wav` (§7 implies an inbound chime without listing one), `boot.wav` (§6 defines a boot LED pattern but no sound; the only channel for "it came back on its own") and `src/core/` itself (the spec's blueprint has no home for the state machine) | `deviceController.test.ts` |
@@ -392,11 +426,14 @@ work around it locally. Full reasoning for each is in
   unheard note survives someone unplugging the box, which used to lose it outright. Unread audio is
   purged after **48 h** whether heard or not; playback deletes a note immediately, which is what
   makes *present on disk* mean *unread* — and is why losing the directory lost the unread flag too.
+- **Nothing writes a note under its final name except the rename** in `whatsapp/mediaDownload.ts`
+  (`.part` → `fsync` → `rename`). Recovery treats every `wa-<i>-<id>.ogg` as unread audio.
 - **`notesDirectory()` must never fall back to `RECORDING_DIR`.** `/etc/bloopbox/environment` sets
   that variable and an upgrade *keeps the file*, so a fallback silently puts every already-installed
   box back in RAM while the tests stay green. Pinned by `purge.test.ts`.
-- `/data/config.json` writes are **atomic** (tmp file → `fsync` → `rename`). A half-written config
-  during power loss would brick the device.
+- `/data/config.json` writes are **atomic** (unique tmp file → `fsync` → `rename` → `fsync` the
+  directory, in `src/config/atomicWrite.ts`) and **serialised**. A half-written config during power
+  loss would brick the device.
 - Invalid or missing config falls back to `config.default.json` **in RAM** and boots into
   onboarding. It never crashes the daemon.
 - Only the configured JIDs are accepted — `src/whatsapp/whitelist.ts`. Unknown numbers, groups

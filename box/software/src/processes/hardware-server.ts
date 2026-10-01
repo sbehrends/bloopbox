@@ -15,7 +15,7 @@ import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
 import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { CAPTURE_FILTER_CHAIN, PLAYBACK_FILTER_CHAIN } from '../audio/ffmpeg.ts';
-import { RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
+import { notePath, RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
 import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
 import { ConfigManager } from '../config/configManager.ts';
@@ -40,11 +40,15 @@ import {
 } from '../net/netState.ts';
 import { StatsStore } from '../stats/statsStore.ts';
 import { requestPowerAction, type PowerAction } from '../system/power.ts';
+import { readSshAccess } from '../system/sshAccess.ts';
 import { CpuUsageTracker, readSystemInfo, type StorageTarget } from '../system/systemInfo.ts';
 import { portalRedirectTarget, shouldRedirectToPortal } from '../server/captivePortal.ts';
 import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.ts';
+import { denyFraming } from '../server/csrf.ts';
+import { serveSocketsOn } from '../server/socketListeners.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
 import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
+import { Shutdown } from './shutdown.ts';
 
 const log = childLogger('hardware');
 
@@ -123,7 +127,11 @@ const RESTART_DELAY_MS = 400;
  */
 const BOOT_ANIMATION_MS = 2600;
 
+/** Owns the way out — signals, crashes and config-save restarts alike. */
+const lifecycle = new Shutdown({ log });
+
 async function main(): Promise<void> {
+  lifecycle.installHandlers();
   const kind = selectHalKind();
 
   /* ---- config ---- */
@@ -150,6 +158,8 @@ async function main(): Promise<void> {
   /* ---- HTTP + Socket.io ---- */
 
   const app = express();
+  // Every response, not just /api: the panel's HTML is what a clickjacking page would frame.
+  app.use(denyFraming());
   app.use(express.json({ limit: '128kb' }));
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
@@ -223,6 +233,22 @@ async function main(): Promise<void> {
       link.current?.markRead(index, messageIds);
     },
     stats,
+    /*
+     * Every failure the controller swallows so the next press still works. One stable message,
+     * with the kind as a field, so `journalctl -u bloopbox-hardware | grep 'device fault'` lists
+     * them all and the kind says which.
+     */
+    onFault: (fault) => {
+      log.warn(
+        {
+          fault: fault.kind,
+          index: fault.index,
+          ...fault.detail,
+          ...(fault.error === undefined ? {} : { err: fault.error }),
+        },
+        'device fault',
+      );
+    },
   });
 
   let booting = true;
@@ -256,23 +282,41 @@ async function main(): Promise<void> {
   link.current = registerBridgeNamespace({
     namespace: io.of(BRIDGE_NAMESPACE),
     token: process.env['BRIDGE_TOKEN'] ?? '',
-    onStatus: ({ state, qr }) => {
+    onStatus: ({ state, detail, qr }) => {
       whatsappState = state;
       const next = qr ?? null;
       // Only a genuinely new code restarts the clock: a status repeat is not a rotation.
       if (next !== null && next !== whatsappQr) whatsappQrAt = Date.now();
       whatsappQr = next;
-      log.info({ state }, 'whatsapp status');
+      log.info({ state, detail }, 'whatsapp status');
       refreshStatus();
     },
     onIncoming: (payload) => {
+      /*
+       * The path is worked out here, not taken from the bridge: this daemon plays the file and
+       * then deletes it, so a reported path taken on faith would let whatever holds the bridge
+       * token delete anything it can write. A mismatch means the two daemons disagree about
+       * NOTES_DIR, which is worth a warning rather than a silent drop.
+       */
+      const path = notePath(NOTES_DIRECTORY, payload.index, payload.messageId);
+      if (path === null || resolve(payload.path) !== path) {
+        log.warn(
+          { index: payload.index, expected: path, reported: payload.path },
+          'refused a voice note whose path is not where notes live',
+        );
+        return;
+      }
       log.info({ index: payload.index, messageId: payload.messageId }, 'voice note received');
       controller.handleIncoming(payload.index, {
         messageId: payload.messageId,
-        path: payload.path,
+        path,
         receivedAt: payload.receivedAt,
         durationMs: payload.durationMs,
       });
+    },
+    onRevoked: ({ index, messageId }) => {
+      const removed = controller.revokeNote(index, messageId);
+      log.info({ index, messageId, removed }, 'voice note deleted by its sender');
     },
     onConnectionChange: (connected) => {
       log.info({ connected }, 'bridge link');
@@ -310,6 +354,7 @@ async function main(): Promise<void> {
   /* ---- routes ---- */
 
   const routesContext = {
+    log: log.child({ mod: 'routes' }),
     config,
     controller,
     recordingDirectory: RECORDING_DIRECTORY,
@@ -352,6 +397,7 @@ async function main(): Promise<void> {
       await stats.flush();
       return requestPowerAction(action);
     },
+    sshAccess: () => readSshAccess(),
   };
 
   /*
@@ -370,7 +416,15 @@ async function main(): Promise<void> {
   });
 
   app.use('/api', createApiRouter(routesContext));
-  app.use('/audio', createAudioRouter([RECORDING_DIRECTORY, NOTES_DIRECTORY]));
+  /*
+   * Recordings, served to the simulator's browser so it can play what the fake HAL "records".
+   * Only there: on a device these are the child's own voice and the family's notes, the route
+   * has no password, and the captive portal lets it through on the open setup hotspot — so a
+   * device mounting it would hand them to anyone in radio range.
+   */
+  if (simulatorHal) {
+    app.use('/audio', createAudioRouter([RECORDING_DIRECTORY, NOTES_DIRECTORY]));
+  }
   app.use('/sounds', express.static(SOUNDS_DIRECTORY, { maxAge: '1h' }));
 
   if (existsSync(STATIC_ROOT)) {
@@ -462,8 +516,9 @@ async function main(): Promise<void> {
 
   const purger = new AudioPurger({
     directory: RECORDING_DIRECTORY,
-    // Notes still waiting to be played must survive their own TTL.
-    keep: controller.protectedFiles(),
+    // Notes still waiting to be played must survive their own TTL. A function, so each sweep
+    // sees the queue as it is then rather than as it was at boot.
+    keep: () => controller.protectedFiles(),
     onResult: (result) => {
       log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'audio purged');
     },
@@ -477,7 +532,7 @@ async function main(): Promise<void> {
    */
   const notesPurger = new AudioPurger({
     directory: NOTES_DIRECTORY,
-    keep: controller.protectedFiles(),
+    keep: () => controller.protectedFiles(),
     onResult: (result) => {
       log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'notes purged');
     },
@@ -616,6 +671,8 @@ async function main(): Promise<void> {
    */
   const portalServer = PORTAL_PORT > 0 ? createServer(app) : null;
   if (portalServer) {
+    // `http://bloopbox.local/` is this listener, so the panel's live status has to connect here.
+    serveSocketsOn(io, portalServer);
     portalServer.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EACCES' || error.code === 'EADDRINUSE') {
         // Expected off-device: binding 80 needs CAP_NET_BIND_SERVICE, which the systemd unit
@@ -635,36 +692,31 @@ async function main(): Promise<void> {
 
   /* ---- shutdown ---- */
 
-  let shuttingDown = false;
-  const shutdown = (reason: string): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    log.info({ reason }, 'shutting down');
-
-    void (async (): Promise<void> => {
-      netWatcher.stop();
-      portalServer?.close();
-      purger.stop();
-      notesPurger.stop();
-      // Before anything slow: this is the only moment the last few counted presses reach the
-      // card, and both a config save and a `poweroff` arrive here.
-      await stats.flush();
-      await purger.whenIdle();
-      await notesPurger.whenIdle();
-      await controller.stop();
-      // Leaves every LED off, per the HAL contract.
-      await hal.dispose();
-      void io.close();
-      httpServer.close(() => process.exit(0));
-      // Do not wait forever for lingering keep-alive sockets.
-      setTimeout(() => process.exit(0), 3000).unref();
-    })();
-  };
-
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(signal, () => shutdown(signal));
-  }
-
+  /*
+   * Each step on its own, so one that throws cannot leave the LEDs lit or the totals unwritten;
+   * `Shutdown` bounds the whole run, so one that hangs cannot either.
+   */
+  lifecycle.setSteps([
+    { name: 'network watcher', run: () => netWatcher.stop() },
+    { name: 'portal listener', run: () => portalServer?.close() },
+    {
+      name: 'purgers',
+      run: () => {
+        purger.stop();
+        notesPurger.stop();
+      },
+    },
+    // Before anything slow: this is the only moment the last few counted presses reach the
+    // card, and both a config save and a `poweroff` arrive here.
+    { name: 'stats', run: async () => stats.flush() },
+    { name: 'purge in progress', run: async () => purger.whenIdle() },
+    { name: 'notes purge in progress', run: async () => notesPurger.whenIdle() },
+    { name: 'controller', run: async () => controller.stop() },
+    // Leaves every LED off, per the HAL contract.
+    { name: 'hal', run: async () => hal.dispose() },
+    // Closes the sockets and then the :3000 listener, whose idle keep-alives Node drops itself.
+    { name: 'http and sockets', run: async () => io.close() },
+  ]);
   /**
    * Exits so the supervisor restarts us with the new config.
    *
@@ -673,13 +725,14 @@ async function main(): Promise<void> {
    * (`Restart=always`) handles it on the device; `npm run dev:hw` uses scripts/dev-server.ts.
    */
   restartHandler = (reason: string): void => {
-    if (shuttingDown) return;
+    if (lifecycle.started) return;
     log.info({ reason }, 'restarting to apply configuration');
-    setTimeout(() => shutdown(`restart: ${reason}`), RESTART_DELAY_MS).unref();
+    setTimeout(() => lifecycle.begin(`restart: ${reason}`, 0), RESTART_DELAY_MS).unref();
   };
 }
 
 await main().catch((error: unknown) => {
   log.error({ err: error }, 'hardware server failed to start');
-  process.exit(1);
+  // Through the same path as a crash, so whatever teardown was already registered still runs.
+  lifecycle.begin('startup failed', 1);
 });

@@ -100,7 +100,12 @@ else
     nmcli con modify "${CONNECTION_NAME}" \
       wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${PSK}" >/dev/null
   else
-    nmcli con modify "${CONNECTION_NAME}" wifi-sec.key-mgmt none >/dev/null
+    # An open network means *no* security setting at all. `wifi-sec.key-mgmt none` reads as
+    # "open" but is static WEP to NetworkManager, which then refuses to activate for want of a
+    # key (`need-auth -> failed (reason 'no-secrets')`) — the same trap net-agent.sh's ap_up and
+    # join_network document. Removing the whole setting is the only way to say open. Errors are
+    # swallowed because a profile that never had the setting has nothing to remove.
+    nmcli con modify "${CONNECTION_NAME}" remove 802-11-wireless-security >/dev/null 2>&1
   fi
 
   # Preferred over anything the imager seeded, but those stay as a fallback: if this
@@ -108,7 +113,11 @@ else
   nmcli con modify "${CONNECTION_NAME}" \
     connection.autoconnect yes connection.autoconnect-priority 10 >/dev/null
 
-  if nmcli con up "${CONNECTION_NAME}" >/dev/null 2>&1; then
+  # `--wait 10`: this runs as the hardware unit's ExecStartPre, so nmcli's default 90s wait on
+  # a network that is out of range is 90s of dark buttons at boot and after every settings save.
+  # Activation carries on inside NetworkManager after nmcli gives up waiting; only the log line
+  # below is decided by it.
+  if nmcli --wait 10 con up "${CONNECTION_NAME}" >/dev/null 2>&1; then
     log "joined ${SSID} (from ${SOURCE})"
   else
     # Not fatal: NetworkManager keeps retrying, and the radio may simply be out of range.

@@ -3,8 +3,6 @@ import { links } from '@/lib/site'
 
 import styles from './SiteFooter.module.css'
 
-/** The navy band at the foot of every page. Navy is also what lets the wordmark sit here in
- *  amber — 10.8:1 on this background, 1.6:1 on cream. `docs/BRAND.md`. */
 export function SiteFooter() {
   return (
     <footer className={styles.footer}>

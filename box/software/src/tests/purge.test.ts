@@ -82,13 +82,14 @@ describe('TTL enforcement', () => {
 
 describe('file selection', () => {
   it('purges every audio artefact the pipeline can leave behind', async () => {
-    for (const name of ['a.ogg', 'b.wav', 'c.webm', 'd.m4a', 'e.opus']) {
+    // `.ogg.part` is a download a power cut interrupted, which nothing else would ever remove.
+    for (const name of ['a.ogg', 'b.wav', 'c.webm', 'd.m4a', 'e.opus', 'wa-0-ABC.ogg.part']) {
       await writeAged(name, AUDIO_TTL_MS + 1000);
     }
 
     const result = await purgeExpiredAudio({ directory: workDir, now });
 
-    expect(result.deleted).toHaveLength(5);
+    expect(result.deleted).toHaveLength(6);
   });
 
   it('leaves non-audio files alone, however old', async () => {
@@ -122,6 +123,25 @@ describe('file selection', () => {
     // A note waiting to be played must survive its own TTL.
     expect(result.deleted).toHaveLength(1);
     expect(await readdir(workDir)).toEqual(['still-queued.ogg']);
+  });
+
+  it('asks a keep function afresh on every sweep, so a note queued after boot is spared', async () => {
+    /*
+     * The daemon used to pass a set built once at startup, before any note had arrived — so it
+     * protected nothing, and a note still blinking on its lamp could be swept. What a sweep
+     * spares has to be the queue as it is at that sweep.
+     */
+    const queue = new Set<string>();
+    const purger = new AudioPurger({ directory: workDir, now, keep: () => queue });
+    const arrived = await writeAged('arrived-later.ogg', AUDIO_TTL_MS + 1000);
+    queue.add(arrived);
+
+    const first = await purger.runOnce();
+    expect(first.deleted).toEqual([]);
+
+    queue.delete(arrived);
+    const second = await purger.runOnce();
+    expect(second.deleted).toEqual([arrived]);
   });
 });
 

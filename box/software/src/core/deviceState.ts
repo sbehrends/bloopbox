@@ -122,6 +122,10 @@ export class DeviceState extends EventEmitter<DeviceStateEvents> {
   /**
    * The chord toggles the *effective* state. During scheduled quiet hours this lets a
    * parent force audio back on without editing the schedule.
+   *
+   * Clearing `#scheduledSilent` is the override. It holds because `DeviceController` applies
+   * the schedule only on an edge, so the next boundary — not the next timer wake — is what
+   * brings the schedule back.
    */
   toggleSilent(): void {
     const before = this.silentMode;
@@ -167,8 +171,20 @@ export class DeviceState extends EventEmitter<DeviceStateEvents> {
 
   /** The queue for this contact drained — stop blinking. */
   clearUnread(index: ButtonIndex): void {
-    if (this.#unread[index] === 0) return;
-    this.#unread[index] = 0;
+    this.setUnread(index, 0);
+  }
+
+  /**
+   * Sets the count outright, to what the queue actually holds.
+   *
+   * What playback ends with, rather than a clear: a note that arrived while the others were
+   * playing is still waiting, and zeroing the count put its lamp out — a tap then got the "oops"
+   * and the note sat unheard until a restart or the purge.
+   */
+  setUnread(index: ButtonIndex, count: number): void {
+    const next = Math.max(0, count);
+    if (this.#unread[index] === next) return;
+    this.#unread[index] = next;
     this.#emitChange();
   }
 

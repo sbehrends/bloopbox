@@ -14,6 +14,7 @@ import { hashAdminPassword } from '../../server/auth.ts';
 import { createApiRouter, createAudioRouter, type RoutesContext } from '../../server/routes.ts';
 import { StatsStore } from '../../stats/statsStore.ts';
 import type { PowerAction } from '../../system/power.ts';
+import type { SshAccess } from '../../system/sshAccess.ts';
 import { CpuUsageTracker, readSystemInfo } from '../../system/systemInfo.ts';
 
 /**
@@ -68,7 +69,11 @@ export type Harness = {
   readonly forgets: { count: number };
   /** Power requests the routes made, and whether the stub agent accepts them. */
   readonly powerRequests: PowerAction[];
+  /** What the routes logged, as `[level, message, details]`. */
+  readonly logged: [level: 'warn' | 'error', message: string, details: object][];
   powerAccepted: boolean;
+  /** The first-boot ssh login the route reports; null is a box that made none. */
+  sshAccess: SshAccess | null;
 
   /** Basic auth header value for a password. */
   basic: (password: string) => string;
@@ -139,6 +144,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     groups: [] as { id: string; subject: string }[],
     pairing: {} as { code?: string; error?: string },
     powerAccepted: true,
+    sshAccess: null as SshAccess | null,
   };
   const joins: { ssid: string; psk: string }[] = [];
   const restarts: string[] = [];
@@ -146,6 +152,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
   const beginLinkings = { count: 0 };
   const forgets = { count: 0 };
   const powerRequests: PowerAction[] = [];
+  const logged: [level: 'warn' | 'error', message: string, details: object][] = [];
 
   const context: RoutesContext = {
     config,
@@ -189,6 +196,11 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     requestPower: (action) => {
       powerRequests.push(action);
       return Promise.resolve(state.powerAccepted);
+    },
+    sshAccess: () => Promise.resolve(state.sshAccess),
+    log: {
+      warn: (details, message) => logged.push(['warn', message, details]),
+      error: (details, message) => logged.push(['error', message, details]),
     },
   };
 
@@ -256,7 +268,14 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     set powerAccepted(value) {
       state.powerAccepted = value;
     },
+    get sshAccess() {
+      return state.sshAccess;
+    },
+    set sshAccess(value) {
+      state.sshAccess = value;
+    },
     powerRequests,
+    logged,
     joins,
     restarts,
     unlinks,
@@ -265,6 +284,12 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     basic: (password) => `Basic ${Buffer.from(`admin:${password}`).toString('base64')}`,
     close: async () => {
       stats.stop();
+      /*
+       * Waits for a write already under way. The store writes atomically, through a temp file
+       * beside stats.json, and one landing while `rm` below is emptying the directory made it
+       * fail with ENOTEMPTY now and then.
+       */
+      await stats.flush();
       await controller.stop();
       await new Promise<void>((closed, failed) => {
         server.close((error) => {
@@ -290,6 +315,8 @@ export function netReading(overrides: Partial<NetState> = {}): NetState {
     scan: [],
     scanAgeSeconds: 0,
     lastError: null,
+    handledRequestId: null,
+    timeSynced: null,
     ...overrides,
   };
 }

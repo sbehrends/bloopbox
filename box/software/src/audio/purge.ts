@@ -15,8 +15,13 @@ export const AUDIO_TTL_MS = 48 * 60 * 60 * 1000;
 /** How often the sweep runs. Frequent enough to bound growth, cheap enough to ignore. */
 export const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
-/** Only audio artefacts are eligible; anything else in the directory is left alone. */
-const PURGEABLE_EXTENSIONS = ['.ogg', '.wav', '.webm', '.m4a', '.opus'] as const;
+/**
+ * Only audio artefacts are eligible; anything else in the directory is left alone.
+ *
+ * `.ogg.part` is a download a power cut interrupted (`whatsapp/mediaDownload.ts`): nothing else
+ * ever finishes it, and nothing else would ever delete it.
+ */
+const PURGEABLE_EXTENSIONS = ['.ogg', '.wav', '.webm', '.m4a', '.opus', '.ogg.part'] as const;
 
 export type PurgeResult = {
   readonly scanned: number;
@@ -28,8 +33,14 @@ export type PurgeResult = {
 export type PurgeOptions = {
   readonly directory: string;
   readonly ttlMs?: number;
-  /** Files to keep regardless of age — e.g. notes still queued for playback. */
-  readonly keep?: ReadonlySet<string>;
+  /**
+   * Files to keep regardless of age — notes still queued behind a blinking lamp.
+   *
+   * A function is asked afresh on every sweep. A plain set is a snapshot, which is what the
+   * daemon used to pass: taken once at boot, before any note had arrived, so it protected
+   * nothing and a note that was still blinking could be swept out from under the lamp.
+   */
+  readonly keep?: ReadonlySet<string> | (() => ReadonlySet<string>);
   /** Injectable clock, so tests need no real waiting. */
   readonly now?: () => number;
 };
@@ -48,7 +59,8 @@ function isPurgeable(name: string): boolean {
 export async function purgeExpiredAudio(options: PurgeOptions): Promise<PurgeResult> {
   const ttlMs = options.ttlMs ?? AUDIO_TTL_MS;
   const now = options.now ?? Date.now;
-  const keep = options.keep ?? new Set<string>();
+  const keep =
+    typeof options.keep === 'function' ? options.keep() : (options.keep ?? new Set<string>());
 
   let entries: string[];
   try {

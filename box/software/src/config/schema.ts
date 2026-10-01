@@ -179,8 +179,8 @@ function migrateContact(value: unknown): unknown {
  * returns something else. The refinements are not lost by patching: `ConfigManager.update()`
  * merges the patch field-by-field and then validates the **merged** config against
  * `configSchema` below, so a partial patch that would break one is still rejected. Checking a
- * patch in isolation could not do that anyway: a new volume has to be compared against the
- * stored cap, which the patch does not carry.
+ * patch in isolation could not do that anyway: a new `debounceMs` has to be compared against
+ * the stored `recordThresholdMs`, which the patch does not carry.
  */
 const contactShape = z.object({
   name: z.string().min(1).max(24),
@@ -214,23 +214,6 @@ const wifiSchema = z.object({
 });
 
 /**
- * One volume, not two.
- *
- * There used to be a second field, `maxVolumeCapPercent`, meant as a ceiling a parent set once
- * with `speakerVolumePercent` as the day-to-day knob. It was removed on 2026-08-17 because it
- * never did the job: both fields sat in the same admin card behind the same save button, so
- * anyone who could raise the volume could raise the cap in the same click — a speed bump, not
- * a lock. What it did deliver was a save that failed with an error naming a field the parent
- * had not touched. `clampVolume()` went with it: its input was `speakerVolumePercent` and its
- * ceiling came from the same config, and the schema already refused to load or save a config
- * where one exceeded the other, so it could never once have changed a value.
- *
- * The ceiling that is actually load-bearing is `max(100)` here, which pins the top of the
- * range to whatever `amixer -M sset Playback 100%` means on the wired card.
- *
- * No `.refine()` and so no Shape/Schema split — there is no cross-field rule left to check.
- */
-/**
  * The output chain has three stages, and only the first was ever being set.
  *
  * On the WM8960 the DAC feeds an analogue output PGA, which feeds a class-D amplifier with
@@ -246,7 +229,17 @@ const wifiSchema = z.object({
  * does not exist and is skipped. See `src/hal/gpioDriver.ts`.
  */
 const audioSchema = z.object({
-  /** Digital DAC volume — `ALSA_MIXER_CONTROL`, `Playback` on the WM8960. */
+  /**
+   * Digital DAC volume — `ALSA_MIXER_CONTROL`, `Playback` on the WM8960.
+   *
+   * One volume, not two. A second field, `maxVolumeCapPercent`, was meant as a ceiling a parent
+   * set once; it was removed on 2026-08-17 because both sat behind the same save button, so
+   * anyone who could raise the volume could raise the cap in the same click — a speed bump, not
+   * a lock — and all it delivered was a save failing over a field the parent had not touched.
+   * The ceiling that is actually load-bearing is `max(100)` here, which pins the top of the
+   * range to whatever `amixer -M sset Playback 100%` means on the wired card. There is no
+   * cross-field rule on this section, so no Shape/Schema split.
+   */
   speakerVolumePercent: z.number().int().min(0).max(100),
   /**
    * Analogue output PGA — `ALSA_AMP_MIXER_CONTROL`, `Speaker` on the WM8960 (−73…+6 dB).
@@ -466,8 +459,8 @@ export const DEFAULT_BUTTON_TIMINGS: ButtonTimings = buttonTimingsSchema.parse(u
  *
  * Cross-field rules still hold. They live on the refined schemas above and run against the
  * **merged** config in `ConfigManager.save()`, which is the only place they can run correctly:
- * a patch raising the volume has to be compared against the stored cap, and the patch does not
- * carry it.
+ * a patch raising `debounceMs` has to be compared against the stored `recordThresholdMs`, and
+ * the patch does not carry it.
  */
 const contactPatchSchema = z.preprocess(migrateContact, contactShape.partial());
 

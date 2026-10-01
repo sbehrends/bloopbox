@@ -8,34 +8,88 @@
  * The two are deliberately separate processes: WhatsApp is an unofficial API on a release
  * candidate, and a crash here must not take the buttons and lights with it.
  */
-import { notesDirectory } from '../audio/directories.ts';
+import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { rm } from 'node:fs/promises';
+import { dirname, extname, resolve } from 'node:path';
 import { io, type Socket } from 'socket.io-client';
 import { probeDurationMs } from '../audio/ffmpeg.ts';
 import { BRIDGE_AUTH_HEADER, BRIDGE_NAMESPACE } from '../ipc/events.ts';
 import { readButtonIndex, readString } from '../ipc/payload.ts';
 import { childLogger } from '../logger.ts';
-import { WhatsAppClient, type VoiceNote } from '../whatsapp/client.ts';
+import { WhatsAppClient, type Revocation, type VoiceNote } from '../whatsapp/client.ts';
+import { HoldUntilReady } from '../whatsapp/holdUntilReady.ts';
 import { Whitelist, type AllowedTarget } from '../whatsapp/whitelist.ts';
+import { Shutdown } from './shutdown.ts';
 
 const log = childLogger('whatsapp');
 
 /** Where Baileys keeps its credentials. Must be on the writable volume, and is gitignored. */
 const AUTH_DIRECTORY = process.env['WA_AUTH_DIR'] ?? '/data/auth_info';
-/** Inbound voice notes land here, alongside outgoing recordings. Should be tmpfs. */
+/** Inbound voice notes land here — on the card, apart from the captures (`audio/directories.ts`). */
 const NOTES_DIRECTORY = notesDirectory();
+/**
+ * Where outbound captures are. The only directory `wa:send` may upload from: the path arrives over
+ * IPC, and uploading whatever it names would let anything holding the bridge token post any file
+ * this daemon can read — WhatsApp credentials included — to a family's chat.
+ */
+const RECORDING_DIRECTORY = resolve(recordingDirectory());
 /** The hardware server's Socket.io endpoint. */
 const HARDWARE_URL = process.env['HARDWARE_URL'] ?? 'http://localhost:3000';
 
 /** Keys of messages played but not yet acknowledged upstream, so we can mark them read. */
 const MAX_TRACKED_MESSAGES = 200;
+/**
+ * Voice notes held until the first contact list arrives — see `whatsapp/holdUntilReady.ts`.
+ * Far above any real offline backlog for three buttons, and small enough not to matter in RAM.
+ */
+const MAX_NOTES_BEFORE_WHITELIST = 50;
+/** Revoked ids remembered, so a note still downloading when its revoke lands is thrown away. */
+const MAX_TRACKED_REVOKES = 200;
+
+/**
+ * What waits for the whitelist, in one queue so a revoke is never judged before its own note.
+ */
+type Inbound = { readonly kind: 'note'; readonly note: VoiceNote } | Revoke;
+type Revoke = { readonly kind: 'revoke'; readonly revocation: Revocation };
+
+/**
+ * Owns the way out. A crash here used to be whatever Node did by default; now it closes the
+ * WhatsApp socket first, so Baileys is not killed mid-write to `creds.json`.
+ */
+const lifecycle = new Shutdown({ log });
 
 async function main(): Promise<void> {
+  lifecycle.installHandlers();
   const whitelist = new Whitelist();
   /** messageId -> the WhatsApp key needed to mark it read once the child has heard it. */
   const pendingReads = new Map<string, VoiceNote['raw']['key']>();
+  /**
+   * Ids deleted for everyone by an assigned chat. A download takes seconds, and "oops, wrong
+   * chat" takes about as long: the revoke can arrive while the note is still on its way to disk,
+   * when the hardware server has nothing to remove yet.
+   */
+  const revokedIds = new Set<string>();
 
   const client = new WhatsAppClient({ authDirectory: AUTH_DIRECTORY, logger: log });
+
+  /*
+   * Opened by the first contact list, and never closed again: after that the whitelist is only
+   * ever replaced, and an empty list is still a real answer ("nobody is assigned").
+   */
+  const inbound = new HoldUntilReady<Inbound>({
+    handle: (item) => {
+      if (item.kind === 'note') void handleVoiceNote(item.note);
+      else handleRevoke(item.revocation);
+    },
+    capacity: MAX_NOTES_BEFORE_WHITELIST,
+    onOverflow: (item) => {
+      const messageId = item.kind === 'note' ? item.note.messageId : item.revocation.messageId;
+      log.warn(
+        { messageId, kind: item.kind },
+        'dropped an inbound event: too many before the whitelist',
+      );
+    },
+  });
 
   const socket: Socket = io(`${HARDWARE_URL}${BRIDGE_NAMESPACE}`, {
     transports: ['websocket'],
@@ -62,6 +116,10 @@ async function main(): Promise<void> {
     const targets = readTargets(payload);
     whitelist.replace(targets);
     log.info({ count: targets.length, jids: whitelist.jids() }, 'whitelist updated');
+    if (!inbound.ready && inbound.heldCount > 0) {
+      log.info({ count: inbound.heldCount }, 'evaluating voice notes that arrived before it');
+    }
+    inbound.open();
   });
 
   socket.on('wa:send', (payload: unknown) => {
@@ -131,8 +189,34 @@ async function main(): Promise<void> {
   });
 
   client.on('voiceNote', (note) => {
-    void handleVoiceNote(note);
+    inbound.push({ kind: 'note', note });
   });
+
+  client.on('revoked', (revocation) => {
+    inbound.push({ kind: 'revoke', revocation });
+  });
+
+  /**
+   * "Delete for everyone", from a chat the whitelist resolves to a button.
+   *
+   * The same check a note gets, so a revoke can only ever reach the button its own chat is on;
+   * the hardware server then removes the note only if that button is still holding that id.
+   */
+  function handleRevoke(revocation: Revocation): void {
+    const decision = whitelist.evaluate(revocation);
+    if (!decision.allowed) return;
+
+    revokedIds.add(revocation.messageId);
+    while (revokedIds.size > MAX_TRACKED_REVOKES) {
+      const oldest = revokedIds.values().next();
+      if (oldest.done === true) break;
+      revokedIds.delete(oldest.value);
+    }
+    pendingReads.delete(revocation.messageId);
+
+    log.info({ index: decision.target.index }, 'a voice note was deleted by its sender');
+    socket.emit('wa:revoked', { index: decision.target.index, messageId: revocation.messageId });
+  }
 
   /**
    * Applies the whitelist, then downloads.
@@ -158,8 +242,15 @@ async function main(): Promise<void> {
     }
 
     const { target } = decision;
+    if (revokedIds.has(note.messageId)) return;
     try {
       const { path, byteLength } = await note.download(NOTES_DIRECTORY, target.index);
+      if (revokedIds.has(note.messageId)) {
+        // Deleted while it downloaded. Nothing was announced, so nothing needs taking back.
+        await rm(path, { force: true });
+        log.info({ index: target.index }, 'discarded a voice note its sender deleted');
+        return;
+      }
       const durationMs = note.seconds !== null ? note.seconds * 1000 : await probeDurationMs(path);
 
       rememberRead(note.messageId, note.raw.key);
@@ -193,6 +284,17 @@ async function main(): Promise<void> {
 
     if (requestId === null || index === null || path === null) {
       log.warn('ignoring a malformed send request');
+      return;
+    }
+
+    if (!isOutboundCapture(path)) {
+      log.warn({ path }, 'refused to send a file that is not an outbound capture');
+      socket.emit('wa:sendResult', {
+        requestId,
+        index,
+        ok: false,
+        error: 'that file is not a recording',
+      });
       return;
     }
 
@@ -254,25 +356,23 @@ async function main(): Promise<void> {
 
   /* ---- start ---- */
 
+  /*
+   * Registered before the client starts, so a crash while it connects still ends the socket and
+   * closes the link. Separate steps: a Baileys that fails to stop must not keep the IPC open.
+   */
+  lifecycle.setSteps([
+    { name: 'whatsapp client', run: async () => client.stop() },
+    { name: 'hardware link', run: () => socket.close() },
+  ]);
+
   log.info({ authDirectory: AUTH_DIRECTORY, hardware: HARDWARE_URL }, 'WhatsApp bridge starting');
   await client.start();
+}
 
-  let shuttingDown = false;
-  const shutdown = (signal: string): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    log.info({ signal }, 'shutting down');
-    void (async (): Promise<void> => {
-      await client.stop();
-      socket.close();
-      process.exit(0);
-    })();
-    setTimeout(() => process.exit(0), 3000).unref();
-  };
-
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(signal, () => shutdown(signal));
-  }
+/** A voice note the HAL finished encoding: an `.ogg` directly inside the recordings directory. */
+function isOutboundCapture(path: string): boolean {
+  const resolved = resolve(path);
+  return dirname(resolved) === RECORDING_DIRECTORY && extname(resolved) === '.ogg';
 }
 
 /** Reads the contact list the hardware server sends. */
@@ -299,5 +399,5 @@ function readMessageIds(payload: unknown): string[] {
 
 await main().catch((error: unknown) => {
   log.error({ err: error }, 'WhatsApp bridge failed to start');
-  process.exit(1);
+  lifecycle.begin('startup failed', 1);
 });

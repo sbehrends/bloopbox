@@ -24,7 +24,6 @@
 set -u
 
 PREFIX="${PREFIX:-/opt/bloopbox}"
-NODE="${PREFIX}/node/bin/node"
 REQUEST_FILE="${NET_REQUEST_FILE:-/run/bloopbox/net-request.json}"
 STATE_FILE="${NET_STATE_FILE:-/run/bloopbox-net/net-state.json}"
 AP_CONNECTION="${AP_CONNECTION_NAME:-bloopbox-ap}"
@@ -109,8 +108,9 @@ snapshot() {
 
 ask_agent() {
   # The same file the daemon writes, so this exercises the real path rather than a private
-  # one. The agent picks it up within its poll interval.
-  printf '{"action":"%s"}\n' "$1" > "${REQUEST_FILE}"
+  # one. The agent picks it up within its poll interval. A fresh id each time, because the agent
+  # acts on each id once: asking for ap-up twice in a row must raise the hotspot twice.
+  printf '{"action":"%s","id":"hotspot-test-%s-%s"}\n' "$1" "$(date +%s)" "${RANDOM}" > "${REQUEST_FILE}"
   info "asked the agent for $1"
 }
 

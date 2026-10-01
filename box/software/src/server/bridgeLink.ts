@@ -11,6 +11,7 @@ import {
   readButtonIndex,
   readField,
   readNumber,
+  readRevoked,
   readString,
 } from '../ipc/payload.ts';
 import { tokensMatch } from './auth.ts';
@@ -44,6 +45,8 @@ export type BridgeLinkOptions = {
     qr?: string;
   }) => void;
   readonly onIncoming: (payload: IncomingNote) => void;
+  /** A sender deleted a note for everyone. The bridge has already checked the chat. */
+  readonly onRevoked: (payload: { index: ButtonIndex; messageId: string }) => void;
   readonly onConnectionChange: (connected: boolean) => void;
 };
 
@@ -152,6 +155,11 @@ export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink 
     incoming.on('wa:incoming', (payload: unknown) => {
       const note = readIncoming(payload);
       if (note) options.onIncoming(note);
+    });
+
+    incoming.on('wa:revoked', (payload: unknown) => {
+      const revoked = readRevoked(payload);
+      if (revoked) options.onRevoked(revoked);
     });
 
     incoming.on('wa:pairingCode', (payload: unknown) => {

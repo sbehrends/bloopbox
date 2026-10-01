@@ -1,6 +1,6 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Readable } from 'node:stream';
+import { runProcess } from './process.ts';
 
 /**
  * ffmpeg access: locating the binary and the two conversions the device needs.
@@ -119,51 +119,52 @@ export function resetFfmpegProbe(): void {
   cachedProbe = null;
 }
 
-export class FfmpegError extends Error {
-  /* Declared and assigned separately: `erasableSyntaxOnly` forbids parameter properties. */
-  readonly exitCode: number | null;
-  readonly stderr: string;
+/**
+ * Deadline for an ffmpeg run whose input length is known: a fixed allowance for starting up,
+ * plus twice the audio's own duration.
+ *
+ * Scaled rather than fixed because the work is: a 120 s take through the capture chain costs
+ * far more than a 2 s one, and a single constant long enough for the first would let a wedged
+ * run of the second hold the device for minutes. Twice real time is generous — measured on the
+ * device, the capture chain encodes a 10 s take in 1.6 s — so only a stuck process meets it.
+ */
+export const FFMPEG_BASE_TIMEOUT_MS = 30_000;
 
-  constructor(message: string, exitCode: number | null, stderr: string) {
-    super(message);
-    this.name = 'FfmpegError';
-    this.exitCode = exitCode;
-    this.stderr = stderr;
+/**
+ * Deadline when the input's length is not known, which is the case for an arriving note on
+ * decode: nothing above `prepare()` hands its duration down. Long enough for the longest note
+ * WhatsApp would plausibly deliver through `loudnorm`, and finite, which is the point.
+ */
+export const FFMPEG_UNKNOWN_DURATION_TIMEOUT_MS = 5 * 60_000;
+
+/** The deadline for a run over `inputDurationMs` of audio — see {@link FFMPEG_BASE_TIMEOUT_MS}. */
+export function ffmpegTimeoutMs(inputDurationMs: number | null | undefined): number {
+  if (inputDurationMs === null || inputDurationMs === undefined) {
+    return FFMPEG_UNKNOWN_DURATION_TIMEOUT_MS;
   }
+  return FFMPEG_BASE_TIMEOUT_MS + 2 * Math.max(0, inputDurationMs);
 }
 
-/** Runs ffmpeg with the given arguments, capturing stderr for diagnostics. */
-export async function runFfmpeg(args: readonly string[], input?: Readable): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(FFMPEG_PATH, [...args], {
-      stdio: [input ? 'pipe' : 'ignore', 'ignore', 'pipe'],
-    });
+export type FfmpegRunOptions = {
+  /** Deadline for the run. Defaults to {@link FFMPEG_UNKNOWN_DURATION_TIMEOUT_MS}. */
+  readonly timeoutMs?: number | undefined;
+  /** Called with the live child — how a background decode lowers its own priority. */
+  readonly onSpawn?: ((child: ChildProcess) => void) | undefined;
+};
 
-    let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      // Bounded: a runaway encode must not grow this without limit.
-      if (stderr.length < 8192) stderr += chunk.toString('utf8');
-    });
-
-    child.on('error', (error) => {
-      reject(new FfmpegError(`failed to start ffmpeg: ${error.message}`, null, stderr));
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new FfmpegError(`ffmpeg exited with code ${code}`, code, stderr.trim()));
-    });
-
-    if (input) {
-      input.pipe(child.stdin!);
-      input.on('error', (error: Error) => {
-        child.kill('SIGKILL');
-        reject(new FfmpegError(`input stream failed: ${error.message}`, null, stderr));
-      });
-    }
+/**
+ * Runs ffmpeg with the given arguments. Rejects with a `ProcessError` carrying the tail of
+ * ffmpeg's stderr, and never outlives its deadline — see `audio/process.ts`.
+ */
+export async function runFfmpeg(
+  args: readonly string[],
+  options: FfmpegRunOptions = {},
+): Promise<void> {
+  await runProcess({
+    command: FFMPEG_PATH,
+    args,
+    timeoutMs: options.timeoutMs ?? FFMPEG_UNKNOWN_DURATION_TIMEOUT_MS,
+    onSpawn: options.onSpawn,
   });
 }
 
@@ -175,37 +176,41 @@ export async function toVoiceNote(
   inputPath: string,
   outputPath: string,
   filter: string | null = CAPTURE_FILTER_CHAIN,
+  inputDurationMs: number | null = null,
 ): Promise<void> {
-  await runFfmpeg([
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-y',
-    '-i',
-    inputPath,
-    '-vn',
-    ...(filter ? ['-af', filter] : []),
-    /*
-     * Baileys documents `-avoid_negative_ts make_zero` plus a single channel as necessary for
-     * voice notes to play on every device. Without it some clients show the bubble but refuse
-     * to play it, which on this device is indistinguishable from the message never arriving.
-     */
-    '-avoid_negative_ts',
-    'make_zero',
-    '-ac',
-    String(VOICE_ENCODING.channels),
-    '-ar',
-    String(VOICE_ENCODING.sampleRate),
-    '-c:a',
-    'libopus',
-    '-b:a',
-    VOICE_ENCODING.bitrate,
-    '-application',
-    VOICE_ENCODING.application,
-    '-f',
-    'ogg',
-    outputPath,
-  ]);
+  await runFfmpeg(
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-i',
+      inputPath,
+      '-vn',
+      ...(filter ? ['-af', filter] : []),
+      /*
+       * Baileys documents `-avoid_negative_ts make_zero` plus a single channel as necessary for
+       * voice notes to play on every device. Without it some clients show the bubble but refuse
+       * to play it, which on this device is indistinguishable from the message never arriving.
+       */
+      '-avoid_negative_ts',
+      'make_zero',
+      '-ac',
+      String(VOICE_ENCODING.channels),
+      '-ar',
+      String(VOICE_ENCODING.sampleRate),
+      '-c:a',
+      'libopus',
+      '-b:a',
+      VOICE_ENCODING.bitrate,
+      '-application',
+      VOICE_ENCODING.application,
+      '-f',
+      'ogg',
+      outputPath,
+    ],
+    { timeoutMs: ffmpegTimeoutMs(inputDurationMs) },
+  );
 }
 
 /**
@@ -229,23 +234,27 @@ export async function toPlayableWav(
   outputPath: string,
   format: { readonly sampleRate: number; readonly channels: number } | null = PLAYBACK_DECODING,
   filter: string | null = PLAYBACK_FILTER_CHAIN,
+  options: FfmpegRunOptions = {},
 ): Promise<void> {
-  await runFfmpeg([
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-y',
-    '-i',
-    inputPath,
-    '-vn',
-    ...(filter ? ['-af', filter] : []),
-    ...(format ? ['-ar', String(format.sampleRate), '-ac', String(format.channels)] : []),
-    '-f',
-    'wav',
-    '-acodec',
-    'pcm_s16le',
-    outputPath,
-  ]);
+  await runFfmpeg(
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-i',
+      inputPath,
+      '-vn',
+      ...(filter ? ['-af', filter] : []),
+      ...(format ? ['-ar', String(format.sampleRate), '-ac', String(format.channels)] : []),
+      '-f',
+      'wav',
+      '-acodec',
+      'pcm_s16le',
+      outputPath,
+    ],
+    options,
+  );
 }
 
 /** Duration in milliseconds, or null if ffprobe is unavailable or the file is unreadable. */

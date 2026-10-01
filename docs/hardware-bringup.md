@@ -59,10 +59,9 @@ bundle from each gate. It is designed for exactly that — see the bottom of thi
 
 ## Gate 0 — a Pi you can reach
 
-**Do not use `npm run release:image` for the first device.** The SD image builder has itself
-never run against real hardware; if the card does not boot you will not know whether the fault
-is the image, the install, or the app. Use the stock image for the first one and prove the
-builder later, against a device you already trust.
+**Prefer the stock image for a new device.** A `release:image` card has booted on the 3B+
+(2026-08-10), but the per-device ssh password and the Phase 0–1 units never have, and if a card does not boot you will not know whether the fault is the image, the install, or
+the app. Prove a new image against a device you already trust, on a spare card.
 
 1. Raspberry Pi Imager → **Raspberry Pi OS Lite (64-bit)**, which must be **Trixie** (see
    `docs/deployment.md` for why nothing older can work).
@@ -105,7 +104,35 @@ all three services active, the firmware pull-ups present, and `nmcli` + dnsmasq 
 
 If something fails with a permission error rather than wrong behaviour, comment out the
 hardening block in `deploy/systemd/bloopbox-hardware.service` before suspecting the code —
-`ProtectSystem=strict` and friends have never run against real GPIO or ALSA either.
+`ProtectSystem=strict` and friends have only run against the 3B+'s GPIO and the WM8960 so far.
+
+Then the restart and OOM policy (added 2026-09-24; checked with `systemd-analyze verify` on
+Debian's systemd 257.13 in a container, never on the device):
+
+```bash
+ssh bloop@bloopbox.local 'systemctl show bloopbox-hardware bloopbox-whatsapp bloopbox-net \
+  -p Id -p StartLimitIntervalUSec -p RestartSteps -p RestartMaxDelayUSec -p NRestarts'
+ssh bloop@bloopbox.local 'for p in $(pgrep -f dist/processes); do echo "$(cat /proc/$p/oom_score_adj) $(tr "\0" " " < /proc/$p/cmdline)"; done'
+```
+
+**Pass:** `StartLimitIntervalUSec=0` on all three; `RestartSteps` 5/5/3 and
+`RestartMaxDelayUSec` 5s/1min/15s; `oom_score_adj` `-500` for `hardware-server.js` and `300` for
+`whatsapp-bridge.js`. Then save any setting six times in a row from the admin panel: the unit
+must come back every time (`NRestarts` climbs, the state never reads `failed`), and from the
+sixth save on it should take about 5 s longer to return than the first — that is the backoff cap,
+and the counter only resets at boot.
+
+And the journal settings (also 2026-09-24):
+
+```bash
+ssh bloop@bloopbox.local 'systemd-analyze cat-config systemd/journald.conf | grep -E "^# /|^Storage|^RuntimeMaxUse"'
+```
+
+**Pass:** `50-bloopbox.conf` is listed with `Storage=volatile` and `RuntimeMaxUse=8M`, and — once
+`bloopbox-debug on` has run — `90-bloopbox-debug.conf` after it with `Storage=persistent`. Note
+whether any vendor drop-in appears (Pi OS has been said to ship one; nobody has looked on Trixie).
+If one sorts **after** `90-`, debug mode's persistent journal is silently overridden and has been all
+along, and the names need moving again.
 
 ---
 
@@ -119,7 +146,11 @@ ssh bloop@bloopbox.local 'cat /run/bloopbox-net/net-state.json; echo; systemctl 
 ```
 
 **Pass:** a JSON document with `"available":true`, `"online":true`, your SSID, and an
-`updatedAtMs` within the last few seconds. Read it twice — the timestamp must move.
+`updatedAtMs` within the last few seconds. Read it twice — the timestamp must move. It should also
+carry `"timeSynced":true` within a minute or so of the box getting online; `false` right after boot
+is normal. `null` for longer than that means the agent cannot reach `timedatectl` from inside its
+sandbox — never observed either way yet, so note which you see, and check that `bloopbox-doctor`'s
+"time sync service" line names `systemd-timesyncd`.
 
 Then make the device lose the network and watch it notice. This kills your ssh session — one
 radio — so the outage has to restore **itself**, or you will be walking over to the device with a
@@ -322,7 +353,9 @@ are one `peak` value each in `scripts/generate-sounds.ts`; the tone gains are th
 
 ## Gate 4 — buttons and LEDs
 
-Now the wiring. `src/hal/gpioDriver.ts` was written from datasheets and has never run.
+Now the wiring. `src/hal/gpioDriver.ts` has run on the 3B+, where button 1 registers presses;
+buttons 2–3 and the lamps below are wired but not yet recorded as working, so this gate is still
+mostly open.
 
 GPIO 17, 27, 22 for the buttons, pulled up in firmware; the 3 V lamps straight off
 GPIO 23, 24, 25, one leg on the pin and one on ground. [`hardware.md`](./hardware.md) has the wiring and the reason the pull-ups come
@@ -405,6 +438,18 @@ Five commands, all installed on PATH by `install.sh`:
 | `sudo bloopbox-diagnostics`  | Bundle the whole picture into one file to send somewhere.         |
 | `sudo bloopbox-hotspot-test` | Raise the hotspot on purpose, hold it, restore. Gate 3.           |
 | `sudo bloopbox-audio-test`   | Speaker out, microphone in, played back. Gates 4a and 5.          |
+
+**When the box answers "oops" or does nothing, look here first:**
+
+```bash
+journalctl -u bloopbox-hardware -b | grep 'device fault'
+```
+
+Every failure the daemon swallows so the next press still works is logged there with a `fault`
+field — `capture-start` (the microphone would not open), `capture-finalise` (the take could not be
+encoded), `capture-empty` (a take with no audio, with its `durationMs`), `capture-cancel`, `send`,
+`playback` (with the note's `path`), `cue` (with its name) or `delete` — plus the button and the
+error. A panel action that fails logs under `mod: "routes"` with the route it came from.
 
 `bloopbox-audio-test` opens the same card the daemon does, so **stop the services first** if a
 recording could be in progress. It reads the devices out of `/etc/bloopbox/environment` rather than

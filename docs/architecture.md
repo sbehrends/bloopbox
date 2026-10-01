@@ -55,6 +55,11 @@ on the `/bridge` namespace, authenticated with a shared `BRIDGE_TOKEN` compared 
 The event contract is [`src/ipc/events.ts`](../box/software/src/ipc/events.ts) and is the single source of truth
 for both sides: adding an event means editing that file first.
 
+**Request ids carry a random per-boot prefix** (`send-<boot>-<n>`, `createRequestId`). The bridge
+outlives the hardware server, which restarts on every config save and counts from 1 again, so
+without it a result still in flight for the previous boot's `send-1` would resolve this boot's
+`send-1` — a note reported delivered that never left the box.
+
 **Networking sits outside both.** The daemons run unprivileged under `ProtectSystem=strict`, so
 they cannot talk to NetworkManager and should not be able to. A third unit, `bloopbox-net.service`,
 runs [`deploy/net-agent.sh`](../box/software/deploy/net-agent.sh) as root, polls `nmcli` every 5 s and publishes
@@ -79,7 +84,11 @@ daemons a SIGTERM, and that is what flushes the activity counters and finalises 
 | `/run/bloopbox/net-request.json`   | the daemon | the agent (root) |
 
 **Two directories, exactly one writer each.** That is deliberate: the agent must never end up
-owning `/run/bloopbox`, which is the recordings tmpfs the daemon has to be able to write.
+owning `/run/bloopbox`, which is the recordings tmpfs the daemon has to be able to write. It is also
+why **the agent acknowledges a request instead of deleting it**: the daemon's directory is
+read-only to it under `ProtectSystem=strict`, so it publishes the id of the last request it acted
+on (`handledRequestId`), and the daemon deletes its own file once it sees that id.
+`docs/deployment.md` has the steps.
 
 ### Missing information is never an outage
 
@@ -111,8 +120,10 @@ All physical I/O — buttons, LEDs, **and audio in and out** — sits behind one
 [`src/hal/index.ts`](../box/software/src/hal/index.ts) loads the GPIO driver through a dynamic `import()`. Never
 import it statically — importing the HAL factory has to stay safe on a dev machine.
 
-`gpioDriver.ts` has **never run on real hardware**. Treat it as unverified, and do not add code
-paths that only work with real GPIO.
+`gpioDriver.ts` has run on the reference board — a Pi 3B+ with the WM8960 HAT, three buttons and
+three lamps (`box/software/CLAUDE.md` § Hardware status). Only button 1 and audio are recorded as
+proven; buttons 2–3, the lamps and the Zero 2 W are not yet, so do not add code paths that only
+work with real GPIO.
 
 ### Domain logic is pure
 
@@ -127,6 +138,16 @@ Everything in `src/core/` is I/O-free. It consumes events and timings, and its o
 | `networkSupervisor`   | When the setup hotspot goes up and when it steps aside                      |
 | `quietHours`          | Whether now falls inside the window, read in the configured IANA zone       |
 | `deviceController`    | The wiring: intents in, capture / playback / cues / LEDs out                |
+
+**A failure core swallows is still reported.** The controller catches everything on the interaction
+path — one failed microphone must never break the next press — and used to drop it, so on a real box
+a failure produced an "oops" and nothing in the journal. Every such catch now calls the `onFault`
+option with a `DeviceFaultKind` (`capture-start`, `capture-finalise`, `capture-empty`,
+`capture-cancel`, `send`, `playback`, `cue`, `delete`), the button, the error and a little detail.
+It is a structural callback like `StatsRecorder`, so core still does no I/O: the hardware server
+logs each one at `warn` as `device fault`. The routes take the same approach with an optional
+`log` in `RoutesContext`, so every 4xx/5xx that stands for a failure leaves its reason in the
+journal. The rule for new code: **a catch that swallows must report**.
 
 That purity is the whole reason the timing behaviour is testable on fake timers with no hardware
 and no sleeping. Keep it that way — `deviceController` is where I/O is allowed to appear.
@@ -287,12 +308,19 @@ Rules, all locked by [`src/tests/button.test.ts`](../box/software/src/tests/butt
 - `maxRecordingSeconds` is **not** restarted by a resume — the ceiling is carried across, so
   pumping the button cannot grow a file in the RAM disk. If it fires mid-window, the take commits
   there.
-- A **different** button going down commits whatever is waiting, rather than leaving two takes
-  open. That also keeps the silent-mode chord out of this path entirely.
+- A **different** button going down during the window is ignored (the lockout, below); the take
+  commits when the window expires, as if nothing had happened. That also keeps the silent-mode
+  chord out of this path entirely.
 - `reset()` drops an open window silently, exactly as it already dropped an in-flight press.
 - `resumeGraceMs: 0` restores commit-on-release.
 - The reported `durationMs` is time actually held, first press to final release. The trailing
   window is not speech and is not counted.
+- The `durationMs` the **HAL** returns from `stopRecording` is a different number: how much audio
+  the file holds. `GpioHal` computes it from the capture WAV's size, `(size − 44) / (rate × 2 ×
+  channels)`, and the simulator probes the encoded file. The microphone stays open through the
+  window, so it includes that tail. It used to be `Date.now() − startedAt` taken after the encode,
+  which counted the stop and the encode as audio. A microphone that delivered nothing still
+  reported seconds, `MIN_USABLE_AUDIO_MS` could never catch it, and the sent totals ran high.
 
 No cue marks the resume and none is needed: the LED never goes out. `pressVisualOff` still fires on
 release, but ladder rule 1 keeps the light solid, so **solid means "still listening"** and the
@@ -317,11 +345,52 @@ it (above). The LED still goes solid at press, so acknowledgement is instant and
 A second consequence, worth naming because it looks like an accident: the bip is now the only cue
 that can overlap a capture *opening*, so a release during those 90 ms cancels a capture that does not
 exist yet. That is exactly the case `#captures` stores a promise for, and it is the reason the map
-holds `Promise<RecordingHandle | null>` rather than the handle.
+holds `Promise<RecordingHandle | null>` rather than the handle. Awaiting that promise was not enough
+on its own: the discard waited for the bip, and the bip then opened a microphone for a press that was
+already over — on top of the "oops" the release had just played, or after `stop()`. Each entry
+therefore carries a **cancel token** beside the promise. `#discardCapture` sets it before it awaits,
+the promise checks it between the bip and `startRecording`, and a cancelled capture resolves `null`
+without opening anything. `stop()` discards every capture in flight the same way, because
+`ButtonInterpreter.reset()` drops presses without emitting a cancel.
 
 A send makes **one** sound. The whoosh means "sent"; delivery is the lamp flashing. A designed
 "delivered" swoosh used to follow the whoosh and the two read as noise rather than as two facts, so
 it was retired (`PRODUCT.md` §7). Only a failure adds a second sound.
+
+### One button at a time: the lockout
+
+A toddler holding one button grabs at the others. Before the lockout each button was tracked
+independently, so a grab opened a second take beside the first, answered with an "oops" or a queue
+mid-sentence, or — during the carry-on window — committed the first take early. Now one button
+**owns** the box while it is held or its take is waiting out `resumeGraceMs`, and every other press
+is ignored whole: down edge, release, everything between. Rules, locked by
+[`src/tests/button.test.ts`](../box/software/src/tests/button.test.ts):
+
+- **A press that began under the lock is never adopted.** It stays in `#ignored` until its own
+  release, even if the owner finishes first — promoting it mid-hold would start a take whose first
+  second the child never meant.
+- **Its release is invisible**, including to the chord: an ignored release does not disarm it.
+- **The chord partner is the only exception**, and only while the owner is short of a message
+  (`recordThresholdMs + minRecordingMs`, the tap boundary). No new constant: a parent pressing the
+  outer pair presses them together, and past that boundary the owner is a child talking. A resumed
+  take carries its first press's start, so it is always past it.
+- **Playback owns the box too.** While a queue plays, every other button is ignored the same way,
+  the chord included — a parent waits for the note to end. Before this a hold on another button
+  played the bip and opened a microphone beside the speaker, recording the incoming message into an
+  outgoing one, and a tap played the "oops" over it. The interpreter asks through a
+  `listeningTo()` query, like `hasUnread`, so `core/` stays pure. `DeviceController` answers from
+  its own `#listeningTo`, set in the same tick as the tap and cleared in `#playQueue`'s `finally`,
+  not from `state.playing` — that is only set when the first note starts, after the capture
+  teardown `#playQueue` waits on, and a press in that gap would slip through. The playing button
+  itself stays on its ordinary path, which is already inert while its queue plays.
+- `reset()` clears the ignored set with everything else.
+- **A press whose release never arrives is dropped** after `stuckPressMs()` —
+  `maxRecordingSeconds` plus one `resumeGraceMs`, longer than any real press. Only a button-up
+  ends a press that opened no microphone (refused, withheld or swallowed by the chord), and under
+  the lockout that press also silences the other two buttons, so one lost edge would freeze the
+  box. The drop is silent apart from `pressVisualOff`, because the child let go long ago. A
+  recording never reaches it: the ceiling ends it first and sends it. An ignored button's lost
+  release expires on the same clock, so it costs one press at most.
 
 ### The silent chord
 
@@ -330,7 +399,13 @@ the instant the chord forms, so a child mashing the outer buttons can never send
 If the chord is released early, nothing at all happens — no send, no cancel beep.
 
 The chord toggles the **effective** state, so during scheduled quiet hours it lets a parent force
-audio back on without editing the schedule.
+audio back on without editing the schedule. The override is `DeviceState` clearing its scheduled
+flag, and it holds only because `DeviceController` applies the schedule on an **edge**: it
+remembers what the window said at the last evaluation and calls `setScheduledSilent` only when
+that changes. The timer still wakes at least every 15 minutes (`QUIET_HOURS_MAX_SLEEP_MS`) to
+catch clock and DST changes, but a wake inside the same window changes nothing, so the override
+lasts until the next boundary. The sleep itself is `msUntilNextTransition`, to the millisecond —
+counting whole minutes landed the boundary up to 59 s late.
 
 ---
 
@@ -346,8 +421,16 @@ from the admin API or the portal (bad input is rejected, not persisted). A toddl
 is three buttons, so a bad config cannot be diagnosed or corrected by the user. Validation is the
 safety net.
 
-Writes are **atomic** — temp file → `fsync` → `rename`. A half-written config during power loss
-would brick the device.
+Writes are **atomic**: a temp file named for that write alone → `fsync` → `rename` → `fsync` the
+directory (`src/config/atomicWrite.ts`). A half-written config during power loss would brick the
+device. The directory fsync makes the rename itself durable. Without it, a power cut can bring back
+the old directory entry, and a save the panel reported as done is silently undone at the next boot.
+A failed write removes its temp file.
+
+Writes are also **serialised**. `save`, `update` and `factoryReset` run one at a time through a
+`SerialQueue`, and `update` merges *inside* the queue. Two admin tabs saving at once used to merge
+over the same `current`, so the second silently undid the first, and their temp files, which shared
+one fixed name, truncated each other.
 
 ### Activity totals are a separate file, for a reason that is not tidiness
 
@@ -365,6 +448,12 @@ Writes are atomic like the config's, and **coalesced**: a change schedules one w
 later, so a burst of arriving notes is one erase cycle on the card rather than ten. That delay is
 exactly why `flush()` exists and why every path that ends the process calls it — a config save, a
 SIGTERM, and the reboot and shutdown requests before they are handed to the root agent.
+
+Writes chain one after another, and **every `flush()` waits for a write that covers what it asked
+for**. Two flushes that overlapped used to let the second return before the first write had
+landed, because it found `dirty` already cleared, and the process could exit mid-write. A failed
+write marks the totals dirty again, so the next change or the shutdown `flush()` retries it instead
+of treating the stale file as current.
 
 **`src/core/` still does no I/O.** `DeviceController` takes a `StatsRecorder` — three synchronous
 methods, structurally typed so nothing in `core/` imports the store — exactly as it already takes
@@ -400,15 +489,24 @@ speaker volume, say. A restart is a couple of seconds on this device and leaves 
 `Restart=always` is therefore load-bearing on the device. Without it, saving a setting would simply
 switch the device off.
 
+**Every exit goes through `Shutdown`** (`src/processes/shutdown.ts`), in both daemons: a config-save
+restart, SIGINT/SIGTERM, an `unhandledRejection`, an `uncaughtException`, and a failed startup. It
+arms a fallback exit (`SHUTDOWN_TIMEOUT_MS`, 5 s, inside the units' `TimeoutStopSec=10`) *before*
+the first step, and runs each teardown step in its own try/catch, so a step that throws cannot leave
+the lamps lit or the totals unwritten, and one that hangs cannot hold the process until systemd
+kills it. The handlers are installed on the first line of `main()`. A clean exit is code 0 and a
+crash is code 1: both restart under `Restart=always`, but only one reads as a crash in the journal,
+and a crash during a clean restart still reports as one.
+
 ### Patches are partial all the way down
 
 `PUT /api/config` accepts **any subset of any section, to any depth**. `configUpdateSchema` is
-partial throughout, `mergeConfig` merges field by field, and the cross-field rules (volume ≤ cap,
-debounce < threshold, an enabled contact has a target) are enforced by `ConfigManager.save()`
-against the **merged** config.
+partial throughout, `mergeConfig` merges field by field, and the cross-field rules (debounce <
+threshold, an enabled contact has a target) are enforced by `ConfigManager.save()` against the
+**merged** config.
 
-That last part is load-bearing: a patch raising the volume does not carry the cap, so the rule can
-only be checked after merging. Sections with a refinement are written as a plain `…Shape` object
+That last part is load-bearing: a patch raising `debounceMs` does not carry `recordThresholdMs`,
+so the rule can only be checked after merging. Sections with a refinement are written as a plain `…Shape` object
 plus a refined `…Schema`, because `.partial()` exists only on a `ZodObject`.
 
 ### Adding a section without breaking existing devices
@@ -444,6 +542,12 @@ know the mode exists or defend against a capture that should not have been opene
 
 The unread rule above reuses this path with the other reason. It is the same refusal in every
 respect except *when* it can be decided — see the table there.
+
+A **button with no contact** takes the same path per button, with reason `unassigned`: the
+controller hands the interpreter a `canSend(index)` query built once from `enabledContacts()` at
+boot, and the interpreter checks it at `recordThresholdMs`, after the unread rule — so a button still
+holding notes stays playable by a tap. Until 2026-09-30 nothing checked this before the bridge, which
+refused the finished take with `no contact assigned to that button`.
 
 Refusing in the controller instead would have meant opening the interpreter's capture path and then
 declining it, which leaves the "is there a microphone open" question answered differently in two
@@ -494,6 +598,31 @@ make the device recoverable only by pulling the SD card. Both halves are pinned 
 [`src/tests/adminAuth.test.ts`](../box/software/src/tests/adminAuth.test.ts); the watch item in `PENDING.md` has
 the full reasoning.
 
+**bcrypt runs once per browser, not once per request.** A check costs ~300 ms on a Zero 2 W, on
+the same event loop that times the child's button presses, and the panel sends its saved
+credentials with every request — several at once on a page load. `AdminAuthenticator` in
+`src/server/auth.ts` remembers a success for `ADMIN_AUTH_CACHE_TTL_MS` (5 min), keyed on
+SHA-256 of the `Authorization` header and the stored hash, so a new password invalidates every
+entry without any explicit flush; identical headers in flight share one verification. Wrong
+passwords draw on a **global** token bucket (`ADMIN_AUTH_FAILURE_BURST` = 5, one back every 12 s):
+once it is spent an uncached header gets **429 with `Retry-After`** and no bcrypt at all. Global
+rather than per address because the LAN offers no identity worth trusting; the cache is consulted
+first, so a panel that is already signed in keeps working through somebody else's guessing.
+
+**A password is not a defence against another website.** A browser attaches the parent's saved
+Basic credentials to any request for the box, whichever page made it, and several routes take no
+body — so a `<form method=post>` anywhere on the internet could factory-reset the device while a
+parent browsed. `requireSameOrigin` (`src/server/csrf.ts`), mounted first in `createApiRouter` so
+it covers `POST /onboard` too, refuses any non-GET/HEAD/OPTIONS request that carries
+`Sec-Fetch-Site: cross-site` or an `Origin` whose host is not the `Host` it was sent to (403), and
+any that is not labelled `application/json` (415) — the label a form cannot send and a cross-site
+`fetch` cannot send without a CORS preflight this server never answers. That last rule is why the
+panel's body-less actions post an empty `{}` as JSON. `same-site` is allowed, because `:80` and
+`:3000` on one box are the same site; a missing `Origin` is allowed, because that is curl or a test,
+not a browser. The Vite dev proxy keeps the browser's `Host`, so the check holds in development.
+`denyFraming` adds `X-Frame-Options: DENY` and `frame-ancestors 'none'` to every response, the HTML
+pages included, so nothing can lay the panel under a page of its own and click through it.
+
 `GET /api/stats`, `POST /api/stats/reset`, `GET /api/system` and `POST /api/system/power` are all
 admin-gated, and each for a concrete reason rather than by default: the totals name the family's
 contacts, the health reading names the network the box sits on, and the last one can turn the device
@@ -520,6 +649,13 @@ serves has always been reachable on `:80`, and the address a parent is given is 
 `http://bloopbox.local`. `:3000` stays because it is the primary listener, it is what the
 development proxy and the smoke test use, and it is the fallback on a box where the privileged bind
 did not happen.
+
+**Socket.io answers on both.** It used to be attached to `:3000` only, so at `http://bloopbox.local/`
+the panel's live status never connected. `serveSocketsOn` (`src/server/socketListeners.ts`) attaches
+the one engine to the portal listener as well, rather than calling `io.attach()` a second time —
+that builds a second engine and repoints `io.close()` at it, stranding the first listener's
+clients. One engine is one set of namespaces and broadcasts, whichever port a client used; the
+bridge still connects to `:3000`, and the captive portal page still uses none of it.
 
 **`/` is the settings panel**, served (not redirected) from `dist/public/admin/index.html`; Vite
 emits absolute asset paths, so one file works at both `/` and `/admin/`, and the older path keeps
@@ -603,6 +739,7 @@ Rules that keep it honest:
 | Module              | Owns                                                                        |
 | ------------------- | --------------------------------------------------------------------------- |
 | `ffmpeg.ts`         | The Opus/ogg pipeline both ways, and the `libopus` preflight check           |
+| `process.ts`        | `runProcess`: the one way a short-lived helper (ffmpeg, amixer) is run       |
 | `cues.ts`           | The cue vocabulary, and which cues silent mode suppresses. No node imports — the browser shares it |
 | `queueManager.ts`   | Sequential per-contact playback, with a soft chime between notes             |
 | `purge.ts`          | The 48-hour TTL sweep, hourly                                               |
@@ -637,6 +774,60 @@ back, one from yesterday is a confusing thing to hand a small child.
 Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys' own docs, or some
 clients show the voice bubble but refuse to play it.
 
+### Every helper process has a deadline
+
+ffmpeg and amixer go through `runProcess` in `src/audio/process.ts`, never a bare `spawn`. It gives
+every call a deadline (SIGTERM, then SIGKILL `PROCESS_KILL_GRACE_MS` later, and it settles even if the
+child never closes), keeps the **tail** of stderr in the error, because that is where both tools put
+the reason, and turns a failure to start into a rejection rather than an unhandled `'error'` event.
+Nothing is written to a child's stdin. The old `runFfmpeg(args, input)` stream path was never used,
+and an EPIPE from a child that exited early had nowhere to go.
+
+Before this, nothing had a timeout. `prepare()` decodes one note at a time, so one ffmpeg wedged on
+a malformed file silently stopped every later note from being decoded.
+
+- **ffmpeg's deadline scales with the audio**: `FFMPEG_BASE_TIMEOUT_MS` (30 s) plus twice the input's
+  duration when it is known (a capture), and `FFMPEG_UNKNOWN_DURATION_TIMEOUT_MS` (5 min) when it is
+  not (an arriving note, on decode).
+- **amixer failures stay non-fatal but are logged at `warn`** with amixer's own stderr
+  (`AMIXER_TIMEOUT_MS`, 5 s). The old `runQuiet` threw stderr away, so a wrong control name, such as
+  `Master` on the WM8960, which has none, logged nothing while the volume stayed where the card
+  powered up.
+
+`arecord` and `aplay` are not run through it. A button stops them, not a clock, and each has its own
+stop path with its own escalation. Both track their exit **from spawn**. `arecord` can exit by itself
+(the device went away, or the codec refused the rate), and the `'close'` listener used to be attached
+only at stop, after the event had already fired, so every commit after such an exit waited the full
+`CAPTURE_FLUSH_TIMEOUT_MS`. The stop now checks `exitCode`/`signalCode` first and the early exit is
+logged at `warn` with arecord's stderr.
+
+### Nothing plays over a note
+
+There is one speaker and one `plughw` device, so `playCue` cuts off whatever is playing. Until
+2026-09-23 that included the note a child was listening to. A second note arriving played the
+notify chime, the chime killed `aplay`, the killed note resolved as a success, and the queue
+counted it as played, deleted it and reported it read. Then the drain zeroed the unread count, so
+the new note's lamp went dark too. Four rules now, each locked by a test:
+
+- **`hal.play()` says how it ended**: `'completed'` or `'interrupted'`. Only a completed note is
+  heard. An interrupted one goes back to the front of the queue with everything after it, and
+  `playbackAborted` carries the notes that *were* heard, so they are deleted and reported rather
+  than restored as unread at the next restart. A note that fails outright is still skipped and
+  counted, so a corrupt file cannot blink forever.
+- **Courtesy cues wait for the note**. Notify, whoosh, oops and boot all go through
+  `DeviceController.#courtesyCue`, which drops them while `#listeningTo` is set. The lamp says
+  everything they would. The admin panel's speaker test is the one sound allowed through, and what
+  it interrupts survives.
+- **Unread follows the queue**: `setUnread(index, queue.count(index))` after a drain or an abort,
+  never a clear.
+- **A stop waits for the player to exit** (SIGKILL after `PLAYBACK_STOP_TIMEOUT_MS`), and a dying
+  player clears only its *own* reference. The old handler nulled the field after the cue's `aplay`
+  had been spawned, so the next stop killed nothing and the device stayed busy.
+
+`MockHal.holdPlayback` keeps a note playing until something interrupts it, as the real speaker does.
+Without it the controller tests could not see any of this, because the mock's cues never cut
+anything off.
+
 ### Inbound notes are decoded on arrival, not on the tap
 
 `aplay` reads WAV, AU and VOC and nothing else, and a WhatsApp voice note is Ogg/Opus — so playing
@@ -654,7 +845,21 @@ fresh delivery and one restored at boot, and it is not awaited. `GpioHal` writes
   it sweeps `.wav` by age and the decode is exactly as old as its note. `play()` therefore checks the
   file on disk, not just its own map.
 - **`release()` is called when the note's file is deleted**, from `#deletePlayed`, because the decode
-  is derived data with nothing left to derive from.
+  is derived data with nothing left to derive from. A release that lands while that note's decode is
+  still running is remembered, and the decode deletes its own output when it finishes. Before this,
+  the WAV of a note already heard stayed in the RAM disk.
+- **One decode per note at a time.** `prepare()` and `play()` write the same `play-<stem>.wav`, so
+  `GpioHal` keeps a map of which notes' files are in use (`#decoding`) and anyone who finds an entry
+  waits for it. A tap during the arrival decode waits for that decode rather than starting a second
+  ffmpeg over it, and an arrival decode waits for a tap's temporary copy to be played and deleted.
+  Before this, two writers shared one file and one could delete it under the other's `aplay`.
+- **Never beside an open microphone.** A queued arrival decode waits while a capture is open
+  (it starts again when the capture is stopped, cancelled or dies by itself), and every arrival
+  decode runs at niceness `BACKGROUND_DECODE_NICENESS` (10). `loudnorm` is the heaviest thing the box
+  does, and on four slow cores it can starve `arecord` into an overrun, which is a gap in the child's
+  message. A decode already running when the capture opens is not killed. It carries on at the
+  lowered priority, since killing it would only mean doing it again. A tap's on-demand decode is not
+  held back, because someone is waiting for it.
 - **16 kHz mono** (`PLAYBACK_DECODING`), not Opus's internal 48 kHz: the note arrived at 16 kHz, and
   three times the RAM disk for the same speech is not a trade worth making in a tmpfs measured in
   tens of megabytes.
@@ -673,6 +878,91 @@ four multiplying stages — `speakerVolumePercent` into `ampVolumePercent` into 
 mode, so the amplifier stages can be judged by ear at any hour.
 
 ---
+
+## The WhatsApp connection
+
+[`src/whatsapp/client.ts`](../box/software/src/whatsapp/client.ts) owns the Baileys socket, its
+credentials and reconnection. Baileys reaches it through four injected functions — `socketFactory`,
+`authStateFactory`, `download`, `versionProvider` — whose defaults are the real library calls, so
+`src/tests/support/fakeWASocket.ts` can drive the whole lifecycle without an account.
+
+### One socket, and only when a decision says so
+
+Every call that decides which socket should exist — each connect, `stop()`, `unlink()` — bumps a
+**generation**, and a connect re-checks it after each of its awaits (the auth directory, the auth
+state, the version fetch). A connect that has been overtaken gives up instead of opening a second
+socket onto the same `creds.json`. The state goes to `connecting` *before* the first await, which is
+what makes `beginLinking()`'s `notLinked` guard hold against a double click. An existing socket is
+ended before its replacement opens, `unlink()` cancels a pending reconnect, and a socket from before
+an unlink may not write its credentials back into the directory the unlink deleted.
+
+`fetchLatestBaileysVersion` has no timeout and takes no signal, so it is raced against
+`VERSION_FETCH_TIMEOUT_MS`; past that, the socket opens with the version Baileys ships with.
+
+### What a close means
+
+| Reason | Paired? | Then |
+| ------ | ------- | ---- |
+| `restartRequired` (515) | either | reconnect at once — this is how a successful scan finishes |
+| anything else | **no** | `notLinked`. Baileys ends an unscanned QR with `timedOut` (408), which is also `connectionLost`; retrying it started a new round of codes for ever |
+| `loggedOut` (401) | yes | `notLinked`, credentials deleted |
+| `connectionReplaced` (440), `forbidden` (403) | yes | `disconnected` with a detail saying why, **no retry** until the daemon restarts |
+| anything else | yes | `disconnected`, reconnect on the ladder below |
+
+440 on this device means the card was copied into a second box: the two replace each other for as
+long as both keep retrying. 403 retried every minute is how a restricted account becomes a banned
+one.
+
+**The ladder** is `reconnectDelayMs`: 2 s doubling to a 60 s cap, ±20 % jitter so boxes behind one
+router do not come back in step. The attempt count resets only once a connection has stayed up
+`STABLE_CONNECTION_MS` (60 s) — resetting on `open` let an open-then-kicked loop run every 2 s.
+
+### Which messages are voice notes
+
+`voiceNoteContent` accepts a PTT `audioMessage`, at the top level or inside `ephemeralMessage` —
+the wrapper a chat with disappearing messages puts round everything. It opens that one wrapper by
+name and **never uses `normalizeMessageContent`**, which also opens view-once, edits and
+document-with-caption: each is another shape a group member could put on a child's button, and
+widening that is a decision, not a helper's side effect. View-once stays ignored until it is made.
+
+### Downloads onto the card
+
+[`src/whatsapp/mediaDownload.ts`](../box/software/src/whatsapp/mediaDownload.ts). The notes directory
+is on the card that holds `config.json` and the credentials, and a note's size is whatever the
+sender's client says. So: refused before download when the declared `fileLength` is over
+`MAX_INBOUND_BYTES` (2 MB, about twice the longest note the 300 s cap admits); a byte-counting
+`Transform` in the pipeline that fails it if the delivered bytes go over anyway;
+`DOWNLOAD_TIMEOUT_MS` (60 s) per attempt, raced against Baileys' own request since it takes no
+signal; and two retries on anything that is not a 4xx or an oversized note.
+
+A download is written to `<name>.part`, fsynced, then renamed. Boot recovery treats every
+`wa-<i>-<id>.ogg` as an unread note, so the final name must only ever point at a complete file;
+recovery also skips a zero-length one, and the purge sweeps an abandoned `.ogg.part` by age.
+
+### Sends answer before the hardware side gives up
+
+The hardware server abandons a send after `SEND_TIMEOUT_MS` (60 s) and plays the "oops". An upload
+still running then can deliver a note the child was told had failed, so the client passes Baileys
+`mediaUploadTimeoutMs` = `MEDIA_UPLOAD_TIMEOUT_MS` (20 s). Baileys applies it **per media host**,
+trying each in turn, and on Node it is the socket's idle timeout rather than a deadline — hence 20 s
+and not 45: two stalled hosts still answer inside the minute.
+
+### "Delete for everyone"
+
+Baileys 7.0.0-rc14 reports it on `messages.update` as `{ key: { …the revoker's key, id: <deleted
+id> }, update: { message: null, messageStubType: REVOKE } }` (`Utils/process-message.js`), and lets
+it through from other users on purpose. The client turns that into a `revoked` event addressed like a
+voice note; the bridge runs it through `whitelist.evaluate`, and only for an allowed chat sends
+`wa:revoked { index, messageId }` — the button the whitelist resolved, not just an id. The hardware
+server calls `DeviceController.revokeNote`, which removes the note only if **that button** holds
+that id (`AudioQueueManager.remove`), resets unread to `queue.count()`, deletes the file and
+`hal.release()`s its decode.
+
+Two races are covered. A revoke that arrives while its note is still downloading finds nothing in
+the queue, so the bridge also remembers revoked ids and throws the file away when the download
+lands. And revokes wait behind the same `HoldUntilReady` as notes, in one queue, so one is never
+judged before its own note. A note already playing is not interrupted; `remove` skips any later in
+the run it belongs to.
 
 ## The whitelist is the safety boundary
 
@@ -708,9 +998,9 @@ which is a helper rather than a suite. No supertest; nothing was worth a depende
 is handshake middleware and only exists during a connection.
 
 `vitest.config.ts` declares 80% coverage thresholds but **`npm run check` does not run them** — it
-calls plain `vitest run`. Coverage currently sits at about **77% statements / 68% branches**, so the
-thresholds still fail. `src/whatsapp/` (24%) is the large remaining hole and `src/audio/` sits at
-75%. `src/server/simulatorTransport.ts` is untested on purpose: it is the browser end of a
+calls plain `vitest run`. Coverage currently sits at about **87% statements / 79% branches**, so the
+branch threshold still fails. `src/whatsapp/` (86% / 77%) is the largest remaining hole, now that
+Baileys is injected and `FakeWASocket` drives the lifecycle. `src/server/simulatorTransport.ts` is untested on purpose: it is the browser end of a
 debugging tool, not device code. Treat the number as known debt, not a passing gate — the detail is
 in `PENDING.md`.
 
@@ -739,10 +1029,12 @@ are testing configuration at all.
 | `NET_STATE_PATH`                             | `/run/bloopbox-net/net-state.json` | What the root net agent publishes; absent in dev  |
 | `NET_REQUEST_PATH`                           | `/run/bloopbox/net-request.json`   | What the daemon asks the agent for — network actions **and** reboot/poweroff |
 | `STATS_PATH`                                 | `/data/stats.json`         | Activity totals. Beside the config, never inside it       |
+| `SSH_PASSWORD_PATH`                          | `/data/ssh-password`       | The first-boot ssh login the admin panel shows. Root-written, read-only here |
 | `THERMAL_ZONE_PATH`                          | `/sys/class/thermal/thermal_zone0/temp` | SoC temperature for the health card. Absent off Linux → reported as a dash |
 | `DEVICE_MODEL_PATH`                          | `/sys/firmware/devicetree/base/model` | The board's own name, for the health card           |
-| `LED_ACTIVE_HIGH`                            | `true`                     | Pi only, unverified — a 3 V lamp between pin and ground lights on HIGH; flip if inverted |
-| `BUTTON_ACTIVE_LOW`                          | `true`                     | Pi only, unverified — pull-ups mean a press reads low      |
+| `LED_ACTIVE_HIGH`                            | `true`                     | Pi only. Correct on the reference board (2026-09-30) — a 3 V lamp between pin and ground lights on HIGH; flip if inverted |
+| `BUTTON_ACTIVE_LOW`                          | `true`                     | Pi only. Correct on the reference board (2026-09-30) — pull-ups mean a press reads low |
+| `BUTTON_SETTLE_MS`                           | `20`                       | Pi only. How long a button line must be quiet before its level counts (`hal/settledLine.ts`); 0–200. Raise it for switches that chatter longer |
 | `ALSA_CAPTURE_DEVICE` / `ALSA_PLAYBACK_DEVICE` | `default`                | Pi only, unverified                                       |
 | `ALSA_MIXER_CONTROL`                         | `PCM`                      | Pi only. Differs across USB adapters; a wrong name silently ignores the volume setting |
 | `ALSA_AMP_MIXER_CONTROL`                     | *(unset)*                  | Pi only. The analogue output stage below the DAC — `Speaker` on the WM8960. Unset means the card has none |

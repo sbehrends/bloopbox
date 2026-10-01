@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isWithinQuietHours,
   minutesOfDay,
-  minutesUntilNextTransition,
+  msUntilNextTransition,
   parseTimeOfDay,
 } from '../core/quietHours.ts';
 import type { QuietHoursConfig } from '../config/schema.ts';
@@ -14,9 +14,11 @@ import type { QuietHoursConfig } from '../config/schema.ts';
  * below, so the arithmetic these tests assert on does not change with the developer's clock.
  * The zone-aware cases further down are the ones that put a real offset in play.
  */
-function at(hour: number, minute = 0): Date {
-  return new Date(Date.UTC(2026, 0, 15, hour, minute, 0, 0));
+function at(hour: number, minute = 0, second = 0): Date {
+  return new Date(Date.UTC(2026, 0, 15, hour, minute, second, 0));
 }
+
+const MINUTE = 60 * 1000;
 
 const overnight: QuietHoursConfig = {
   enabled: true,
@@ -84,30 +86,48 @@ describe('isWithinQuietHours — degenerate cases', () => {
   });
 });
 
-describe('minutesUntilNextTransition', () => {
+describe('msUntilNextTransition', () => {
   it('counts down to the start of quiet hours while audible', () => {
     // 18:00 -> 20:00 is two hours away.
-    expect(minutesUntilNextTransition(overnight, at(18, 0))).toBe(120);
+    expect(msUntilNextTransition(overnight, at(18, 0))).toBe(120 * MINUTE);
   });
 
   it('counts down to the end of quiet hours while quiet', () => {
     // 22:00 -> 07:00 next day is nine hours away.
-    expect(minutesUntilNextTransition(overnight, at(22, 0))).toBe(540);
+    expect(msUntilNextTransition(overnight, at(22, 0))).toBe(540 * MINUTE);
     // 03:00 -> 07:00 same day is four hours away.
-    expect(minutesUntilNextTransition(overnight, at(3, 0))).toBe(240);
+    expect(msUntilNextTransition(overnight, at(3, 0))).toBe(240 * MINUTE);
   });
 
   it('wraps to tomorrow rather than returning zero or negative', () => {
     // Exactly at the start: next flip is the 07:00 end, 11 hours out.
-    expect(minutesUntilNextTransition(overnight, at(20, 0))).toBe(660);
+    expect(msUntilNextTransition(overnight, at(20, 0))).toBe(660 * MINUTE);
     // Just after the end: next flip is tonight's 20:00 start.
-    expect(minutesUntilNextTransition(overnight, at(7, 0))).toBe(780);
+    expect(msUntilNextTransition(overnight, at(7, 0))).toBe(780 * MINUTE);
+  });
+
+  /*
+   * Counting whole minutes from the current one used to land the timer up to 59 s late: at
+   * 19:59:30 it said "one minute", and the box stayed audible until 20:00:30.
+   */
+  it('counts the part of the current minute already gone', () => {
+    expect(msUntilNextTransition(overnight, at(19, 59, 30))).toBe(30 * 1000);
+    expect(msUntilNextTransition(overnight, at(6, 59, 59))).toBe(1000);
+    const almost = new Date(at(19, 59, 59).getTime() + 999);
+    expect(msUntilNextTransition(overnight, almost)).toBe(1);
+  });
+
+  it('wraps to tomorrow from part-way through the boundary minute', () => {
+    // 20:00:30 is inside the window; the next flip is 07:00, 30 s short of 11 hours.
+    expect(msUntilNextTransition(overnight, at(20, 0, 30))).toBe(660 * MINUTE - 30 * 1000);
+    // 07:00:30 is audible; tonight's 20:00 is 30 s short of 13 hours.
+    expect(msUntilNextTransition(overnight, at(7, 0, 30))).toBe(780 * MINUTE - 30 * 1000);
   });
 
   it('returns null when there is no schedule to wait for', () => {
-    expect(minutesUntilNextTransition({ ...overnight, enabled: false }, at(12))).toBeNull();
+    expect(msUntilNextTransition({ ...overnight, enabled: false }, at(12))).toBeNull();
     expect(
-      minutesUntilNextTransition({ ...overnight, startTime: '09:00', endTime: '09:00' }, at(12)),
+      msUntilNextTransition({ ...overnight, startTime: '09:00', endTime: '09:00' }, at(12)),
     ).toBeNull();
   });
 });
@@ -158,6 +178,6 @@ describe('isWithinQuietHours — across timezones', () => {
 
   it('counts down to the boundary in the configured zone', () => {
     // 17:00 UTC is 18:00 Berlin, two hours from a 20:00 start.
-    expect(minutesUntilNextTransition(berlin, at(17, 0))).toBe(120);
+    expect(msUntilNextTransition(berlin, at(17, 0))).toBe(120 * MINUTE);
   });
 });

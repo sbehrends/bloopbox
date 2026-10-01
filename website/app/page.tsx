@@ -4,9 +4,7 @@ import { channels, links } from '@/lib/site'
 
 import styles from './page.module.css'
 
-/** Who a button can be. The order is the order of the caps on the enclosure and of the rings in
- *  the mark: yellow, coral, teal — so the swatch on each card means "which button", which is the
- *  only thing a channel colour is ever allowed to mean. */
+/** Yellow, coral, teal: the order of the caps on the enclosure. */
 const WHO = [
   {
     channel: 1,
@@ -25,9 +23,6 @@ const WHO = [
   },
 ] as const
 
-/** The three reasons a box beats a phone, each with the picture that carries it. All three are
- *  finished art in the house style `website/components/Figure.tsx` defines, cropped to 16:10 by
- *  `.mediaCardImage` — the source frames are 16:9, so the crop takes 5% off each side. */
 const REASONS = [
   {
     title: 'Theirs, not yours',
@@ -49,7 +44,6 @@ const REASONS = [
   },
 ] as const
 
-/** The header's own links. Anchors into this page; `SiteHeader` appends the manual. */
 const NAV = [
   { href: '#thebox', label: 'The box' },
   { href: '#how', label: 'How it works' },
@@ -65,10 +59,6 @@ export default function Home() {
       <SiteHeader nav={NAV} />
 
       <main id="main">
-        {/* ---- hero ---- */}
-        {/* Full-bleed: the photograph is the background, and the copy sits on a veil of the page
-            colour so navy ink reads on cream by day and cream ink on navy after dark, with one
-            unchanging photograph underneath. */}
         <section className={styles.hero}>
           <div className={styles.heroMedia}>
             <img
@@ -114,7 +104,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ---- why ---- */}
         <section id="thebox" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">Why a box</p>
           <div className={`${styles.split} rise`}>
@@ -150,7 +139,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ---- one person per button: the page's one dark band ---- */}
         
         <section id="people" className={styles.night}>
           <div className="wrap">
@@ -165,10 +153,6 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Each lamp plays the unread-message blink from `docs/PRODUCT.md` §6 — 0.8 s on, 0.8 s
-                off, three times — then rests for the remaining twelve seconds of a 16 s cycle. The
-                three are staggered so only one is ever lit: the box answers one person at a time,
-                which is what the paragraph above claims. */}
             <div className={`${styles.cards} rise-group`}>
               {WHO.map((entry) => (
                 <article
@@ -190,12 +174,10 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ---- how ---- */}
         <section id="how" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">How it works</p>
           <h2 className={`${styles.sectionTitle} rise`}>Two gestures, in this order.</h2>
 
-          {/* Numbered because it genuinely is a sequence: press, release, reply. */}
           <ol className={`${styles.steps} rise-group`}>
             <li className={styles.step}>
               <span className={styles.stepNumber}>01</span>
@@ -219,9 +201,22 @@ export default function Home() {
               </p>
             </li>
           </ol>
+          <a className={`${styles.help} rise`} href={links.lights}>
+            <span className={styles.helpLamps} aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className={styles.helpText}>
+              <strong>Lights doing something odd?</strong>
+              <span>See what every pattern means and what to do about it.</span>
+            </span>
+            <span className={styles.helpArrow} aria-hidden="true">
+              →
+            </span>
+          </a>
         </section>
 
-        {/* ---- for parents ---- */}
         <section id="parents" className={`wrap ${styles.section}`}>
           <p className="eyebrow rise">For the adult who sets it up</p>
           <h2 className={`${styles.sectionTitle} rise`}>Built for a child’s room.</h2>
@@ -249,7 +244,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ---- closing ---- */}
         <section className={`wrap ${styles.closing}`}>
           <img src="/bloopbox-logo-light.svg" alt="" className={styles.mark} />
           <h2 className={styles.closingTitle}>Three buttons. Three people who love them.</h2>

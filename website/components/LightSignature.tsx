@@ -1,16 +1,6 @@
 import styles from './LightSignature.module.css'
 
-/**
- * The device's whole vocabulary, playing.
- *
- * A port of the light-signature ladder in the box's own brand kit
- * (`box/software/public/brand/`), with the same timings — see the header of the stylesheet for
- * why it is a copy rather than an import, and for why it is animated rather than tabulated.
- *
- * The authority for what each pattern *means* is `docs/PRODUCT.md` §6 and the animator in
- * `box/software/src/core`. These lamps are a picture of that, not a second implementation, so a
- * change to the ladder there is a change here — and the manual is where a parent will look first.
- */
+/** The device's light patterns, animated. Meanings live in `docs/PRODUCT.md` §6. */
 
 /** Which lamps are lit, and how. `null` is a dark lamp; `'solid'` never moves. */
 type Pattern =

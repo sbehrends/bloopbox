@@ -1,4 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 
 /**
@@ -67,6 +68,24 @@ export type NetState = {
   readonly scanAgeSeconds: number;
   /** Why the last join failed, in words a parent can act on. Null if nothing has failed. */
   readonly lastError: string | null;
+  /**
+   * The id of the last request the agent acted on — its acknowledgement.
+   *
+   * The agent cannot delete the request file: it sits in the daemon's runtime directory, which
+   * `ProtectSystem=strict` leaves read-only to it, and one writer per directory is the rule
+   * anyway. So it remembers what it has done and says so here, and the daemon, which owns the
+   * file, deletes it once it sees its own id come back.
+   */
+  readonly handledRequestId: string | null;
+  /**
+   * Whether the wall clock has been set from the network (`timedatectl`'s `NTPSynchronized`).
+   *
+   * A Pi has no real-time clock, so until NTP answers it runs on whatever time the last shutdown
+   * saved — and quiet hours read that clock. **Null is "cannot tell", not "unsynced"**: no
+   * `timedatectl` on the box, an agent that predates this field, or an answer that was not yes or
+   * no. Observation only; nothing in the daemon acts on it yet (PENDING.md).
+   */
+  readonly timeSynced: boolean | null;
 };
 
 /**
@@ -118,6 +137,10 @@ const netStateSchema = z.object({
   scan: z.array(scannedNetworkSchema).max(40).catch([]),
   scanAgeSeconds: z.number().min(0).catch(0),
   lastError: z.string().max(200).nullable().catch(null),
+  handledRequestId: z.string().min(1).max(80).nullable().catch(null),
+  // Absent, or anything but a boolean, is unknown — never false, which would claim the agent had
+  // asked and been told no.
+  timeSynced: z.boolean().nullable().catch(null),
 });
 
 /** Parses a published reading, or returns null if it cannot be trusted. */
@@ -143,6 +166,9 @@ export function parseNetState(raw: string): NetState | null {
     scan: result.data.scan,
     scanAgeSeconds: result.data.scanAgeSeconds,
     lastError: result.data.lastError,
+    // Absent from an agent that predates acknowledgements, which `.catch` reads as null.
+    handledRequestId: result.data.handledRequestId,
+    timeSynced: result.data.timeSynced,
   };
 }
 
@@ -173,6 +199,8 @@ export type NetStateWatcherOptions = {
   readonly onReading?: (state: NetState | null) => void;
   /** Called when a reading goes stale or starts flowing again. */
   readonly onAgentHealthChange?: (healthy: boolean) => void;
+  /** The request file to clear once the agent acknowledges it. Defaults to the device path. */
+  readonly requestPath?: string;
 };
 
 /**
@@ -188,6 +216,7 @@ export class NetStateWatcher {
   readonly #onWifiDownChange: (down: boolean) => void;
   readonly #onAgentHealthChange: ((healthy: boolean) => void) | undefined;
   readonly #onReading: ((state: NetState | null) => void) | undefined;
+  readonly #requestPath: string;
 
   #timer: NodeJS.Timeout | null = null;
   #wifiDown = false;
@@ -201,6 +230,7 @@ export class NetStateWatcher {
     this.#onWifiDownChange = options.onWifiDownChange;
     this.#onAgentHealthChange = options.onAgentHealthChange;
     this.#onReading = options.onReading;
+    this.#requestPath = options.requestPath ?? NET_REQUEST_PATH;
   }
 
   /** The most recent trusted reading, for `/api/status`. */
@@ -248,6 +278,10 @@ export class NetStateWatcher {
 
     // Last, so anything reacting to a tick sees the transitions already applied.
     this.#onReading?.(state);
+
+    if (state?.handledRequestId != null) {
+      await clearHandledRequest(state.handledRequestId, this.#requestPath);
+    }
   }
 }
 
@@ -279,7 +313,83 @@ export type NetJoinCredentials = {
 };
 
 /**
- * Asks the agent for something, by writing a file it consumes and deletes.
+ * Every write and delete of the request file, one at a time.
+ *
+ * The daemon is the file's only writer, and this is what makes that true inside the process as
+ * well: a request written between the acknowledgement check reading the old id and deleting the
+ * file would otherwise be deleted unread.
+ */
+let requestFileLock: Promise<unknown> = Promise.resolve();
+
+function withRequestFile<T>(work: () => Promise<T>): Promise<T> {
+  const next = requestFileLock.then(work, work);
+  requestFileLock = next.catch(() => undefined);
+  return next;
+}
+
+/**
+ * Writes one request for the root agent. Shared by the network actions and by power.
+ *
+ * Every request carries a fresh `id`, which is how the agent tells a new request from one it has
+ * already acted on — it cannot delete the file (see {@link NetState.handledRequestId}), so without
+ * this it would run the same join or reboot again on every poll.
+ *
+ * Written beside its final name and renamed into place, so the agent never reads a truncated
+ * document: a plain `writeFile` empties the file first, and an agent reading in that instant
+ * sees nothing, drops it, and the request is lost while the panel reports success. Mode 0640
+ * because a join carries the Wi-Fi passphrase until the agent acknowledges it.
+ */
+export function writeAgentRequest(
+  body: Readonly<Record<string, string>>,
+  path: string = NET_REQUEST_PATH,
+): Promise<boolean> {
+  return withRequestFile(async () => {
+    const temporary = `${path}.${String(process.pid)}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, `${JSON.stringify({ ...body, id: randomUUID() })}\n`, {
+        mode: 0o640,
+      });
+      await rename(temporary, path);
+      return true;
+    } catch {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      return false;
+    }
+  });
+}
+
+/**
+ * Deletes the request file once the agent has acknowledged the request in it.
+ *
+ * Compares ids rather than deleting on any acknowledgement, so a newer request written after the
+ * one the agent reports is never removed before the agent has seen it. Never throws: a missing
+ * or unreadable file simply has nothing to clear.
+ */
+export function clearHandledRequest(
+  handledId: string,
+  path: string = NET_REQUEST_PATH,
+): Promise<void> {
+  return withRequestFile(async () => {
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch {
+      return;
+    }
+    let pendingId: unknown;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      pendingId =
+        typeof parsed === 'object' && parsed !== null && 'id' in parsed ? parsed.id : null;
+    } catch {
+      return;
+    }
+    if (pendingId === handledId) await rm(path, { force: true }).catch(() => undefined);
+  });
+}
+
+/**
+ * Asks the agent for something.
  *
  * Fire-and-forget by design: the answer arrives as a changed reading, not as a return value,
  * because the agent is a separate process and the radio takes seconds to do anything. Never
@@ -294,15 +404,5 @@ export async function requestNetAction(
     action === 'join' && options.credentials
       ? { action, ssid: options.credentials.ssid, psk: options.credentials.psk }
       : { action };
-  try {
-    // Written whole, in one call: the agent may read it at any moment, and a half-written
-    // document parses as nothing and is dropped. Mode 0640 because a join carries the Wi-Fi
-    // passphrase for the few seconds before the agent consumes the file.
-    await writeFile(options.path ?? NET_REQUEST_PATH, `${JSON.stringify(body)}\n`, {
-      mode: 0o640,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return writeAgentRequest(body, options.path);
 }

@@ -1,20 +1,6 @@
 import styles from './Figure.module.css'
 
-/**
- * An illustration in the manual, in one of two states.
- *
- * With `src` it is the picture. Without one it is a **visible placeholder carrying the prompt
- * that will generate it** — dashed and labelled so it can never be mistaken for finished art,
- * and so replacing it is a one-word edit: drop `prompt`, add `src`.
- *
- * That is on purpose rather than a stub. The manual's steps are the useful part and they are
- * readable now; the art arrives per-step, and a page that hides its gaps is a page nobody
- * remembers to finish.
- *
- * Every prompt asks for the same house style, because ten illustrations that each interpreted
- * "on brand" differently would read worse than none. `STYLE` below is that shared clause, and
- * it is appended to each prompt rather than repeated in it.
- */
+/** A manual illustration. Without `src` it renders a visible placeholder carrying its `prompt`. */
 const STYLE =
   'Style: flat vector illustration, bold navy #1A2B48 line art with rounded corners, ' +
   'soft cream #F7F4EF background, accent colours strictly sunny yellow #F7B733, ' +

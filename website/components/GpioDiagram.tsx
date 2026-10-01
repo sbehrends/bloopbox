@@ -1,22 +1,6 @@
 import styles from './GpioDiagram.module.css'
 
-/**
- * The Pi's 40-pin header, with the pins this build uses called out.
- *
- * **Drawn from data, not illustrated.** Every other picture in the manual can be a generated
- * illustration; this one cannot. A wiring diagram with a wrong pin number is worse than no
- * diagram — somebody follows it — and an image generator has no idea which pin GPIO27 is. So
- * the map below is transcribed from the standard 40-pin pinout, the roles come from
- * `docs/hardware.md`, and the picture is generated from them.
- *
- * **Only the twelve pins the builder touches are labelled, and everything else is dimmed.** The
- * pins the audio board occupies used to be called out here too; they were noise in a step whose
- * whole job is "put this wire on that pin", and the board needs no wiring of its own. Nor is any
- * power rail used: the lamps are 3 V and run off their own GPIO pin, so 3V3 and 5V go nowhere.
- *
- * If the pin assignments ever change, they change in `box/software/src/hal/gpioDriver.ts` first
- * (`GPIO_PINS`), then in `docs/hardware.md`, then here.
- */
+/** The Pi's 40-pin header, drawn from data. Pin roles come from `docs/hardware.md`. */
 
 type Role = 'button' | 'lamp' | 'power' | 'ground' | 'free'
 
@@ -32,8 +16,6 @@ type Pin = {
   readonly use?: string
 }
 
-/* Odd pins run down the left of the header, even pins down the right, exactly as they sit on
-   the board when the USB ports face you. */
 const LEFT: readonly Pin[] = [
   { n: 1, label: '3V3', role: 'power' },
   { n: 3, label: 'GPIO2', role: 'free' },
@@ -105,9 +87,6 @@ function PinRow({ pin, side, y }: { readonly pin: Pin; readonly side: 'left' | '
 
   return (
     <g opacity={dim ? 0.42 : 1}>
-      {/* The use, clear of the chip on the side the pin is on — the left column's chip starts at
-          168 and the right column's ends at 400, so these two numbers are the edges of the
-          connector, not padding. Anything closer disappears behind a chip. */}
       {pin.use ? (
         <text
           className={styles.use}
@@ -119,8 +98,6 @@ function PinRow({ pin, side, y }: { readonly pin: Pin; readonly side: 'left' | '
         </text>
       ) : null}
 
-      {/* The pin chip itself. A lamp pin is an output, so it is drawn hollow — the colour is
-          the channel either way, but hollow-versus-filled says which direction it runs. */}
       <rect
         x={chipX}
         y={y}
@@ -135,7 +112,6 @@ function PinRow({ pin, side, y }: { readonly pin: Pin; readonly side: 'left' | '
         {pin.label}
       </text>
 
-      {/* Physical pin number, between the two columns — this is what you actually count. */}
       <text className={styles.pinNumber} x={numX} y={y + 15} textAnchor={isLeft ? 'end' : 'start'}>
         {pin.n}
       </text>
@@ -163,7 +139,6 @@ export function GpioDiagram() {
           wires in total, and no other pin is yours to touch.
         </desc>
 
-        {/* Column headings */}
         <text className={styles.head} x={212} y={30} textAnchor="middle">
           ODD PINS
         </text>
@@ -171,7 +146,6 @@ export function GpioDiagram() {
           EVEN PINS
         </text>
 
-        {/* The header's own outline, so the two columns read as one physical connector. */}
         <rect
           x={158}
           y={TOP - 8}

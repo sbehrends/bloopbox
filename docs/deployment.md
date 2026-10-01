@@ -70,7 +70,10 @@ What it does:
   half an application behind
 - writes `/etc/bloopbox/environment` with a **generated** `BRIDGE_TOKEN`
 - installs and enables the systemd units
-- appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups and the watchdog
+- appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups and the watchdog,
+  opened with an explicit `[all]` so it never inherits a board filter such as `[cm4]` that the
+  file happened to end on
+- pins the journal to RAM (`journald.conf.d/50-bloopbox.conf` — see "When something is wrong")
 - restarts the services
 
 Re-running it is an upgrade: `/data` and the environment file are left alone, so the parent's
@@ -187,9 +190,9 @@ Desktop and OrbStack both fail with `error deallocating: Invalid argument` on th
 `/work` is the container's own filesystem, which can. Binding `…/image-work/cache` in separately is
 what keeps the ~500 MB Pi OS download between runs, since the cache lives under the work dir.
 
-Options: `--hostname`, `--user`, `--password` (generated and written to a `.credentials.txt`
-beside the image if omitted), `--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--audio-hat`,
-`--no-leds`, `--no-ssh`, `--keep-img`, `--artifact`, `--output`, `--work-dir`.
+Options: `--hostname`, `--user`, `--password` (see [the ssh password](#the-ssh-password)),
+`--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--audio-hat`, `--no-leds`, `--no-ssh`,
+`--keep-img`, `--artifact`, `--output`, `--work-dir`.
 
 ### What the builder does to the stock image
 
@@ -211,6 +214,37 @@ The login user is handed to Pi OS's own `userconfig.service` through `userconf.t
 created by hand. The image ships a `pi` user which that service renames, keeping its group
 memberships — and left with no `userconf.txt` it starts an **interactive setup wizard on tty1**,
 which is useless on a device with no screen.
+
+### The ssh password
+
+**By default an image carries no usable password, and each device makes its own on first boot.**
+One image is flashed onto many cards and, from CI, published for anyone to download, so a
+password chosen at build time would be shared by every box made from it, and printed wherever the
+build ran.
+
+- The builder gives `userconf.txt` the hash of a throwaway random password that is never
+  recorded, so nothing in the image can log in. It also leaves
+  `/etc/bloopbox/ssh-password.pending`, naming the login user.
+- On first boot `bloopbox-ssh-password.service` runs `deploy/ssh-password.sh` as root, after
+  `userconfig.service` has renamed the account and **before sshd starts**. It generates 14
+  characters from `/dev/urandom`, writes them to `/data/ssh-password` (`0640 root:bloopbox`), applies
+  them with `chpasswd`, and only then deletes the marker. A power cut part-way leaves the marker,
+  and the next boot starts again, so the record and the account cannot disagree.
+- The admin panel shows it under **Advanced → Device health → SSH access**, behind the parent's
+  admin password, fetched only when asked for (`GET /api/system/ssh`, `Cache-Control: no-store`).
+- Parents never need it. Setup is still flash, boot, onboard.
+
+**`--password PASS` still works**, and is the way to debug a device before its admin panel is
+reachable — the hotspot, a portal that never loads. The image then carries that password's hash
+and writes no marker, so the first-boot service does nothing; the panel says the password was set
+when the card was built. That hash is readable by anyone holding the image, so use a strong
+password and do not publish such an image.
+
+A **tarball install never gets a marker**, so its existing login is never touched.
+
+The `.credentials.txt` beside the image records either the explicit password or "generated on the
+device". The builder never prints the password, because it runs in CI, where the job log is as
+readable as the repository.
 
 ### The two files a parent can touch
 
@@ -235,6 +269,18 @@ into an actual network connection. It runs from two places:
 The boot-partition file wins over `config.json` when both are present. The connection is called
 `bloopbox` and is given `autoconnect-priority 10`, so anything seeded earlier stays as a
 fallback if the new network turns out to be wrong.
+
+Two details that are easy to undo by accident:
+
+- **An open network removes the security setting outright** (`remove 802-11-wireless-security`).
+  `wifi-sec.key-mgmt none` looks like "open" and is static WEP to NetworkManager, which then fails
+  for want of a key — found on hardware for the hotspot on 2026-08-10, and fixed in
+  `wifi-apply.sh` only on 2026-09-24, so until then an open network typed into the admin panel
+  never connected.
+- **`nmcli --wait 10 con up`**, never the bare form. This runs inside the hardware unit's
+  `ExecStartPre`, and nmcli's default is to wait 90 s for a network that is out of range — 90 s
+  of dark buttons at boot and after every settings save. Activation carries on inside
+  NetworkManager after nmcli stops waiting.
 
 The **AP / captive-portal fallback is built** — `PRODUCT.md` §3 (First Boot) describes the
 behaviour, and the pieces are NetworkManager's own AP mode (not `hostapd`), an open network, the root
@@ -266,10 +312,25 @@ file, an unparseable one, a reading older than 30s, or an agent that found no `n
 network is gone lights the LEDs. Inventing an outage from missing information would light all
 three LEDs on any dev machine and on any device whose agent died.
 
-The daemon asks for things back through `/run/bloopbox/net-request.json` — one JSON object,
-`{"action":"ap-up"}` or `{"action":"ap-down"}`, consumed and deleted by the agent. The action is
+The daemon asks for things back through `/run/bloopbox/net-request.json`: one JSON object such as
+`{"action":"ap-up","id":"…"}`, written by rename so it is never read half-written. The action is
 matched against a fixed list before anything runs and no part of the file is ever evaluated as
-shell; that allowlist is the whole security model of the boundary.
+shell; that allowlist is the whole security model of the boundary. Root opens the file without
+following a symlink or blocking, and ignores anything that is not a regular file of at most 4 KiB.
+
+**The agent never deletes the request, and must not try.** Under `ProtectSystem=strict` the
+daemon's runtime directory is read-only to `bloopbox-net.service`. The agent used to `rm -f` it,
+the `rm` failed silently, and the action would have run again on every 5 s poll. Now:
+
+1. every request carries a fresh `id` (`writeAgentRequest` in `src/net/netState.ts`);
+2. the agent acts on each id once, recording it in `/run/bloopbox-net/handled-request-id` before
+   it acts, so a restart mid-join does not run the join again;
+3. it publishes that id as `handledRequestId` in `net-state.json`;
+4. the daemon, the file's only writer, deletes the request when it sees its own id come back, and
+   leaves a newer request alone.
+
+A request with no id (hand-written, or from an older `bloopbox-hotspot-test`) is named by a hash of
+its content, so it also runs only once.
 
 **The list is wider than networking.** `reboot` and `poweroff` arrive here too, from the admin
 panel's *Device health* card via `src/system/power.ts`, because this agent is the only process in
@@ -303,12 +364,30 @@ unconfigured device, 3 minutes on a configured one (a flat 30s would pop a hotsp
 every time the router reboots), then every 60s the hotspot steps aside for a 30s join attempt —
 unless the device was never configured, in which case there is nothing to rejoin and it stays up.
 
+The reading also carries **`timeSynced`**, which has nothing to do with Wi-Fi and is here because
+the agent is the only process that can ask `timedatectl show -p NTPSynchronized` (it goes over D-Bus
+to `systemd-timedated`, refreshed every 30 s rather than every poll). A Pi has no real-time clock, so
+until NTP answers it runs on the time its last shutdown saved. It is `true`, `false`, or `null` for
+"cannot tell" — no `timedatectl`, or no clear answer — and `netState.ts` keeps it that way, reading
+anything malformed as `null` and never as `false`. The health card shows it; nothing acts on it yet
+(`PENDING.md`).
+
 `sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user, and
-that `nmcli` and dnsmasq are installed.
+that `nmcli` and dnsmasq are installed. It also fails if no time-sync service is active (Pi OS ships
+`systemd-timesyncd`) and warns while the clock is not yet synced.
 
 ## When something is wrong
 
-`sudo bloopbox-debug on` makes the journal survive reboots (Pi OS keeps it in RAM by default,
+**The journal lives in RAM, on purpose.** `install.sh` pins it with
+`/etc/systemd/journald.conf.d/50-bloopbox.conf` (`Storage=volatile`, `RuntimeMaxUse=8M` — small
+because `/run` is one tmpfs and the recordings live there too) rather than trusting whatever the OS
+image defaults to: plain Debian's `auto` turns persistent the moment `/var/log/journal` exists, and
+this is an SD card. Debug mode's drop-in is `90-bloopbox-debug.conf`, so it sorts after that file and
+its `Storage=persistent` wins while it exists; removing it (`off --purge`) is the whole of "back to
+RAM". Neither file ever edits the other. Before 2026-09-24 debug mode wrote `10-bloopbox-debug.conf`,
+which would now lose to `50-`; `install.sh` renames a leftover one and `debug-mode.sh` deletes it.
+
+`sudo bloopbox-debug on` makes the journal survive reboots (normally it is in RAM, as above,
 which loses exactly the logs that explain a restart), raises both daemons to debug level, and
 starts a 10s sampler writing `/var/log/bloopbox/trace.jsonl`. It expires after 24h on its own.
 Then `sudo bloopbox-diagnostics` bundles all of it — journals, trace, every `nmcli` view, the
@@ -334,6 +413,18 @@ Decisions worth knowing:
 - **`Restart=always` is load-bearing.** Saving a setting makes the hardware server exit 0 on
   purpose so the new config is read at startup. Without `Restart=always` a settings save would
   simply switch the device off.
+- **No start limit, and a backed-off restart instead.** systemd's default gives up after 5 starts
+  in 10 s and counts a deliberate exit-on-save exactly like a crash, so a few quick saves could
+  leave the hardware unit `failed` until a power cycle. All three long-running units set
+  `StartLimitIntervalSec=0` and grow the delay with `RestartSteps=` / `RestartMaxDelaySec=`
+  (systemd 254+; Trixie ships 257). The caps differ on purpose: **5 s for the hardware unit**,
+  because systemd's restart counter never resets while the unit keeps coming back — only at boot or
+  on `reset-failed` — so the cap is what every settings save costs once a boot has seen five; a
+  minute for the bridge, which no save restarts; 15 s for the net agent, under the daemon's 30 s
+  staleness limit.
+- **`OOMScoreAdjust`: the bridge dies first.** `-500` on the hardware unit, `+300` on the bridge.
+  Their `MemoryMax` values add up to more than a 512 MB board has, so a real out-of-memory is
+  possible, and the process the box survives losing is the one that reconnects.
 - **Recordings go in `/run/bloopbox`**, via `RuntimeDirectory=` in both units. `/run` is
   already a tmpfs, so audio lives in RAM with no mount unit and no fstab entry, and cannot
   survive a power cut or fill the card. `RuntimeDirectoryPreserve=yes` keeps it across the
@@ -358,13 +449,19 @@ Decisions worth knowing:
 GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping `runs-on` for
 an arm64 runner makes it several times faster and needs no other change.
 
-Optional repository secrets for the image job: `WIFI_SSID`, `WIFI_PSK`, `WIFI_COUNTRY`,
-`IMAGE_PASSWORD`. Without them the image still boots — it ships the fillable
-`bloopbox-wifi.txt` and a generated ssh password.
+Optional repository secrets for the image job: `WIFI_COUNTRY` and `IMAGE_PASSWORD`. Without
+`IMAGE_PASSWORD` every device makes its own ssh password on first boot ([above](#the-ssh-password));
+with it, every card flashed from that release shares one, which is only for debugging.
 
-**The generated ssh password is never attached to a release.** It goes to the private
-`sd-card-credentials` build artifact; the release assets are an explicit list, not a glob, so a
-`credentials.txt` cannot slip into a public download.
+**CI images carry no Wi-Fi network.** They are published, and a passphrase baked into one is
+readable by anyone who downloads it, so the build step takes no `--wifi-ssid` / `--wifi-psk`, and a
+`WIFI_PSK` secret fails the job rather than being silently ignored. A parent fills in
+`bloopbox-wifi.txt` or joins through the hotspot; bake a network into a local build instead.
+
+**CI uploads no credentials artifact.** On a public repository every signed-in GitHub user can
+download a workflow's artifacts, so an "unpublished" artifact was never private. The release
+assets are still an explicit list rather than a glob, so a local `credentials.txt` cannot slip into
+a download either.
 
 ## What none of this proves
 

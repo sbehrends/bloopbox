@@ -8,7 +8,7 @@
 # here, as root, and crosses to the daemon as a file it can only read:
 #
 #   /run/bloopbox-net/net-state.json   root writes, everyone reads   (this script)
-#   /run/bloopbox/net-request.json     daemon writes, root reads     (requestNetAction)
+#   /run/bloopbox/net-request.json     daemon writes, root reads     (writeAgentRequest)
 #
 # Two directories, one writer each, so neither side can be tricked into acting on something
 # it wrote itself, and so this script never chowns the daemon's recording directory out from
@@ -28,10 +28,19 @@ set -u
 STATE_DIR="${NET_STATE_DIR:-/run/bloopbox-net}"
 STATE_FILE="${STATE_DIR}/net-state.json"
 
-# The other direction: written by the unprivileged daemon in its own runtime directory,
-# consumed and deleted here. Everything in it is validated against a fixed list of actions
-# before anything happens, and no part of it is ever evaluated as shell.
+# The other direction: written by the unprivileged daemon in its own runtime directory, and
+# read here. Everything in it is validated against a fixed list of actions before anything
+# happens, and no part of it is ever evaluated as shell.
+#
+# Never deleted here, and not because of tidiness: under ProtectSystem=strict that directory is
+# read-only to this unit, so an `rm` fails — silently, with the old `rm -f` — and the request
+# would run again on every poll. Instead every request carries an id, the id of the last one
+# acted on is remembered below and published as `handledRequestId`, and the daemon, which owns
+# the file, deletes it once it sees its own id come back.
 REQUEST_FILE="${NET_REQUEST_FILE:-/run/bloopbox/net-request.json}"
+# In this unit's own runtime directory, which RuntimeDirectoryPreserve keeps across a restart,
+# so a restarted agent does not run the last request a second time.
+HANDLED_FILE="${STATE_DIR}/handled-request-id"
 
 # Used to read the request file: node is bundled with the release, jq is not.
 PREFIX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -301,35 +310,75 @@ power_action() {
   ) >/dev/null 2>&1 &
 }
 
-# Reads one request, acts on it, deletes it. Unknown actions are logged and dropped: this is
-# the privilege boundary, so the allowlist is the whole security model.
+# The id of the last request acted on. Loaded once; kept in step with HANDLED_FILE.
+HANDLED_ID=
+if [[ -r "${HANDLED_FILE}" ]]; then
+  HANDLED_ID="$(head -c 80 "${HANDLED_FILE}" | tr -cd 'A-Za-z0-9-')"
+fi
+
+# Reads one request and acts on it, once. Unknown actions are logged and dropped: this is the
+# privilege boundary, so the allowlist is the whole security model.
 consume_request() {
-  [[ -r "${REQUEST_FILE}" ]] || return 0
-  local action= ssid= psk=
+  [[ -e "${REQUEST_FILE}" ]] || return 0
+  local id='' action='' ssid='' psk=''
   local -a parsed=()
-  if [[ -x "${NODE}" ]]; then
-    # Three lines out, never eval'd: action, ssid, psk. The action is matched against a fixed
-    # list below; the other two only ever become arguments to nmcli.
-    mapfile -t parsed < <("${NODE}" -e '
-      const fs = require("node:fs");
-      const line = (value) => String(value ?? "").split("\n")[0] ?? "";
-      try {
-        const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-        const action = typeof parsed?.action === "string" ? parsed.action : "";
-        console.log(/^[a-z-]{1,16}$/.test(action) ? action : "");
-        console.log(line(parsed?.ssid).slice(0, 32));
-        console.log(line(parsed?.psk).slice(0, 63));
-      } catch { console.log(""); console.log(""); console.log(""); }
-    ' "${REQUEST_FILE}" 2>/dev/null)
-    action="${parsed[0]:-}"
-    ssid="${parsed[1]:-}"
-    psk="${parsed[2]:-}"
-  else
+  if [[ ! -x "${NODE}" ]]; then
     log "no node at ${NODE} — cannot read requests"
+    return 0
   fi
-  # Deleted before acting, not after: a join takes seconds, and a request still sitting there
-  # when the next poll comes round would be run twice.
-  rm -f "${REQUEST_FILE}"
+  # Four lines out, never eval'd: id, action, ssid, psk. The action is matched against a fixed
+  # list below; ssid and psk only ever become arguments to nmcli.
+  #
+  # Opened without following a symlink and without blocking, then checked to be a small regular
+  # file: the directory belongs to the daemon, which serves the open setup hotspot, and root
+  # reading whatever it was pointed at — or hanging forever on a FIFO — must not be one bug away.
+  #
+  # A request with no id (a hand-written one, or bloopbox-hotspot-test from an older release) is
+  # named by a hash of its content, so it too runs once rather than on every poll.
+  mapfile -t parsed < <("${NODE}" -e '
+    const fs = require("node:fs");
+    const crypto = require("node:crypto");
+    const line = (value) => String(value ?? "").split("\n")[0] ?? "";
+    const blank = () => { for (let i = 0; i < 4; i++) console.log(""); };
+    try {
+      const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
+      const fd = fs.openSync(process.argv[1], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+      let raw;
+      try {
+        const info = fs.fstatSync(fd);
+        if (!info.isFile() || info.size > 4096) { blank(); process.exit(0); }
+        raw = fs.readFileSync(fd, "utf8");
+      } finally { fs.closeSync(fd); }
+      const parsed = JSON.parse(raw);
+      const given = typeof parsed?.id === "string" ? parsed.id : "";
+      const id = /^[A-Za-z0-9-]{1,64}$/.test(given)
+        ? given
+        : "sha-" + crypto.createHash("sha256").update(raw).digest("hex").slice(0, 32);
+      const action = typeof parsed?.action === "string" ? parsed.action : "";
+      console.log(id);
+      console.log(/^[a-z-]{1,16}$/.test(action) ? action : "");
+      console.log(line(parsed?.ssid).slice(0, 32));
+      // 8-63 characters is a passphrase; exactly 64 hex characters is the raw PSK itself,
+      // which NetworkManager takes as well. Truncating that to 63 made it a wrong passphrase.
+      const psk = line(parsed?.psk);
+      console.log(/^[0-9A-Fa-f]{64}$/.test(psk) ? psk : psk.slice(0, 63));
+    } catch { blank(); }
+  ' "${REQUEST_FILE}" 2>/dev/null)
+  id="${parsed[0]:-}"
+  action="${parsed[1]:-}"
+  ssid="${parsed[2]:-}"
+  psk="${parsed[3]:-}"
+
+  # Unreadable, not a regular file, or not JSON: nothing to name, so nothing to do until the
+  # daemon's next write replaces it.
+  [[ -n "${id}" ]] || return 0
+  # Already done. The daemon deletes the file once it reads the acknowledgement below.
+  [[ "${id}" != "${HANDLED_ID}" ]] || return 0
+
+  # Recorded before acting, not after: a join takes seconds, and an agent restarted mid-join
+  # must not run it a second time.
+  HANDLED_ID="${id}"
+  printf '%s\n' "${id}" > "${HANDLED_FILE}.tmp" && mv -f "${HANDLED_FILE}.tmp" "${HANDLED_FILE}"
 
   case "${action}" in
     ap-up) ap_up ;;
@@ -406,14 +455,82 @@ now_ms() {
   esac
 }
 
+# The acknowledgement published with every reading: the id of the last request acted on.
+handled_json() {
+  if [[ -n "${HANDLED_ID}" ]]; then json_string "${HANDLED_ID}"; else printf 'null'; fi
+}
+
+# The control characters JSON forbids raw inside a string, each beside its \u escape. Built
+# once rather than per call. U+0001 to U+001F only: NUL cannot be held in a bash string at all,
+# so it never reaches json_string.
+JSON_CONTROL_CHARS=()
+JSON_CONTROL_ESCAPES=()
+for code in {1..31}; do
+  # printf -v, not $(...): command substitution strips a trailing newline, which would turn
+  # U+000A into an empty pattern.
+  printf -v char '%b' "\\0$(printf '%03o' "${code}")"
+  printf -v escape '\\u%04x' "${code}"
+  JSON_CONTROL_CHARS+=("${char}")
+  JSON_CONTROL_ESCAPES+=("${escape}")
+done
+unset code char escape
+
+# A JSON string literal for any value bash can hold.
+#
+# Not just `\` and `"`, and this is not pedantry. An SSID is arbitrary bytes chosen by whoever
+# owns the router next door, and the scan list publishes every one in range. A single raw tab or
+# newline in one of them used to make the whole of net-state.json unparseable, which the daemon
+# reads as "unknown" — and unknown never raises the setup hotspot. A stranger's router name
+# could switch off this device's only recovery path. scripts/test-onboarding.sh scans an SSID
+# with a tab in it to keep this true.
+#
+# Bytes that are not valid UTF-8 are passed through: the daemon decodes the file as UTF-8,
+# which turns them into U+FFFD rather than failing the parse.
 json_string() {
-  # Escapes the two characters that can appear in an SSID and break JSON. SSIDs are
-  # arbitrary bytes; anything more exotic than this is not worth a shell JSON encoder,
-  # and the daemon treats an unparseable file as "unknown" rather than as an outage.
-  local value="$1"
+  local value="$1" i
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
+  for i in "${!JSON_CONTROL_CHARS[@]}"; do
+    # Replacement quoted: bash 5.2's patsub_replacement gives an unquoted one's backslashes
+    # and ampersands meaning.
+    value="${value//"${JSON_CONTROL_CHARS[i]}"/"${JSON_CONTROL_ESCAPES[i]}"}"
+  done
   printf '"%s"' "${value}"
+}
+
+# Whether the wall clock has been set from the network, as a JSON literal: true, false, or null
+# for "cannot tell".
+#
+# A Pi has no real-time clock. Until NTP answers, it boots with the time the last shutdown saved
+# (fake-hwclock / timesyncd's clock file) — hours or days behind after a spell unplugged — and
+# quiet hours, the purge TTL and debug mode's deadline all read that clock. Published so the
+# daemon can at least say so; what quiet hours should *do* about it is an open product decision
+# (PENDING.md).
+#
+# Asked through timedatectl, which is a D-Bus call to systemd-timedated — a process activated on
+# demand — so it is refreshed on a slow cadence of its own, not every poll. null rather than false
+# when the tool or the answer is missing: unknown is not the same as unsynced.
+TIME_SYNC_INTERVAL_SECONDS="${NET_TIME_SYNC_INTERVAL_SECONDS:-30}"
+TIME_SYNCED_JSON=null
+TIME_SYNC_AT=0
+
+refresh_time_synced() {
+  local now elapsed
+  now="$(date +%s)"
+  elapsed=$(( now - TIME_SYNC_AT ))
+  # A negative gap is the clock itself being corrected backwards — the very event this reports
+  # on. Without this the next refresh would wait until the wall clock caught back up.
+  (( elapsed >= 0 && elapsed < TIME_SYNC_INTERVAL_SECONDS )) && return 0
+  TIME_SYNC_AT="${now}"
+  if ! command -v timedatectl >/dev/null 2>&1; then
+    TIME_SYNCED_JSON=null
+    return 0
+  fi
+  case "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" in
+    yes) TIME_SYNCED_JSON=true ;;
+    no) TIME_SYNCED_JSON=false ;;
+    *) TIME_SYNCED_JSON=null ;;
+  esac
 }
 
 # Initialised before either loop below can assign to it: the no-nmcli branch also consumes
@@ -428,7 +545,9 @@ if ! command -v nmcli >/dev/null 2>&1; then
     # Still read, because reboot and poweroff do not need NetworkManager and a box that cannot
     # be shut down from the panel is exactly the box somebody unplugs mid-write.
     consume_request
-    publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":false,\"online\":false,\"ssid\":null,\"signal\":null,\"apActive\":false,\"apSsid\":null,\"scan\":[],\"scanAgeSeconds\":0,\"lastError\":null}"
+    # The clock has nothing to do with NetworkManager, so it is still worth reporting here.
+    refresh_time_synced
+    publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":false,\"online\":false,\"ssid\":null,\"signal\":null,\"apActive\":false,\"apSsid\":null,\"scan\":[],\"scanAgeSeconds\":0,\"lastError\":null,\"handledRequestId\":$(handled_json),\"timeSynced\":${TIME_SYNCED_JSON}}"
     sleep "${POLL_SECONDS}" &
     wait $! 2>/dev/null || true
   done
@@ -495,7 +614,9 @@ while [[ "${running}" == true ]]; do
     scan_age=$(( $(date +%s) - SCAN_AT ))
   fi
 
-  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active},\"apSsid\":$(json_string "${AP_SSID}"),\"scan\":${SCAN_JSON},\"scanAgeSeconds\":${scan_age},\"lastError\":${last_error_json}}"
+  refresh_time_synced
+
+  publish "{\"version\":1,\"updatedAtMs\":$(now_ms),\"available\":true,\"online\":${online},\"ssid\":${ssid_json},\"signal\":${signal},\"apActive\":${ap_active},\"apSsid\":$(json_string "${AP_SSID}"),\"scan\":${SCAN_JSON},\"scanAgeSeconds\":${scan_age},\"lastError\":${last_error_json},\"handledRequestId\":$(handled_json),\"timeSynced\":${TIME_SYNCED_JSON}}"
 
   # Backgrounded so a SIGTERM lands during the sleep rather than after it.
   sleep "${POLL_SECONDS}" &

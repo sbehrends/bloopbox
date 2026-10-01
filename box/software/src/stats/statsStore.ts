@@ -1,6 +1,6 @@
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import * as z from 'zod';
+import { writeFileAtomic } from '../config/atomicWrite.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 
 /**
@@ -122,7 +122,10 @@ export class StatsStore {
   ];
   #since: number;
   #timer: NodeJS.Timeout | null = null;
-  /** The write in flight, so `flush()` can await one that is already running. */
+  /**
+   * The last write queued. Writes chain onto it, so two can never run at once, and each one
+   * serialises the totals as they are when it *starts* — the latest, not a stale snapshot.
+   */
   #writing: Promise<void> = Promise.resolve();
   #dirty = false;
 
@@ -225,10 +228,17 @@ export class StatsStore {
    */
   async flush(): Promise<void> {
     this.#clearTimer();
-    await this.#writing;
-    if (!this.#dirty) return;
-    this.#dirty = false;
-    this.#writing = this.#write();
+    /*
+     * Queued synchronously, with no await first. The old version awaited the previous write
+     * before checking `dirty`, so a second `flush()` arriving during the first saw `dirty`
+     * already cleared and returned *before the first write had landed* — which let the
+     * shutdown path exit mid-write. Every caller now waits for a write that covers what it
+     * asked to be flushed, whether it queued that write or found it already queued.
+     */
+    if (this.#dirty) {
+      this.#dirty = false;
+      this.#writing = this.#writing.then(async () => this.#write());
+    }
     await this.#writing;
   }
 
@@ -257,7 +267,7 @@ export class StatsStore {
   }
 
   /**
-   * Atomic, exactly as `ConfigManager` writes config: temp file, fsync, rename.
+   * Atomic, exactly as `ConfigManager` writes config — see `config/atomicWrite.ts`.
    *
    * Less load-bearing than the config write — a half-written stats file only costs the totals —
    * but the same power cut hits both, and there is no reason for the cheap file to be the one
@@ -269,21 +279,15 @@ export class StatsStore {
       null,
       2,
     )}\n`;
-    const tempPath = `${this.#path}.tmp`;
     try {
-      await mkdir(dirname(this.#path), { recursive: true });
-      const handle = await open(tempPath, 'w');
-      try {
-        await handle.writeFile(payload, 'utf8');
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await rename(tempPath, this.#path);
+      await writeFileAtomic(this.#path, payload);
     } catch {
-      // Swallowed by design. The counters stay correct in memory and the next change tries
-      // again; nothing the device does for a child depends on this file existing.
-      await unlink(tempPath).catch(() => undefined);
+      /*
+       * Swallowed by design: nothing the device does for a child depends on this file. But
+       * marked dirty again, so the totals still on disk are not mistaken for current — the
+       * next change, or the shutdown path's `flush()`, tries again.
+       */
+      this.#dirty = true;
     }
   }
 }

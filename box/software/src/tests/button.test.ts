@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ButtonInterpreter, type CancelReason } from '../core/buttonInterpreter.ts';
+import { ButtonInterpreter, stuckPressMs, type CancelReason } from '../core/buttonInterpreter.ts';
 import { DEFAULT_BUTTON_TIMINGS, type ButtonIndex, type ButtonTimings } from '../config/schema.ts';
 
 /**
@@ -39,6 +39,9 @@ function setup(
     maxRecordingSeconds?: number;
     timings?: Partial<ButtonTimings>;
     readOnly?: boolean;
+    listeningTo?: () => ButtonIndex | null;
+    /** Buttons with no contact. Every other button can send. */
+    unassigned?: ButtonIndex[];
   } = {},
 ) {
   const unread = new Set(options.unread ?? []);
@@ -47,6 +50,10 @@ function setup(
     maxRecordingSeconds: options.maxRecordingSeconds ?? 30,
     hasUnread: (index) => unread.has(index),
     readOnly: options.readOnly ?? false,
+    ...(options.listeningTo ? { listeningTo: options.listeningTo } : {}),
+    ...(options.unassigned
+      ? { canSend: (index: ButtonIndex) => !(options.unassigned ?? []).includes(index) }
+      : {}),
   });
 
   const log: Recorded[] = [];
@@ -612,22 +619,43 @@ describe('the resume window — letting go by accident', () => {
     expect(counts(log, 'captureCommit')).toBe(1);
   });
 
-  it('commits the waiting take when a different button is pressed', () => {
+  it('ignores a different button while the window is open, then commits on schedule', () => {
     const { interpreter, log, find } = setup();
 
     interpreter.handleButtonDown(0);
     vi.advanceTimersByTime(HOLD_MS);
     interpreter.handleButtonUp(0);
 
-    // The child has moved on to another contact: do not leave two takes open at once.
+    // The take is still open, so it still owns the box: the grab at another button is nothing.
     vi.advanceTimersByTime(100);
     interpreter.handleButtonDown(1);
+    expect(interpreter.isPressed(1)).toBe(false);
+    expect(interpreter.hasPendingCommit(0)).toBe(true);
+    expect(counts(log, 'captureCommit')).toBe(0);
 
+    vi.advanceTimersByTime(RESUME_GRACE_MS - 100);
     expect(find('captureCommit')?.payload).toMatchObject({ index: 0 });
-    expect(interpreter.hasPendingCommit(0)).toBe(false);
-    // The new press is live in its own right, not a continuation of the one it closed.
-    expect(counts(log, 'pressVisualOn')).toBe(2);
-    expect(interpreter.isPressed(1)).toBe(true);
+
+    // Still held after the window closed, and still ignored: it began under the lock.
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    expect(counts(log, 'pressVisualOn')).toBe(1);
+    expect(counts(log, 'captureConfirmed')).toBe(1);
+    expect(counts(log, 'captureCommit')).toBe(1);
+  });
+
+  it('still resumes on the same button while another is being ignored', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(0);
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(100);
+    interpreter.handleButtonDown(0);
+
+    expect(names()).toContain('captureResumed');
+    expect(names()).not.toContain('captureCommit');
   });
 
   it('reset() drops an open window without sending', () => {
@@ -704,6 +732,173 @@ describe('silent-mode chord — Button 1 + Button 3', () => {
 
     expect(names()).not.toContain('toggleSilent');
   });
+
+  it('still forms when the second outer button comes down just short of a message', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(MESSAGE_MS - 1);
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(SILENT_COMBO_MS);
+
+    expect(names()).toContain('toggleSilent');
+  });
+
+  it('cannot interrupt a child who is already sending a message', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(MESSAGE_MS);
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(SILENT_COMBO_MS);
+
+    expect(names()).not.toContain('toggleSilent');
+    expect(names()).not.toContain('captureCancel');
+
+    interpreter.handleButtonUp(2);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+    expect(names()).toContain('captureCommit');
+  });
+
+  it('ignores the middle button once the chord has formed', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    interpreter.handleButtonDown(2);
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(SILENT_COMBO_MS);
+
+    expect(interpreter.isPressed(1)).toBe(false);
+    expect(names()).toContain('toggleSilent');
+  });
+});
+
+/**
+ * One button at a time. A toddler holding one button grabs at the others; without the lockout
+ * each grab opened a second take beside the first, or answered with a beep mid-sentence.
+ */
+describe('lockout — one button owns the box', () => {
+  it('ignores a second button while the first is being held', () => {
+    const { interpreter, log, find } = setup();
+
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(1);
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    interpreter.handleButtonUp(0);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    // Only button 0 ever did anything, and its take arrived whole.
+    expect(log.filter((entry) => entry.event !== 'captureCommit')).toEqual([
+      { event: 'pressVisualOn', payload: { index: 0 } },
+      { event: 'captureConfirmed', payload: { index: 0 } },
+      { event: 'pressVisualOff', payload: { index: 0 } },
+    ]);
+    expect(find('captureCommit')?.payload).toMatchObject({ index: 0 });
+  });
+
+  it('ignores the others during a tap, too', () => {
+    const { interpreter, names } = setup({ unread: [2] });
+
+    interpreter.handleButtonDown(1);
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(2);
+    interpreter.handleButtonUp(1);
+
+    // Button 1's "oops" is the whole answer; button 2's queue was not asked for.
+    expect(names()).toContain('cancelBeep');
+    expect(names()).not.toContain('playQueue');
+  });
+
+  it('keeps ignoring a button held across the first one letting go', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonDown(2);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(2);
+
+    expect(names()).not.toContain('captureConfirmed');
+    expect(names().filter((name) => name === 'pressVisualOn')).toHaveLength(1);
+  });
+
+  it('frees every button once the owner is done', () => {
+    const { interpreter, find } = setup();
+
+    interpreter.handleButtonDown(0);
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(1);
+    interpreter.handleButtonUp(0);
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS);
+
+    expect(find('captureCommit')?.payload).toMatchObject({ index: 1 });
+  });
+
+  it('does not let an ignored release break the chord', () => {
+    const { interpreter, names } = setup();
+
+    interpreter.handleButtonDown(0);
+    interpreter.handleButtonDown(2);
+    interpreter.handleButtonDown(1);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(SILENT_COMBO_MS);
+
+    expect(names()).toContain('toggleSilent');
+  });
+
+  it('ignores the other buttons while a queue is playing', () => {
+    let listening: ButtonIndex | null = 0;
+    // Through setup(), so the assertion below sees every event the interpreter can emit, not a
+    // hand-picked four: a stray recordBlocked or playQueue would slip past a partial list.
+    const { interpreter, names } = setup({ listeningTo: () => listening });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    // Not even the chord: a parent waits for the note to end.
+    interpreter.handleButtonDown(2);
+    vi.advanceTimersByTime(SILENT_COMBO_MS);
+    // Playback ends while button 2 is still down; it began under the lock, so stays ignored.
+    listening = null;
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(2);
+    expect(names()).toEqual([]);
+
+    // Once it is over, every button is free again.
+    interpreter.handleButtonDown(1);
+    expect(interpreter.isPressed(1)).toBe(true);
+  });
+
+  it('leaves the playing button on its ordinary path', () => {
+    const { interpreter } = setup({ unread: [0], listeningTo: () => 0 });
+
+    interpreter.handleButtonDown(0);
+    expect(interpreter.isPressed(0)).toBe(true);
+  });
+
+  it('reset() forgets ignored buttons', () => {
+    const { interpreter } = setup();
+
+    interpreter.handleButtonDown(0);
+    interpreter.handleButtonDown(1);
+    interpreter.reset();
+    interpreter.handleButtonDown(1);
+
+    expect(interpreter.isPressed(1)).toBe(true);
+  });
 });
 
 describe('robustness', () => {
@@ -735,6 +930,79 @@ describe('robustness', () => {
     expect(interpreter.hasActivePress).toBe(false);
   });
 
+  /*
+   * A lost release edge. Only a button-up ends a press that opened no microphone, and under the
+   * lockout that press silences the other two buttons — so one missed edge, on a GPIO driver proven
+   * with only one of its buttons so far, would freeze the whole box. The watchdog drops such a press once
+   * it has been down longer than any real press can be.
+   */
+  describe('a press whose release never arrives', () => {
+    const STUCK_MS = stuckPressMs(DEFAULT_BUTTON_TIMINGS, 30);
+
+    it('is dropped silently, and the other buttons work again', () => {
+      // Notes waiting on button 0: its hold withholds the microphone and has no ceiling.
+      const { interpreter, names, log } = setup({ unread: [0] });
+      interpreter.handleButtonDown(0);
+      vi.advanceTimersByTime(HOLD_MS);
+
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(false); // locked out, as it should be
+
+      vi.advanceTimersByTime(STUCK_MS);
+      expect(interpreter.isPressed(0)).toBe(false);
+      // No answer out of nowhere: the child let go long ago.
+      expect(names()).not.toContain('recordBlocked');
+      expect(names()).not.toContain('playQueue');
+      expect(log.at(-1)).toEqual({ event: 'pressVisualOff', payload: { index: 0 } });
+
+      interpreter.handleButtonUp(1);
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('frees a press refused in read-only mode', () => {
+      const { interpreter } = setup({ readOnly: true });
+      interpreter.handleButtonDown(0);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('frees a chord whose releases were lost', () => {
+      const { interpreter, names } = setup();
+      interpreter.handleButtonDown(0);
+      interpreter.handleButtonDown(2);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      expect(names()).toContain('toggleSilent'); // the chord itself still worked
+      expect(interpreter.hasActivePress).toBe(false);
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('lets an ignored button press again after its release was lost', () => {
+      const { interpreter } = setup({ unread: [0] });
+      interpreter.handleButtonDown(0);
+      interpreter.handleButtonDown(1); // ignored behind button 0; its up edge never comes
+      interpreter.handleButtonUp(0);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      interpreter.handleButtonDown(1);
+      expect(interpreter.isPressed(1)).toBe(true);
+    });
+
+    it('never cuts a recording short: the ceiling ends it first and sends it', () => {
+      const { interpreter, find, names } = setup();
+      interpreter.handleButtonDown(1);
+      vi.advanceTimersByTime(STUCK_MS);
+
+      expect(find('captureCommit')?.payload).toMatchObject({ index: 1, reachedMaxDuration: true });
+      expect(names().filter((name) => name === 'captureCommit')).toHaveLength(1);
+      expect(names()).not.toContain('captureCancel');
+    });
+  });
+
   it('tracks per-button press state independently', () => {
     const { interpreter } = setup();
 
@@ -744,6 +1012,63 @@ describe('robustness', () => {
 
     interpreter.handleButtonUp(1);
     expect(interpreter.isPressed(1)).toBe(false);
+  });
+});
+
+/**
+ * A button with no contact (found on the bench, 2026-09-30).
+ *
+ * It used to bip, open the microphone, record and encode a take that the bridge then refused —
+ * the child heard an ordinary "oops", but their voice had been captured for nothing. The hold is
+ * now refused at the bip moment, like read-only, and no capture event ever fires.
+ */
+describe('a button with no contact', () => {
+  it('refuses the hold at the record threshold instead of opening a capture', () => {
+    const { interpreter, names, find, log } = setup({ unassigned: [1] });
+
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
+    expect(find('recordBlocked')?.payload).toEqual({ index: 1, reason: 'unassigned' });
+
+    vi.advanceTimersByTime(HOLD_MS);
+    interpreter.handleButtonUp(1);
+    vi.advanceTimersByTime(RESUME_GRACE_MS + 50);
+
+    for (const event of ['captureConfirmed', 'captureCommit', 'captureCancel', 'playQueue']) {
+      expect([event, names().includes(event)]).toEqual([event, false]);
+    }
+    // One answer to one gesture: the refusal, and nothing after it at release.
+    expect(counts(log, 'recordBlocked')).toBe(1);
+    expect(names()).not.toContain('cancelBeep');
+  });
+
+  it('answers a quick tap the way any empty button does', () => {
+    const { interpreter, names } = setup({ unassigned: [1] });
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).toContain('cancelBeep');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('still plays notes left waiting on it: listening comes first', () => {
+    const { interpreter, names } = setup({ unassigned: [1], unread: [1] });
+    interpreter.handleButtonDown(1);
+    vi.advanceTimersByTime(LONG_TAP_MS);
+    interpreter.handleButtonUp(1);
+
+    expect(names()).toContain('playQueue');
+    expect(names()).not.toContain('recordBlocked');
+  });
+
+  it('leaves the buttons that do have a contact alone', () => {
+    const { interpreter, names } = setup({ unassigned: [1] });
+    interpreter.handleButtonDown(0);
+    vi.advanceTimersByTime(RECORD_THRESHOLD_MS);
+
+    expect(names()).toContain('captureConfirmed');
+    expect(names()).not.toContain('recordBlocked');
   });
 });
 

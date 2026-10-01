@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StatsStore } from '../stats/statsStore.ts';
@@ -170,5 +170,55 @@ describe('StatsStore', () => {
     await expect(stats.flush()).resolves.toBeUndefined();
     // The counter is still right in memory, which is what the panel reads.
     expect(stats.snapshot().contacts[0]?.sentCount).toBe(1);
+  });
+  it('makes a second flush wait for the write the first one started', async () => {
+    /*
+     * The shutdown path and the reboot route can both flush. The second used to see `dirty`
+     * already cleared by the first and return before that write had landed, so the process
+     * could exit mid-write.
+     */
+    const stats = new StatsStore({ path: statsPath, flushDelayMs: 60_000 });
+    stats.recordSent(2, 1500);
+    const first = stats.flush();
+    const second = stats.flush();
+
+    await second;
+    const raw: unknown = JSON.parse(await readFile(statsPath, 'utf8'));
+    expect(raw).toMatchObject({ contacts: [{}, {}, { sentCount: 1, sentMs: 1500 }] });
+    await first;
+    stats.stop();
+  });
+
+  it('writes the latest totals when a change lands during a write', async () => {
+    const stats = new StatsStore({ path: statsPath, flushDelayMs: 60_000 });
+    stats.recordSent(0, 1000);
+    const first = stats.flush();
+    stats.recordSent(0, 1000);
+    await Promise.all([first, stats.flush()]);
+    stats.stop();
+
+    const reloaded = new StatsStore({ path: statsPath });
+    await reloaded.load();
+    expect(reloaded.snapshot().contacts[0]?.sentCount).toBe(2);
+  });
+
+  it('tries a failed write again at the next flush, and leaves no temp file behind', async () => {
+    // A directory where the file should be: the rename fails, everything before it works.
+    await mkdir(statsPath);
+    await writeFile(join(statsPath, 'occupied'), '');
+    const stats = new StatsStore({ path: statsPath, flushDelayMs: 60_000 });
+    stats.recordSent(1, 800);
+
+    await expect(stats.flush()).resolves.toBeUndefined();
+    expect((await readdir(workDir)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+
+    // The card recovers; the change was not forgotten just because the first attempt failed.
+    await rm(statsPath, { recursive: true });
+    await stats.flush();
+    stats.stop();
+
+    const reloaded = new StatsStore({ path: statsPath });
+    await reloaded.load();
+    expect(reloaded.snapshot().contacts[1]?.sentCount).toBe(1);
   });
 });

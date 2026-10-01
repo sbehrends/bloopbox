@@ -198,11 +198,37 @@ describe('once the device is configured', () => {
   });
 });
 
+/** `GET /api/status` — how a route is named in the tables below. */
+const key = ({ method, path }: { method: string; path: string }): string => `${method} ${path}`;
+
 describe('the endpoints that are open by design', () => {
-  it('serves exactly the four that need no credentials', async () => {
-    // Each one has a reason: the simulator and the panel poll status before anyone signs in,
-    // the portal reads WhatsApp state and the cue list, and onboarding cannot require a
-    // password it is about to set. Anything else appearing here is a leak.
+  /*
+   * The complete list of routes that answer without the settings password, each with its
+   * reason. Every other route the router registers must refuse — the test below reads them off
+   * the router itself, so a new route is gated by default and an exception has to be argued here.
+   * A hand-written list of the gated ones used to stand in for that, and had already fallen two
+   * routes behind (`/whatsapp/link`, `/audio/test`).
+   */
+  const OPEN: Readonly<Record<string, string>> = {
+    // The simulator and the panel poll it before anyone signs in.
+    'GET /api/status': 'device status',
+    // The portal reads the link state before a password exists. Carries no pairing code.
+    'GET /api/whatsapp': 'WhatsApp link state',
+    // The portal and the simulator list the cue names.
+    'GET /api/cues': 'cue names',
+    // Sets the first password, so it cannot require one. 409 once one exists (below).
+    'POST /api/onboard': 'first-boot onboarding',
+    // Open while the hotspot is up or before onboarding; gated otherwise (its own describe).
+    'GET /api/wifi/scan': 'the Wi-Fi picker',
+  };
+
+  it('names only routes that exist', async () => {
+    api = await startApi({ adminPassword: PASSWORD });
+    const registered = new Set(api.apiRoutes.map(key));
+    expect(Object.keys(OPEN).filter((route) => !registered.has(route))).toEqual([]);
+  });
+
+  it('serves its read-only routes without credentials', async () => {
     api = await startApi({ adminPassword: PASSWORD });
     const open = ['/api/status', '/api/whatsapp', '/api/cues'];
     const results = await Promise.all(
@@ -214,31 +240,13 @@ describe('the endpoints that are open by design', () => {
     expect(results).toEqual(open.map((path) => [path, 200]));
   });
 
-  it('keeps every other route behind the gate', async () => {
+  it('keeps every other route the router registers behind the gate', async () => {
+    // Configured, with no hotspot up: the state a family's box spends its life in.
     api = await startApi({ adminPassword: PASSWORD });
-    const guarded = [
-      { path: '/api/config', method: 'GET' },
-      { path: '/api/config', method: 'PUT' },
-      { path: '/api/silent', method: 'POST' },
-      { path: '/api/contacts', method: 'GET' },
-      { path: '/api/whatsapp/qr.svg', method: 'GET' },
-      { path: '/api/whatsapp/pair', method: 'POST' },
-      { path: '/api/whatsapp/groups', method: 'GET' },
-      { path: '/api/whatsapp/unlink', method: 'POST' },
-      { path: '/api/factory-reset', method: 'POST' },
-      { path: '/api/wifi/join', method: 'POST' },
-      /*
-       * The activity totals name the family's contacts, and the health reading names the
-       * network this box sits on and can power the device off. Neither belongs to anything
-       * that can merely reach port 3000.
-       */
-      { path: '/api/stats', method: 'GET' },
-      { path: '/api/stats/reset', method: 'POST' },
-      { path: '/api/system', method: 'GET' },
-      { path: '/api/system/power', method: 'POST' },
-      // A password for the whole machine.
-      { path: '/api/system/ssh', method: 'GET' },
-    ];
+    api.netState = netReading({ apActive: false });
+    const guarded = api.apiRoutes.filter((route) => !(key(route) in OPEN));
+    expect(guarded.length).toBeGreaterThan(15);
+
     const results = await Promise.all(
       guarded.map(async ({ path, method }) => {
         const init: RequestInit =
@@ -249,7 +257,7 @@ describe('the endpoints that are open by design', () => {
         return [`${method} ${path}`, response.status];
       }),
     );
-    expect(results).toEqual(guarded.map(({ path, method }) => [`${method} ${path}`, 401]));
+    expect(results).toEqual(guarded.map((route) => [key(route), 401]));
   });
 
   it('refuses onboarding on a device that already has a password', async () => {

@@ -155,7 +155,9 @@ product pages use so it cannot drift. Rules that keep it honest:
 ### Server surface
 
 Everything under `/api` sits behind `requireAdmin` (HTTP Basic against a bcrypt hash) **except**
-`GET /status`, `GET /whatsapp`, `GET /cues` and `POST /onboard`.
+`GET /status`, `GET /whatsapp`, `GET /cues`, `POST /onboard` and the setup-gated `GET /wifi/scan`.
+`adminAuth.test.ts` enumerates the router's stack and expects `401` from every route not in its
+`OPEN` table — add an open route there, with its reason, or the gate test fails.
 
 The guard **stands aside entirely while `system.configured` is false** — first-run onboarding could
 otherwise never set a password. Don't "fix" that. It also stands aside on an empty

@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Router } from 'express';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -41,9 +41,29 @@ function cachedHash(password: string): Promise<string> {
   return created;
 }
 
+/** One method on one path, as the router registered it. */
+export type RegisteredRoute = { readonly method: string; readonly path: string };
+
+/**
+ * Every route a router serves, read from its own stack rather than written out by hand.
+ *
+ * Middleware layers (`router.use`) carry no route and are skipped; a route answering several
+ * methods appears once per method. Express adds HEAD for every GET on its own, so it is left out.
+ */
+export function registeredRoutes(router: Router): RegisteredRoute[] {
+  return router.stack.flatMap((layer) => {
+    const route = layer.route;
+    if (route === undefined) return [];
+    const methods = new Set(route.stack.map(({ method }) => method.toUpperCase()));
+    return [...methods].map((method) => ({ method, path: route.path }));
+  });
+}
+
 export type Harness = {
   /** Absolute URL for a path like `/api/status`. */
   url: (path: string) => string;
+  /** Every route mounted under `/api`, with the prefix, straight from the router. */
+  readonly apiRoutes: readonly RegisteredRoute[];
   readonly config: ConfigManager;
   readonly controller: DeviceController;
   readonly hal: MockHal;
@@ -207,7 +227,8 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
 
   const app = express();
   app.use(express.json({ limit: '128kb' }));
-  app.use('/api', createApiRouter(context));
+  const apiRouter = createApiRouter(context);
+  app.use('/api', apiRouter);
   app.use('/audio', createAudioRouter([recordingDirectory]));
 
   const server: Server = createServer(app);
@@ -222,6 +243,10 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
 
   return {
     url: (path) => `${base}${path}`,
+    apiRoutes: registeredRoutes(apiRouter).map(({ method, path }) => ({
+      method,
+      path: `/api${path}`,
+    })),
     config,
     controller,
     hal,

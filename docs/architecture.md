@@ -595,7 +595,11 @@ silently reset the parent's contacts.
 for the simulator) and `/sounds` (the cue WAVs).
 
 Everything under `/api` sits behind `requireAdmin` — HTTP Basic against a bcrypt hash in config —
-**except** `GET /status`, `GET /whatsapp`, `GET /cues` and `POST /onboard`.
+**except** `GET /status`, `GET /whatsapp`, `GET /cues` and `POST /onboard`, plus `GET /wifi/scan`,
+which is open only while the hotspot is up or before onboarding. That list is the `OPEN` table in
+`adminAuth.test.ts`, each entry with its reason, and the test reads every other route off the
+router's own stack and expects a `401` from it: **a new route is gated by default**, and making one
+open means arguing for it in that table.
 
 The guard also **stands aside entirely while `system.configured` is false**, or first-run onboarding
 could never set a password. Don't "fix" that. It stands aside on an empty `adminPasswordHash` too,

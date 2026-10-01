@@ -126,6 +126,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
   const controller = new DeviceController({
     hal,
     config,
+    deleteFile: (path) => rm(path, { force: true }),
     send: () => Promise.resolve(),
     stats,
   });

@@ -209,8 +209,8 @@ stats file is allowed to cost the totals and nothing else — hence a Zod `.catc
 the two-tier treatment `netState.ts` uses.
 
 - **`src/core/` stays I/O-free.** `DeviceController` takes a structurally typed `StatsRecorder` —
-  three synchronous methods — exactly as it already takes `send` and `markRead`. Never import the
-  store into `core/`.
+  three synchronous methods — exactly as it already takes `send`, `markRead` and `deleteFile`.
+  Never import the store into `core/`; `architecture.test.ts` fails if anything core reaches does.
 - **Count in `handleIncoming`, never in `restoreUnread`.** The boot scan calls the latter for every
   unheard note on the card, and this device restarts on every settings save.
 - **Only a send WhatsApp accepted counts.** A failed one already played the "oops".

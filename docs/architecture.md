@@ -128,7 +128,14 @@ work with real GPIO.
 ### Domain logic is pure
 
 Everything in `src/core/` is I/O-free. It consumes events and timings, and its only outward call is
-`hal.setLed()`.
+`hal.setLed()`. **`src/tests/architecture.test.ts` enforces it:** nothing core reaches, directly or
+through another module, may import a Node built-in other than `node:events`, a package other than
+`zod`, or the server, network, system, stats, WhatsApp, real-HAL or `ConfigManager` modules.
+
+Two things core needs from outside arrive as options rather than imports. The config is a
+`ConfigSnapshot` — just `{ current }`, which `ConfigManager` satisfies — and deleting a note's file
+is `deleteFile`, which the hardware server makes `rm(path, { force: true })`. Until 2026-10 the
+controller imported `rm` itself; the architecture test is what found it.
 
 | Module                | Owns                                                                       |
 | --------------------- | -------------------------------------------------------------------------- |

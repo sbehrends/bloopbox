@@ -23,6 +23,9 @@ const {
  */
 const HOLD_MS = RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 500;
 
+/** The production deletion. `src/core/` does no I/O, so the composition root hands it over. */
+const deleteFile = (path: string): Promise<void> => rm(path, { force: true });
+
 import {
   DeviceController,
   MIN_USABLE_AUDIO_MS,
@@ -109,6 +112,7 @@ beforeEach(async () => {
   controller = new DeviceController({
     hal,
     config,
+    deleteFile,
     send: (request) => {
       if (sendResult === 'fail') return Promise.reject(new Error('bridge offline'));
       sent.push(request);
@@ -622,6 +626,7 @@ describe('while a note is playing', () => {
     const deferred = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: () => pendingSend,
     });
     await controller.dispose();
@@ -937,7 +942,12 @@ describe('silent mode', () => {
     });
     vi.setSystemTime(now);
     // Standing in for the restart a config save triggers.
-    const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    const rebuilt = new DeviceController({
+      hal,
+      config,
+      deleteFile,
+      send: () => Promise.resolve(),
+    });
     rebuilt.setStatus(DeviceStatus.Ready);
     await rebuilt.start();
     return rebuilt;
@@ -1020,7 +1030,12 @@ describe('silent mode', () => {
     });
     // 19:00 UTC is 20:00 in Berlin in June (CEST, UTC+2 — so 18:00 UTC is the boundary).
     vi.setSystemTime(new Date(Date.UTC(2026, 5, 15, 18, 30, 0)));
-    const scheduled = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    const scheduled = new DeviceController({
+      hal,
+      config,
+      deleteFile,
+      send: () => Promise.resolve(),
+    });
     scheduled.setStatus(DeviceStatus.Ready);
     await scheduled.start();
 
@@ -1146,6 +1161,7 @@ describe('a button with no contact', () => {
     controller = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();
@@ -1226,12 +1242,34 @@ describe('reported faults', () => {
     );
   });
 
+  it('reports a file it could not delete, and carries on', async () => {
+    // The take too short to send is deleted at once; a failed delete is left for the purge.
+    await controller.dispose();
+    controller = new DeviceController({
+      hal,
+      config,
+      deleteFile: () => Promise.reject(new Error('EACCES')),
+      send: () => Promise.resolve(),
+      onFault: (fault) => faults.push(fault),
+    });
+    controller.setStatus(DeviceStatus.Ready);
+    hal.fixedDurationMs = MIN_USABLE_AUDIO_MS - 50;
+    await press(1, HOLD_MS);
+    await waitFor(() => kinds().includes('delete'), 'the failed delete to be reported');
+
+    const fault = faults.find(({ kind }) => kind === 'delete');
+    expect(fault).toMatchObject({ index: 1, detail: { path: expect.any(String) } });
+    expect(fault?.error).toBeInstanceOf(Error);
+    await waitFor(() => hal.cueSequence().includes(AudioCue.Oops), 'the oops after it');
+  });
+
   it('keeps working when the reporter itself throws', async () => {
     // Reporting must never be the thing that breaks the next press.
     await controller.dispose();
     const throwing = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();
@@ -1275,6 +1313,7 @@ describe('disposal', () => {
     const rebuilt = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();
@@ -1323,7 +1362,12 @@ describe('config is snapshot, not watched', () => {
 
     // Standing in for the restart.
     await controller.dispose();
-    const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    const rebuilt = new DeviceController({
+      hal,
+      config,
+      deleteFile,
+      send: () => Promise.resolve(),
+    });
     rebuilt.setStatus(DeviceStatus.Ready);
 
     hal.pressButton(0);
@@ -1378,6 +1422,7 @@ describe('read-only mode', () => {
     const rebuilt = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();

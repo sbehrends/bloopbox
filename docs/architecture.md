@@ -711,8 +711,12 @@ The simulator and admin panel speak the same typed contract as the daemons, via 
 **The portal is deliberately not on that contract.** It runs in a captive-portal webview where
 WebSocket is unreliable and storage is ephemeral, so it is plain `fetch` against
 `GET /api/wifi/scan` and `POST /api/wifi/join`, narrowing every response by hand. Keep it that way:
-a dependency on Socket.io there is a page that hangs on a phone. Verify after touching the build —
-`dist/public/portal/index.html` must reference no shared JS chunk.
+a dependency on Socket.io there is a page that hangs on a phone. **The build enforces the other half
+of that:** a plugin in `vite.config.ts` fails `vite build` if the portal's entry chunk imports any
+other chunk. Rolldown hoists code two entries share into a common chunk unprompted, so importing
+anything the panel imports would quietly add a request. The modulepreload polyfill used to be
+exactly that, the one chunk all four pages shared; `build.modulePreload.polyfill` is off, since
+every supported browser has native modulepreload.
 
 ### The design system
 

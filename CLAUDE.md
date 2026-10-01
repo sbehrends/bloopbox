@@ -43,7 +43,7 @@ eagerly at launch, but one **below** the cwd only when it first touches a file i
 | Tier | File | Loaded | Holds |
 | ---- | ---- | ------ | ----- |
 | 1 | this file | always | The map, the gate, and tripwires as one-liners |
-| 2 | `box/software/CLAUDE.md` | when a box file is touched | Toolchain, Baileys, opengpio, packaging, the decisions and which test locks each |
+| 2 | `box/software/CLAUDE.md` | when a box file is touched | Toolchain, Baileys, opengpio, packaging, and an index of the decisions (`D-01`…), whose table lives in `docs/architecture.md` |
 | 3 | `docs/*.md` | on demand, by `Read` | The full reasoning, with diagrams |
 
 **When adding a rule, put it in the lowest tier that still catches the mistake.** A rule only needed

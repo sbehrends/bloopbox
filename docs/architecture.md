@@ -996,6 +996,40 @@ anything not explicitly assigned must not get through.
 
 ---
 
+## Decisions the spec left open
+
+The calls `PRODUCT.md` left open, or where its patterns collide, and how each was resolved. Each has
+an ID, and **the tests that lock a decision cite its ID in their titles** (`[D-07]`).
+[`src/tests/decisions.test.ts`](../box/software/src/tests/decisions.test.ts) reads this table and
+fails if a decision's "Locked by" file no longer cites it, if a test cites an ID this table does not
+have, or if a file cites an ID without being listed here. **IDs are never renumbered or reused:** a
+retired decision keeps its row, struck through, so old citations still mean what they meant.
+
+If you think one is wrong, change it deliberately in one place, update its tests, and update
+`PRODUCT.md` and this document in the same commit. Do not work around it locally. The sections above
+hold the full reasoning for each.
+
+| ID | Decision | Rule | Locked by |
+| -- | -------- | ---- | --------- |
+| D-01 | **LED priority ladder** | `PRODUCT.md` §6's patterns collide, so they resolve **per LED, first match wins**: recording → overlay → lifecycle status → unread → off. The setup hotspot outranks the Wi-Fi error. **Silent mode is not on the ladder**: only the moment it flips shows, as the transition overlay | `ledPriority.test.ts`  |
+| D-02 | **Tap vs. cancel** | `< debounceMs` ignored; `debounceMs`–`recordThresholdMs + minRecordingMs` plays the queue or beeps "oops"; beyond that it records. **The boundary is the sum, not the threshold** — the threshold is only where the bip plays. Defaults 60 / 150 / **1000** / 400 / 3000 ms, all in `config.buttons`; `minRecordingMs` was raised from 500 on 2026-09-08 after a child sent a run of empty notes | `button.test.ts`  |
+| D-03 | **A blinking button does not record** | Notes waiting on a button make it listen-only: `hasUnread` is read a second time at `recordThresholdMs` and **withholds the microphone**, then release emits `recordBlocked` with reason `unread` (a hold) or plays the queue (a tap). Refusing *at* the threshold instead would refuse every tap over 150 ms. Never re-read after the threshold, so a note landing mid-sentence cannot cancel a take; per contact, not per box; and the "oops" is skipped while that queue is playing | `button.test.ts`, `deviceController.test.ts`  |
+| D-04 | **Carry-on window** | A **confirmed** recording stays open `resumeGraceMs` after release; the same button resumes the *same* take. `maxRecordingSeconds` is **not** restarted by a resume. A different button is ignored, not a commit. `durationMs` counts held time only | `button.test.ts`  |
+| D-05 | **One button at a time** | While a press is down, its window is open, **or its queue is playing**, every other button is ignored until its own release — never adopted mid-hold, and its release cannot disarm the chord. Only the chord partner may join a press, and only before the owner reaches `recordThresholdMs + minRecordingMs`; nothing joins playback. The controller's `#listeningTo` is set at the tap, not at `state.playing`, to close the teardown gap. A press whose release is lost is dropped at `stuckPressMs()`, so one missed edge cannot freeze the box | `button.test.ts`, `deviceController.test.ts`  |
+| D-06 | **Bip before the mic** | `#beginCapture` awaits `playCue(Pop)` **then** calls `startRecording`, both inside the promise in `#captures` — the speaker is centimetres from the microphone, so a cue over an open capture is recorded into the message. Nothing said before the bip exists, which is why the bip is early (150 ms) and why the tap boundary moved off it. A discard (release, `stop()`) during the bip sets the capture's **cancel token**, checked after the pop, so the microphone never opens | `deviceController.test.ts` |
+| D-07 | **Nothing plays over a note** | A cue cuts off whatever is playing (one speaker), so every courtesy cue — notify, whoosh, oops, boot — goes through `#courtesyCue`, which drops it while `#listeningTo` is set. `hal.play()` resolves `'completed' \| 'interrupted'`: only a completed note is heard (deleted, marked read); an interrupted one goes back to the front of its queue. Unread follows `queue.count()` after playback, never a clear. `MockHal.holdPlayback` models the interruption | `deviceController.test.ts`, `audioQueue.test.ts`, `gpioPlayback.test.ts`  |
+| D-08 | **Whoosh after finalise** | `#commitCapture` finalises the capture **before** playing the whoosh — same reason at the other end of the take | `deviceController.test.ts`  |
+| D-09 | **One sound per send** | The whoosh means "sent"; delivery is `flashSent` on the lamp. The designed `swoosh` cue was retired 2026-08-17 — back to back the two read as noise, not as two facts. Only a failure adds a second sound | `deviceController.test.ts`  |
+| D-10 | **Notes are decoded on arrival** | `hal.prepare()` from `restoreUnread`, never awaited and never rejecting; `play()` still decodes on demand if the prepared WAV is missing (the purge sweeps `.wav` by age). `release()` from `#deletePlayed` | `gpioPlayback.test.ts`, `deviceController.test.ts`  |
+| D-11 | **Read-only mode** (and a **button with no contact**, reason `unassigned`, per button via `canSend`) | `config.mode.readOnly` refuses the hold in `ButtonInterpreter`, not in `DeviceController`: `captureConfirmed` never fires, so no capture is ever opened and **none** of the capture events fire. The refusal is the "oops" at `recordThresholdMs`, and release does **not** fall through to tap handling. Tap-to-play is untouched. Same `recordBlocked` event as the unread rule above, distinguished by `reason` | `button.test.ts`, `deviceController.test.ts`  |
+| D-12 | **Silent chord** | Buttons 1 + 3 for `silentComboMs` toggles the **effective** state. Both presses are swallowed the instant the chord forms; released early, nothing happens. During quiet hours the override lasts **until the next boundary**: the schedule is applied only on an edge, never re-asserted by the capped 15-minute wake | `button.test.ts`, `deviceController.test.ts`  |
+| D-13 | **Silent mode gating** | Suppressed: inbound chime, bip, sent, oops — and the bip being suppressed means capture opens *immediately* at the threshold in silent mode. **Not** suppressed: playback, nor the admin panel's **Test speaker** cue (`POST /api/audio/test`), the one deliberate bypass. `maxVolumeCapPercent` was removed 2026-08-17 | `hal.test.ts`, `audioQueue.test.ts`, `routes.test.ts`  |
+| D-14 | **Boot animation held** | Status resolves instantly, so `BOOTING` would never be seen. `BOOT_ANIMATION_MS` (2.6 s) holds it; the simulator has a Reboot injector to replay it | —  |
+| D-15 | **Beyond the spec** | `notify.wav` (§7 implies an inbound chime without listing one), `boot.wav` (§6 defines a boot LED pattern but no sound; the only channel for "it came back on its own") and `src/core/` itself (the spec's blueprint has no home for the state machine) | `deviceController.test.ts`  |
+| D-16 | **Designed vs synthesised cues** | `boot` and `notify` are mastered from committed MP3s in `src/audio/samples/`; the rest are tone recipes. `success.mp3` is an unreferenced leftover of the retired `swoosh`, kept because authored audio cannot be regenerated. Both write one WAV per cue into `src/audio/sounds/`, so nothing below `playCue` knows the difference. Trim and peak level are decided in `scripts/generate-sounds.ts`, never left to a filter | `soundFiles.test.ts`  |
+
+---
+
 ## Tests
 
 `src/tests/*.test.ts`, node environment.

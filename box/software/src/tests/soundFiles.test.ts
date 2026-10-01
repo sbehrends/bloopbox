@@ -20,7 +20,7 @@ import {
  * makes `npm run sounds` fail, and the failure surfaces during a release build rather than
  * next to the change that caused it.
  */
-describe('cue sample sources', () => {
+describe('cue sample sources [D-16]', () => {
   it('ships every recording a sampled cue is built from', () => {
     expect(missingSamples()).toEqual([]);
   });

@@ -363,7 +363,7 @@ describe('animator over a real driver', () => {
   });
 });
 
-describe('silent-mode cue gating', () => {
+describe('silent-mode cue gating [D-13]', () => {
   it('suppresses feedback cues but never voice-note playback', () => {
     // PRODUCT.md §7: inbound chime and record cues go quiet; playback does not.
     for (const cue of [AudioCue.Pop, AudioCue.Whoosh, AudioCue.Oops]) {

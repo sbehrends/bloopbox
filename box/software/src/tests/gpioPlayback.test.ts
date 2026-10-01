@@ -176,7 +176,7 @@ describe('play', () => {
   });
 });
 
-describe('prepare', () => {
+describe('prepare [D-10]', () => {
   it('decodes on arrival, so the tap that plays the note only has to spawn aplay', async () => {
     const note = join(directory, 'wa-0-MNO345.ogg');
     await writeFile(note, '');
@@ -399,7 +399,7 @@ describe('playCue', () => {
    * One speaker, one plughw device. A cue cuts a note off, and the driver has to say so: a note
    * cut off by an arrival chime used to resolve as played and be deleted unheard.
    */
-  describe('a cue over a note', () => {
+  describe('a cue over a note [D-07]', () => {
     it('reports the note as interrupted, and plays the cue only once it has let go', async () => {
       player.mode = 'holds';
       const wav = join(directory, 'rec-3.wav');

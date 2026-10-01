@@ -40,8 +40,10 @@ git diff --cached --quiet && exit 0
 STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
 
 # Shell is a good third of this repo now (deploy/, packaging/, the release scripts) and
-# neither prettier nor oxlint looks at it. `bash -n` is a parse check and costs nothing;
-# shellcheck runs too when it happens to be installed.
+# neither prettier nor oxlint looks at it. `bash -n` is a parse check and costs nothing, and
+# ShellCheck runs too when it happens to be installed. CI runs ShellCheck over every script.
+# (A comment line must not begin with the bare word after the hash: ShellCheck reads that as a
+# directive and refuses to check the file at all.)
 SHELL_FILES="$(printf '%s\n' "${STAGED}" | { grep -E '\.sh$|^\.githooks/' || true; })"
 if [[ -n "${SHELL_FILES}" ]]; then
   echo "pre-commit: checking shell scripts"
@@ -85,7 +87,12 @@ fi
 #
 # Nothing staged under box/software means the gate has nothing to say — a docs-only or
 # website-only commit should not pay six seconds to typecheck the daemon.
-if ! printf '%s\n' "${STAGED}" | grep -q "^${SOFTWARE_DIR}/"; then
+#
+# Not `printf | grep -q`: grep exits at the first match, printf takes a SIGPIPE, pipefail turns
+# that into a failure, and the `!` would read it as "nothing staged" — skipping the gate exactly
+# when there is something to check.
+SOFTWARE_FILES="$(printf '%s\n' "${STAGED}" | { grep -E "^${SOFTWARE_DIR}/" || true; })"
+if [[ -z "${SOFTWARE_FILES}" ]]; then
   printf '\033[32mpre-commit: ok (nothing staged under %s)\033[0m\n' "${SOFTWARE_DIR}"
   exit 0
 fi

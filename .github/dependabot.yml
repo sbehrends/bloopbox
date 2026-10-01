@@ -1,0 +1,35 @@
+# Proposes the bumps the SHA pins in .github/workflows/ would otherwise never get, and keeps the two
+# lockfiles moving. Grouped and weekly so it is one review, not a stream of them.
+#
+# Each npm PR runs the same CI as any other, so a bump that breaks the gate, the arm64 package or
+# the onboarding test cannot merge. Baileys is pinned to an exact release candidate on purpose
+# (box/software/CLAUDE.md, "Baileys 7 notes") and is left to a human.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /box/software
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: baileys
+    groups:
+      box-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      website-minor-and-patch:
+        update-types: [minor, patch]

@@ -94,7 +94,8 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
   filesystem work is awaited, assert with a `waitFor` condition, not a fixed number of yields.
 - **Do not write `cmd | grep -q` in the shell scripts.** `grep -q` exits at the first match, the
   producer takes a SIGPIPE, and `set -o pipefail` fails the whole check. This bit three separate
-  checks during bring-up.
+  checks during bring-up. `src/tests/shellScripts.test.ts` now fails on it in any script with
+  pipefail on.
 - **`gpioDriver.ts` is only partly proven on hardware.** On the reference board (Pi 3B+, WM8960 HAT,
   three buttons and three lamps) button 1 and audio are proven; buttons 2–3, the lamps and the
   Zero 2 W are not yet. Do not add code paths that only work with real GPIO — development runs on

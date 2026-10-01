@@ -114,7 +114,7 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
 | `README.md`                | The monorepo front door: what bloopbox is, the layout, install, set up, use |
 | `box/software/README.md`   | The dev-facing half: environment, the gate, the simulator, the scripts    |
 | `box/software/CLAUDE.md`   | Tier 2 above — the rules for changing the box software                    |
-| `docs/PRODUCT.md`          | What the device does. Behaviour, the LED matrix, the config schema. **Do not renumber its sections** — 39 source files cite them |
+| `docs/PRODUCT.md`          | What the device does. Behaviour, the LED matrix, the config schema. **Do not renumber its sections** — the source cites them, and `docCitations.test.ts` fails on any `§` that stops resolving |
 | `docs/architecture.md`     | How the software is put together, and the decisions behind it             |
 | `docs/hardware.md`         | Parts, wiring, GPIO pins, ALSA. Authoritative over `box/hardware/`       |
 | `docs/audio-quality.md`    | Measured capture/playback quality: gain staging, noise, filter choices   |

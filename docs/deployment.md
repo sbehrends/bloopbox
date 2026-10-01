@@ -156,15 +156,16 @@ devices, the firmware pull-ups, `/data`, the tmpfs, the cue files and both servi
 sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
 # -> release/bloopbox-<version>-<pi-os-date>-sd.img.xz  (~660 MB)
 
-# For the MVP board — Pi 3B+ with a WM8960 audio HAT, its own button, no lamps:
-sudo ./scripts/build-sd-image.sh --audio-hat wm8960 --no-leds
-# -> release/bloopbox-<version>-<pi-os-date>-wm8960-noleds.img.xz
+# For the reference board — Pi 3B+ with the WM8960 HAT, three buttons and three lamps:
+sudo ./scripts/build-sd-image.sh --audio-hat wm8960
+# -> release/bloopbox-<version>-<pi-os-date>-wm8960.img.xz
 ```
 
 **Match the flags to the board.** `--audio-hat` and `--no-leds` are passed straight through to
-`install.sh` inside the image, and they are the difference between a card that works on the MVP
-board and one that boots with the wrong ALSA device and three LED lines claimed on pins nothing is
-wired to. Getting it wrong means ssh-ing in to re-run the installer, which is the whole thing the
+`install.sh` inside the image, and they are the difference between a card that works on a board
+and one that boots with the wrong ALSA device, or with its lamps never driven. `--no-leds` is only
+for a board with no lamps wired; the reference board has all three, so never pass it there. It
+belonged to the first, lampless bring-up board of 2026-08-10, which no longer exists. Getting it wrong means ssh-ing in to re-run the installer, which is the whole thing the
 image exists to avoid. A non-default profile goes into the filename, so two boards' images cannot
 overwrite each other in `release/`, and the `.credentials.txt` beside the image records the exact
 `install.sh` line it was built with.

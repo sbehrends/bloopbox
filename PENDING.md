@@ -1745,7 +1745,7 @@ once in the journal), `handledRequestId` was published, and `/run/bloopbox/net-r
 gone. The original notes follow.
 
 
-Changed 2026-09-23 (`docs/deployment.md` § the request channel). The agent no longer deletes
+Changed 2026-09-23 (`docs/deployment.md` § How the device knows whether Wi-Fi is up). The agent no longer deletes
 `/run/bloopbox/net-request.json`: it acts once per request id, records the id in
 `/run/bloopbox-net/handled-request-id`, and publishes it as `handledRequestId`, and the daemon
 deletes its own file when that id comes back. The reason was reasoned from systemd's documented

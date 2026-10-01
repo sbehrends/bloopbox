@@ -891,8 +891,10 @@ function describeStatus(statusCode: number | undefined): string {
       return 'forbidden';
     case DisconnectReason.unavailableService:
       return 'service unavailable';
+    case undefined:
+      return 'unknown reason';
     default:
-      return statusCode === undefined ? 'unknown reason' : `status ${String(statusCode)}`;
+      return `status ${String(statusCode)}`;
   }
 }
 

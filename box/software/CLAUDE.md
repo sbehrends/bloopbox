@@ -83,6 +83,10 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
 - The `pedantic` category is **off** on purpose — `prefer-readonly-parameter-types` and
   `strict-void-return` fired constantly and trained us to ignore output. Curated type-aware rules
   are enabled explicitly instead.
+- Rules that hold the layering and size in place: `switch-exhaustiveness-check` (handle `undefined`
+  as a `case`, not inside `default`), `import/no-cycle`, `no-console` outside `scripts/` (log through
+  `childLogger`), and `max-lines` at 700 code lines for non-test files. `public/admin/main.ts` has
+  its own cap at today's size, until Phase 5 splits it; lower it as it shrinks, never raise it.
 - Revisit ESLint only once typescript-eslint ships TS 7 support.
 
 ## Conventions
@@ -91,6 +95,8 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
   `rewriteRelativeImportExtensions` rewrites them to `.js` on emit.
 - `erasableSyntaxOnly` is on: no `enum`, no `namespace`, no parameter properties. Use `as const`
   objects + union types instead of enums.
+- `noPropertyAccessFromIndexSignature` is on: a key that may be absent is read with brackets
+  (`process.env['X']`, `record['key']`), so a dotted access always names a declared property.
 - Config types are **inferred from the Zod schema** in `src/config/schema.ts`. Never hand-write a
   parallel interface — add the field to the schema and the type follows.
 - Timing values live in exactly one place and are exported. No magic numbers inline. Anything a user

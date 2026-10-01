@@ -39,7 +39,7 @@ Then open `http://localhost:5174/simulator/` or `/admin/`. In production there i
 npx vitest run src/tests/button.test.ts        # one file
 npx vitest run -t 'discards a short recording' # one test by name
 npm run test:watch
-npm run test:coverage                          # v8, 80% thresholds declared but NOT met
+npm run test:coverage                          # the full per-file table, plus coverage/index.html
 ```
 
 Individual gate steps when iterating: `npm run typecheck` (runs both server and web projects),
@@ -394,11 +394,12 @@ Server-layer tests drive a **real Express app on an ephemeral port with `fetch`*
 `bridgeLink.test.ts` uses a real Socket.io server and client, because the token gate is handshake
 middleware and only exists during a connection.
 
-`vitest.config.ts` declares 80% coverage thresholds but **`npm run check` does not run them** — it
-calls plain `vitest run`. Currently ~87% statements / 79% branches, so branches still fail:
-`src/whatsapp/` (86% / 77%, up from 58% once Baileys was injected — `tests/support/fakeWASocket.ts`)
-is the largest hole left, and `src/server/simulatorTransport.ts` is untested on purpose. Known
-debt, not a passing gate.
+`vitest.config.ts` holds a **coverage ratchet**, and `npm run check` enforces it (`test:gate` is
+`vitest run --coverage`). The thresholds are today's figures rounded down — 91% statements, 83%
+branches, 89% functions, 92% lines on 2026-10-01 — so a change that lowers one fails the gate; raise
+the number in the same commit as a change that lifts it. Excluded: the composition roots in
+`src/processes/` and `src/server/simulatorTransport.ts` (the browser end of a debugging tool).
+`gpioDriver.ts` is counted now that `gpioButtons`/`gpioPlayback` drive it on a mocked opengpio.
 
 ## Decisions the spec left open
 

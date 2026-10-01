@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # The gate, before the commit instead of after it. Same `npm run check` CLAUDE.md asks for —
-# format, lint, typecheck, tests — because the whole thing takes about six seconds, which is
+# format, lint, typecheck, tests — because the whole thing takes about ten seconds, which is
 # cheaper than noticing in CI ten minutes later.
 #
 # Committed to the repo and wired up by the `prepare` script in box/software/package.json
@@ -86,7 +86,7 @@ fi
 # a bare `cd`, so nothing after this block can inherit the wrong directory.
 #
 # Nothing staged under box/software means the gate has nothing to say — a docs-only or
-# website-only commit should not pay six seconds to typecheck the daemon.
+# website-only commit should not pay ten seconds to typecheck the daemon.
 #
 # Not `printf | grep -q`: grep exits at the first match, printf takes a SIGPIPE, pipefail turns
 # that into a failure, and the `!` would read it as "nothing staged" — skipping the gate exactly

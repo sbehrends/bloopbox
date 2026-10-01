@@ -10,16 +10,27 @@ export default defineConfig({
     restoreMocks: true,
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html'],
+      /* The gate (`npm run check`) runs with coverage on every commit, so the default report is
+         the four-line summary. `npm run test:coverage` asks for the full table and the HTML. */
+      reporter: ['text-summary'],
       include: ['src/**/*.ts'],
-      exclude: ['src/tests/**', 'src/processes/**', 'src/hal/gpioDriver.ts'],
+      exclude: [
+        'src/tests/**',
+        /* Composition roots: wiring, exercised on the device and by the release smoke test. */
+        'src/processes/**',
+        /* The simulator's Socket.io microphone and buttons. Development-only, and driven by a
+           browser. */
+        'src/server/simulatorTransport.ts',
+      ],
+      /*
+       * A ratchet, not a target: each is today's figure rounded down. A change that lowers one
+       * fails the gate; when a change raises one, raise the number here in the same commit.
+       */
       thresholds: {
-        /* Core domain logic is pure and must stay well covered. Process wiring
-           and the unverifiable GPIO driver are excluded above. */
-        statements: 80,
-        branches: 80,
-        functions: 80,
-        lines: 80,
+        statements: 91,
+        branches: 83,
+        functions: 89,
+        lines: 92,
       },
     },
   },

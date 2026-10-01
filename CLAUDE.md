@@ -54,7 +54,7 @@ ESLint and opengpio tripwires are duplicated below as single lines.
 ## Before you report a task done
 
 ```bash
-cd box/software && npm run check     # format + lint + typecheck + test
+cd box/software && npm run check     # format + lint + typecheck + test, with the coverage ratchet
 cd website      && npm run check     # typecheck + static export — only if you touched the site
 ```
 
@@ -62,7 +62,7 @@ The box gate must pass. That is the only gate for device work; the site has its 
 knows about the other.
 
 It is also a **pre-commit hook** (`.githooks/pre-commit`, wired up by the `prepare` script in
-`box/software/package.json`, so `npm install` installs it — no husky). The whole gate takes about six
+`box/software/package.json`, so `npm install` installs it — no husky). The whole gate takes about ten
 seconds, so the hook runs all of it rather than just a typecheck, plus `bash -n` over any staged
 shell script since neither prettier nor oxlint looks at those, plus a relative-link check over any
 staged markdown. It **skips the npm half entirely when nothing under `box/software/` is staged**, so a

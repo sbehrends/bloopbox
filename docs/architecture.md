@@ -1008,12 +1008,15 @@ which is a helper rather than a suite. No supertest; nothing was worth a depende
 `bridgeLink.test.ts` does the same with a real Socket.io server and client, because the token gate
 is handshake middleware and only exists during a connection.
 
-`vitest.config.ts` declares 80% coverage thresholds but **`npm run check` does not run them** — it
-calls plain `vitest run`. Coverage currently sits at about **87% statements / 79% branches**, so the
-branch threshold still fails. `src/whatsapp/` (86% / 77%) is the largest remaining hole, now that
-Baileys is injected and `FakeWASocket` drives the lifecycle. `src/server/simulatorTransport.ts` is untested on purpose: it is the browser end of a
-debugging tool, not device code. Treat the number as known debt, not a passing gate — the detail is
-in `PENDING.md`.
+**Coverage is a ratchet, and the gate enforces it.** `npm run check` runs `vitest run --coverage`,
+and the thresholds in `vitest.config.ts` are the figures on the day they were set, rounded down:
+91% statements, 83% branches, 89% functions, 92% lines (2026-10-01). A change that lowers one fails
+the gate; a change that raises one raises the number in the same commit. The threshold is not a
+target. Its job is to make a quiet regression loud. Two things are excluded, each by name: the
+composition roots in `src/processes/`, which the release smoke test exercises, and
+`src/server/simulatorTransport.ts`, the browser end of a debugging tool. `gpioDriver.ts` used to be
+excluded as unverifiable; `gpioButtons.test.ts` and `gpioPlayback.test.ts` now drive it on a mocked
+opengpio, so it counts.
 
 ---
 

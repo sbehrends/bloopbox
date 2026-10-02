@@ -14,6 +14,7 @@ import { hashAdminPassword } from '../../server/auth.ts';
 import { createApiRouter, createAudioRouter, type RoutesContext } from '../../server/routes.ts';
 import { StatsStore } from '../../stats/statsStore.ts';
 import type { PowerAction } from '../../system/power.ts';
+import { RecentEvents } from '../../system/recentEvents.ts';
 import type { SshAccess } from '../../system/sshAccess.ts';
 import { CpuUsageTracker, readSystemInfo } from '../../system/systemInfo.ts';
 
@@ -94,6 +95,8 @@ export type Harness = {
   powerAccepted: boolean;
   /** The first-boot ssh login the route reports; null is a box that made none. */
   sshAccess: SshAccess | null;
+  /** A real ring, so a test can record a line and read it back through the route. */
+  readonly recentEvents: RecentEvents;
 
   /** Basic auth header value for a password. */
   basic: (password: string) => string;
@@ -153,6 +156,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
   controller.setStatus(DeviceStatus.Ready);
   const cpu = new CpuUsageTracker();
 
+  const recentEvents = new RecentEvents();
   const state = {
     whatsapp: { state: 'connected', qr: null } as {
       state: WhatsAppConnectionState;
@@ -219,6 +223,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
       return Promise.resolve(state.powerAccepted);
     },
     sshAccess: () => Promise.resolve(state.sshAccess),
+    recentEvents: () => recentEvents.list(),
     log: {
       warn: (details, message) => logged.push(['warn', message, details]),
       error: (details, message) => logged.push(['error', message, details]),
@@ -294,6 +299,7 @@ export async function startApi(options: HarnessOptions = {}): Promise<Harness> {
     set powerAccepted(value) {
       state.powerAccepted = value;
     },
+    recentEvents,
     get sshAccess() {
       return state.sshAccess;
     },

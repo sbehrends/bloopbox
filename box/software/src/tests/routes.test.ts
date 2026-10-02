@@ -843,3 +843,26 @@ describe('GET /api/system/ssh', () => {
     expect(await response.json()).toEqual({ available: false });
   });
 });
+
+describe('GET /api/system/events', () => {
+  it('lists what went wrong lately, newest first, and forbids caching it', async () => {
+    api = await startApi({ configured: false });
+    api.recentEvents.record(40, [{ fault: 'capture-start', index: 0 }, 'device fault'], {}, 1);
+    api.recentEvents.record(50, ['send failed'], {}, 2);
+
+    const response = await fetch(api.url('/api/system/events'));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual({
+      events: [
+        { atMs: 2, level: 'error', message: 'send failed', fields: {} },
+        {
+          atMs: 1,
+          level: 'warn',
+          message: 'device fault',
+          fields: { fault: 'capture-start', index: 0 },
+        },
+      ],
+    });
+  });
+});

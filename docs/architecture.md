@@ -170,6 +170,16 @@ logs each one at `warn` as `device fault`. The routes take the same approach wit
 `log` in `RoutesContext`, so every 4xx/5xx that stands for a failure leaves its reason in the
 journal. The rule for new code: **a catch that swallows must report**.
 
+**The last warnings and errors are on the health card too.** A pino `logMethod` hook in
+`logger.ts`, inherited by every child logger, copies each warn-or-worse line into an in-memory
+ring of 50 (`system/recentEvents.ts`). `GET /api/system/events`, behind the admin gate, serves it
+newest first, and the admin panel's health card lists the last ten under "Recently", so a parent
+whose box gave an "oops" can read `device fault: capture-start, button 1 — …` without ssh. The ring
+keeps only short primitive fields and an error's message, never a stack or a payload, and it
+empties on every restart, which is also every settings save: it answers "what went wrong just now",
+and the journal remains the record. Only the hardware server's lines reach it; the bridge's stay in
+its own journal.
+
 That purity is the whole reason the timing behaviour is testable on fake timers with no hardware
 and no sleeping. Keep it that way — `deviceController` is where I/O is allowed to appear.
 

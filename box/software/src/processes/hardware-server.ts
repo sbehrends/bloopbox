@@ -28,7 +28,7 @@ import { createHal, selectHalKind } from '../hal/index.ts';
 import { SimulatorHal } from '../hal/simulatorDriver.ts';
 import type { Hal } from '../hal/types.ts';
 import { BRIDGE_NAMESPACE, type WhatsAppConnectionState } from '../ipc/events.ts';
-import { childLogger } from '../logger.ts';
+import { childLogger, recentEvents } from '../logger.ts';
 import {
   NetworkIntent,
   NetworkSupervisor,
@@ -401,6 +401,7 @@ async function main(): Promise<void> {
       return requestPowerAction(action);
     },
     sshAccess: () => readSshAccess(),
+    recentEvents: () => recentEvents.list(),
   };
 
   /*

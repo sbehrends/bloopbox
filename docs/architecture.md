@@ -997,6 +997,13 @@ A download is written to `<name>.part`, fsynced, then renamed. Boot recovery tre
 `wa-<i>-<id>.ogg` as an unread note, so the final name must only ever point at a complete file;
 recovery also skips a zero-length one, and the purge sweeps an abandoned `.ogg.part` by age.
 
+Beside each accepted note the bridge keeps its **read-receipt key**, `wa-<i>-<id>.key`
+(`whatsapp/readKeys.ts`), written atomically before the note is announced. `wa:markRead` carries
+the button, and the bridge takes the key from the card, so a note that arrived before a bridge
+restart still gets its blue ticks. The key is deleted when the receipt is sent or the note is
+revoked. One whose receipt never goes (receipts turned off in settings, or a bridge that was down)
+is purged with the audio at 48 h: `.key` is on the purge's list.
+
 ### Sends answer before the hardware side gives up
 
 The hardware server abandons a send after `SEND_TIMEOUT_MS` (60 s) and plays the "oops". An upload

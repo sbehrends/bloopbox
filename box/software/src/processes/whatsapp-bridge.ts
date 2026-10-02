@@ -24,6 +24,7 @@ import {
 import { childLogger } from '../logger.ts';
 import { createBridge } from '../whatsapp/bridge.ts';
 import { WhatsAppClient } from '../whatsapp/client.ts';
+import { fileReadKeys } from '../whatsapp/readKeys.ts';
 import { Shutdown } from './shutdown.ts';
 
 const log = childLogger('whatsapp');
@@ -76,6 +77,7 @@ async function main(): Promise<void> {
     recordingDirectory: RECORDING_DIRECTORY,
     probeDuration: probeDurationMs,
     removeFile: (path) => rm(path, { force: true }),
+    readKeys: fileReadKeys(NOTES_DIRECTORY),
     log: log.child({ mod: 'bridge' }),
   });
 

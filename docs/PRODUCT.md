@@ -744,6 +744,12 @@ than reading one voice note. Against that, a note is deleted the instant it is p
 regardless, and **the child's own recordings still never leave RAM**. The promise that changed is
 "no audio is ever at rest". The promise kept is "nothing the child records is ever at rest".
 
+Each inbound note has one small companion on the card, `wa-<i>-<id>.key`: the WhatsApp message key
+(the chat's address, the message id) needed to send the sender their read receipt, so the receipt
+survives a restart of the WhatsApp bridge. Decided 2026-10-02 on the same terms as the audio: it is
+deleted when the receipt is sent or the sender deletes the note, and otherwise purged with the audio
+at 48 h.
+
 ---
 
 ## 9. Directory layout

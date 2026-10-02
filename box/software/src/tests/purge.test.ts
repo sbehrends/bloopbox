@@ -43,6 +43,17 @@ describe('TTL enforcement', () => {
     expect(await readdir(workDir)).toEqual([]);
   });
 
+  it('deletes a note’s read key on the same clock as the note', async () => {
+    // Normally the bridge deletes it once the receipt is sent; this is the case where it never is.
+    const staleKey = await writeAged('wa-0-M1.key', AUDIO_TTL_MS + 60_000, '{}');
+    await writeAged('wa-1-M2.key', AUDIO_TTL_MS - 60_000, '{}');
+
+    const result = await purgeExpiredAudio({ directory: workDir, now });
+
+    expect(result.deleted).toEqual([staleKey]);
+    expect(await readdir(workDir)).toEqual(['wa-1-M2.key']);
+  });
+
   it('keeps audio younger than 48 hours', async () => {
     await writeAged('fresh.ogg', AUDIO_TTL_MS - 60_000);
 

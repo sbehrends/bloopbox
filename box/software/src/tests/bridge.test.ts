@@ -5,13 +5,13 @@ import type { ButtonIndex } from '../config/schema.ts';
 import {
   createBridge,
   MAX_NOTES_BEFORE_WHITELIST,
-  MAX_TRACKED_MESSAGES,
   MAX_TRACKED_REVOKES,
   type Bridge,
   type HardwareEvent,
 } from '../whatsapp/bridge.ts';
 import type { VoiceNote, WhatsAppClientEvents } from '../whatsapp/client.ts';
 import { maskJid } from '../whatsapp/privacy.ts';
+import type { ReadKey, ReadKeyStore } from '../whatsapp/readKeys.ts';
 
 /**
  * The bridge's decisions, with WhatsApp and the hardware server both faked.
@@ -58,16 +58,35 @@ let sent: HardwareEvent[];
 let removed: string[];
 let logged: unknown[][];
 let bridge: Bridge;
+/** The card, as far as read keys go: survives a new bridge, as the files do a restart. */
+let keys: Map<string, ReadKey>;
 
-beforeEach(() => {
-  client = new FakeWhatsApp();
-  sent = [];
-  removed = [];
-  logged = [];
-  const record = (...args: unknown[]): void => {
-    logged.push(args);
+const slot = (index: number, id: string): string => `${String(index)}/${id}`;
+
+function memoryReadKeys(): ReadKeyStore {
+  return {
+    save: (index, id, key) => {
+      keys.set(slot(index, id), key);
+      return Promise.resolve();
+    },
+    take: (index, id) => {
+      const key = keys.get(slot(index, id)) ?? null;
+      keys.delete(slot(index, id));
+      return Promise.resolve(key);
+    },
+    forget: (index, id) => {
+      keys.delete(slot(index, id));
+      return Promise.resolve();
+    },
   };
-  bridge = createBridge({
+}
+
+const record = (...args: unknown[]): void => {
+  logged.push(args);
+};
+
+function newBridge(): Bridge {
+  return createBridge({
     client,
     toHardware: (...event) => {
       sent.push(event);
@@ -79,8 +98,18 @@ beforeEach(() => {
       removed.push(path);
       return Promise.resolve();
     },
+    readKeys: memoryReadKeys(),
     log: { debug: record, info: record, warn: record, error: record },
   });
+}
+
+beforeEach(() => {
+  client = new FakeWhatsApp();
+  sent = [];
+  removed = [];
+  logged = [];
+  keys = new Map();
+  bridge = newBridge();
 });
 
 /** The payloads sent to the hardware server under one event name, in order. */
@@ -317,7 +346,7 @@ describe('deleted for everyone', () => {
       fromMe: false,
     });
     await drain();
-    await bridge.markRead({ messageIds: ['M1'] });
+    await bridge.markRead({ index: 0, messageIds: ['M1'] });
     expect(client.markRead).not.toHaveBeenCalled();
   });
 });
@@ -387,8 +416,8 @@ describe('marking read', () => {
     client.emit('voiceNote', note());
     await settle(() => events('wa:incoming').length > 0, 'the note');
 
-    await bridge.markRead({ messageIds: ['M1', 'NEVER-SEEN'] });
-    await bridge.markRead({ messageIds: ['M1'] });
+    await bridge.markRead({ index: 0, messageIds: ['M1', 'NEVER-SEEN'] });
+    await bridge.markRead({ index: 0, messageIds: ['M1'] });
     expect(client.markRead).toHaveBeenCalledTimes(1);
     expect(client.markRead.mock.calls[0]?.[0]).toEqual([
       { id: 'M1', remoteJid: MOM, fromMe: false },
@@ -397,16 +426,48 @@ describe('marking read', () => {
 });
 
 describe('marking read, bounded and best-effort', () => {
-  it('forgets the oldest unheard notes beyond its limit', async () => {
+  it('marks a note read after a bridge restart, from the key kept beside it', async () => {
+    // The visible half of the promise: two ticks for the sender, even across an update or a reboot.
     assign({ index: 0, jid: MOM });
-    for (let i = 0; i <= MAX_TRACKED_MESSAGES; i++) {
-      client.emit('voiceNote', note({ messageId: `K${String(i)}` }));
-    }
-    await settle(() => events('wa:incoming').length === MAX_TRACKED_MESSAGES + 1, 'every note');
-    await bridge.markRead({ messageIds: ['K0'] });
+    client.emit('voiceNote', note());
+    await settle(() => events('wa:incoming').length > 0, 'the note');
+
+    client = new FakeWhatsApp();
+    const restarted = newBridge();
+    await restarted.markRead({ index: 0, messageIds: ['M1'] });
+    expect(client.markRead).toHaveBeenCalledWith([{ id: 'M1', remoteJid: MOM, fromMe: false }]);
+    expect(keys.size).toBe(0);
+  });
+
+  it('keeps the key per button, so the same id on another button is not marked', async () => {
+    assign({ index: 0, jid: MOM });
+    client.emit('voiceNote', note());
+    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await bridge.markRead({ index: 1, messageIds: ['M1'] });
     expect(client.markRead).not.toHaveBeenCalled();
-    await bridge.markRead({ messageIds: [`K${String(MAX_TRACKED_MESSAGES)}`] });
-    expect(client.markRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('still announces a note whose key it could not keep', async () => {
+    assign({ index: 0, jid: MOM });
+    const failing = memoryReadKeys();
+    bridge = createBridge({
+      client,
+      toHardware: (...event) => {
+        sent.push(event);
+      },
+      notesDirectory: NOTES,
+      recordingDirectory: RECORDINGS,
+      probeDuration: () => Promise.resolve(2500),
+      removeFile: () => Promise.resolve(),
+      readKeys: { ...failing, save: () => Promise.reject(new Error('ENOSPC')) },
+      log: { debug: record, info: record, warn: record, error: record },
+    });
+    assign({ index: 0, jid: MOM });
+    client.emit('voiceNote', note());
+    await settle(() => events('wa:incoming').length > 0, 'the note');
+    expect(logged.some(([, message]) => message === 'could not keep the read key of a note')).toBe(
+      true,
+    );
   });
 
   it('shrugs off a failure: the child has already heard it', async () => {
@@ -414,12 +475,12 @@ describe('marking read, bounded and best-effort', () => {
     client.emit('voiceNote', note());
     await settle(() => events('wa:incoming').length > 0, 'the note');
     client.markRead.mockRejectedValueOnce(new Error('offline'));
-    await bridge.markRead({ messageIds: ['M1'] });
+    await bridge.markRead({ index: 0, messageIds: ['M1'] });
     expect(logged.some(([, message]) => message === 'could not mark messages read')).toBe(true);
   });
 
   it('ignores a malformed request', async () => {
-    await bridge.markRead({ messageIds: 'M1' });
+    await bridge.markRead({ index: 0, messageIds: 'M1' });
     await bridge.markRead(null);
     expect(client.markRead).not.toHaveBeenCalled();
   });

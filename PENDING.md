@@ -1250,7 +1250,15 @@ Also unverified with a real account: that a note from a disappearing chat arrive
 `ephemeralMessage` at this layer at all, rather than already unwrapped by Baileys. The unwrap is
 harmless if it is — a plain `audioMessage` still matches.
 
-### Read receipts do not survive a bridge restart
+### ~~Read receipts do not survive a bridge restart~~ — fixed 2026-10-02
+
+**Fixed**, on the terms decided 2026-10-02 (metadata on the card is fine if the purge deletes it):
+each accepted note's key is kept beside it as `wa-<i>-<id>.key` (`whatsapp/readKeys.ts`), taken
+when the receipt is sent, dropped on a revoke, and purged with the audio at 48 h otherwise.
+`bridge.test.ts` marks a note read from a new bridge instance; `readKeys.test.ts` and
+`purge.test.ts` cover the files. Not yet seen on the device: restart the bridge with a note
+waiting, play it, and check the sender gets both ticks.
+
 
 `pendingReads` in `whatsapp/bridge.ts` is an in-memory `Map` from message id to the Baileys key
 `markRead` needs. A voice note received before a bridge restart is still played and still clears

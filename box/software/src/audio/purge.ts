@@ -16,12 +16,23 @@ export const AUDIO_TTL_MS = 48 * 60 * 60 * 1000;
 export const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
- * Only audio artefacts are eligible; anything else in the directory is left alone.
+ * Only audio artefacts, and the metadata that travels with them, are eligible; anything else in
+ * the directory is left alone.
  *
  * `.ogg.part` is a download a power cut interrupted (`whatsapp/mediaDownload.ts`): nothing else
- * ever finishes it, and nothing else would ever delete it.
+ * ever finishes it, and nothing else would ever delete it. `.key` is a note's read-receipt key
+ * (`ipc/noteFiles.ts`), normally deleted when the receipt is sent; one whose receipt never went —
+ * receipts turned off, a bridge that was down — goes on the same clock as the audio.
  */
-const PURGEABLE_EXTENSIONS = ['.ogg', '.wav', '.webm', '.m4a', '.opus', '.ogg.part'] as const;
+const PURGEABLE_EXTENSIONS = [
+  '.ogg',
+  '.wav',
+  '.webm',
+  '.m4a',
+  '.opus',
+  '.ogg.part',
+  '.key',
+] as const;
 
 export type PurgeResult = {
   readonly scanned: number;

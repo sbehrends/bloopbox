@@ -6,6 +6,7 @@ import { readButtonIndex, readString } from '../ipc/payload.ts';
 import type { Revocation, VoiceNote, WhatsAppClient, WhatsAppClientEvents } from './client.ts';
 import { HoldUntilReady } from './holdUntilReady.ts';
 import { maskJid } from './privacy.ts';
+import type { ReadKeyStore } from './readKeys.ts';
 import { Whitelist, type AllowedTarget } from './whitelist.ts';
 
 /**
@@ -56,6 +57,8 @@ export type BridgeOptions = {
   readonly probeDuration: (path: string) => Promise<number | null>;
   /** Deletes a file, resolving when it is gone or was never there. */
   readonly removeFile: (path: string) => Promise<void>;
+  /** Where each accepted note's read-receipt key waits until the child has heard it. */
+  readonly readKeys: ReadKeyStore;
   readonly log: Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>;
 };
 
@@ -72,8 +75,6 @@ export type Bridge = {
   readonly listGroups: (payload: unknown) => Promise<void>;
 };
 
-/** Keys of messages played but not yet acknowledged upstream, so we can mark them read. */
-export const MAX_TRACKED_MESSAGES = 200;
 /**
  * Voice notes held until the first contact list arrives — see `holdUntilReady.ts`.
  * Far above any real offline backlog for three buttons, and small enough not to matter in RAM.
@@ -91,8 +92,6 @@ export function createBridge(options: BridgeOptions): Bridge {
   const { client, toHardware, log } = options;
   const recordingDirectory = resolve(options.recordingDirectory);
   const whitelist = new Whitelist();
-  /** messageId -> the WhatsApp key needed to mark it read once the child has heard it. */
-  const pendingReads = new Map<string, VoiceNote['raw']['key']>();
   /**
    * Ids deleted for everyone by an assigned chat. A download takes seconds, and "oops, wrong
    * chat" takes about as long: the revoke can arrive while the note is still on its way to disk,
@@ -151,7 +150,11 @@ export function createBridge(options: BridgeOptions): Bridge {
       if (oldest.done === true) break;
       revokedIds.delete(oldest.value);
     }
-    pendingReads.delete(revocation.messageId);
+    void options.readKeys
+      .forget(decision.target.index, revocation.messageId)
+      .catch((error: unknown) => {
+        log.warn({ err: error }, 'could not delete the read key of a revoked note');
+      });
 
     log.info({ index: decision.target.index }, 'a voice note was deleted by its sender');
     toHardware('wa:revoked', { index: decision.target.index, messageId: revocation.messageId });
@@ -193,7 +196,16 @@ export function createBridge(options: BridgeOptions): Bridge {
       const durationMs =
         note.seconds !== null ? note.seconds * 1000 : await options.probeDuration(path);
 
-      rememberRead(note.messageId, note.raw.key);
+      // Before the announcement, so a tap the moment the lamp lights still finds it.
+      await options.readKeys
+        .save(target.index, note.messageId, note.raw.key)
+        .catch((error: unknown) => {
+          // The note still plays; only its blue ticks are at stake.
+          log.warn(
+            { err: error, messageId: note.messageId },
+            'could not keep the read key of a note',
+          );
+        });
 
       log.info(
         {
@@ -214,16 +226,6 @@ export function createBridge(options: BridgeOptions): Bridge {
       });
     } catch (error: unknown) {
       log.error({ err: error, messageId: note.messageId }, 'failed to download a voice note');
-    }
-  }
-
-  function rememberRead(messageId: string, key: VoiceNote['raw']['key']): void {
-    pendingReads.set(messageId, key);
-    // Bounded: a queue nobody ever plays must not grow without limit.
-    while (pendingReads.size > MAX_TRACKED_MESSAGES) {
-      const oldest = pendingReads.keys().next();
-      if (oldest.done === true) break;
-      pendingReads.delete(oldest.value);
     }
   }
 
@@ -307,12 +309,13 @@ export function createBridge(options: BridgeOptions): Bridge {
     },
 
     markRead: async (payload) => {
-      const keys = readMessageIds(payload).flatMap((id) => {
-        const key = pendingReads.get(id);
-        if (!key) return [];
-        pendingReads.delete(id);
-        return [key];
-      });
+      const index = readButtonIndex(payload);
+      if (index === null) return;
+      // From the card, not from memory: a note that arrived before a bridge restart still has one.
+      const taken = await Promise.all(
+        readMessageIds(payload).map((id) => options.readKeys.take(index, id).catch(() => null)),
+      );
+      const keys = taken.filter((key) => key !== null);
 
       if (keys.length === 0) return;
       try {

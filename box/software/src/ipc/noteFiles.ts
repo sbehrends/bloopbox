@@ -48,6 +48,15 @@ export function recordingName(index: ButtonIndex, messageId: string): string {
   return `wa-${String(index)}-${messageId}.ogg`;
 }
 
+/**
+ * `wa-<index>-<messageId>.key`: the WhatsApp message key a note needs to be marked read, beside the
+ * note itself so it survives a bridge restart. The bridge deletes it once the receipt is sent or the
+ * note is revoked; otherwise the purge takes it with the audio, on the same 48 h clock.
+ */
+export function readKeyName(index: ButtonIndex, messageId: string): string {
+  return recordingName(index, messageId).replace(/\.ogg$/, '.key');
+}
+
 /** The inverse of {@link recordingName}. Notes written before the index was encoded do not match. */
 const RECORDING_PATTERN = /^wa-([0-2])-([A-Za-z0-9_-]{1,128})\.ogg$/;
 

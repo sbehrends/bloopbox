@@ -83,8 +83,8 @@ export type NetState = {
    * A Pi has no real-time clock, so until NTP answers it runs on whatever time the last shutdown
    * saved — and quiet hours read that clock. **Null is "cannot tell", not "unsynced"**: no
    * `timedatectl` on the box, an agent that predates this field, or an answer that was not yes or
-   * no. Observation only; nothing acts on it yet — quiet hours waiting for it is decided, not built
-   * (PENDING.md).
+   * no. Scheduled quiet hours wait for a `true` (`DeviceController.markClockSynced`); the
+   * health card shows all three.
    */
   readonly timeSynced: boolean | null;
 };

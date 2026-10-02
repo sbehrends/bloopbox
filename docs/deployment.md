@@ -398,8 +398,8 @@ the agent is the only process that can ask `timedatectl show -p NTPSynchronized`
 to `systemd-timedated`, refreshed every 30 s rather than every poll). A Pi has no real-time clock, so
 until NTP answers it runs on the time its last shutdown saved. It is `true`, `false`, or `null` for
 "cannot tell" — no `timedatectl`, or no clear answer — and `netState.ts` keeps it that way, reading
-anything malformed as `null` and never as `false`. The health card shows it; quiet hours staying off
-until it is `true` is decided but not built (`PENDING.md`).
+anything malformed as `null` and never as `false`. The health card shows it, and scheduled quiet
+hours stay off until it reads `true` (`docs/PRODUCT.md` § Silence and quiet hours).
 
 `sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user, and
 that `nmcli` and dnsmasq are installed. It also fails if no time-sync service is active (Pi OS ships

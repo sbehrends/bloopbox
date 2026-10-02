@@ -1023,7 +1023,7 @@ describe('silent mode', () => {
    * through `quietHours.timezone`, a local-time fixture would put the window an offset away
    * on every machine but Greenwich.
    */
-  async function withQuietHours(now: Date): Promise<DeviceController> {
+  async function withQuietHours(now: Date, awaitClockSync = false): Promise<DeviceController> {
     await controller.dispose();
     await config.update({
       quietHours: { enabled: true, startTime: '20:00', endTime: '07:00', timezone: 'UTC' },
@@ -1035,6 +1035,7 @@ describe('silent mode', () => {
       config,
       deleteFile,
       send: () => Promise.resolve(),
+      awaitClockSync,
     });
     rebuilt.setStatus(DeviceStatus.Ready);
     await rebuilt.start();
@@ -1047,6 +1048,36 @@ describe('silent mode', () => {
 
     expect(scheduled.state.silentMode).toBe(true);
     expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
+    await scheduled.dispose();
+  });
+
+  /*
+   * A Pi boots on the time its last shutdown saved. Until NTP answers, a schedule read off that
+   * clock can be hours wrong, so a real device stays audible until the time is known.
+   */
+  it('stays audible on a device until the clock has synced, then follows the schedule', async () => {
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 22, 30, 0)), true);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    // No timer applies it behind the sync's back.
+    await vi.advanceTimersByTimeAsync(2 * QUIET_HOURS_MAX_SLEEP_MS);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    scheduled.markClockSynced();
+    expect(scheduled.state.silentMode).toBe(true);
+    expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
+    await scheduled.dispose();
+  });
+
+  it('applies the schedule once synced, including its next boundary', async () => {
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 19, 59, 30)), true);
+    scheduled.markClockSynced();
+    // A second report changes nothing: the sync latches.
+    scheduled.markClockSynced();
+    expect(scheduled.state.silentMode).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30 * 1000);
+    expect(scheduled.state.silentMode).toBe(true);
     await scheduled.dispose();
   });
 

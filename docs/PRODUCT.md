@@ -327,7 +327,7 @@ on, how long the *software* has been running (the two diverge on a settings save
 uptime that keeps resetting is a crash loop), processor busy time and load, memory, free space on the
 card and in the RAM disk, whether the configured sound card is actually present, the Wi-Fi network
 and signal, and whether the **clock** has been set from the network yet ("synced", "not synced yet",
-or "unknown" where the box cannot tell — a Pi has no clock battery, and quiet hours read that clock).
+or "unknown" where the box cannot tell — a Pi has no clock battery, and quiet hours wait for it).
 Every reading is nullable: a value the box cannot obtain is a dash or "unknown", never a zero or a
 "no".
 
@@ -663,6 +663,12 @@ Mastering is a decision in `scripts/generate-sounds.ts`, not a filter's side eff
   and a window in the wrong zone is worse than no window: the box goes silent at the wrong hours,
   and on a device with no screen that is indistinguishable from a broken one. Switching it on and
   choosing a zone is one visit to the admin panel.
+- **The schedule waits for the real time.** A Pi has no clock battery: until NTP answers it runs on
+  the time its last shutdown saved, which after a night unplugged can be hours wrong. So after every
+  boot the box stays **audible** until the root agent reports the clock synced, and only then reads
+  the window. "Cannot tell" counts as not synced, so a box that never reaches the internet never
+  goes quiet on schedule — the chord still works. Once synced the box keeps trusting the clock for
+  the rest of that boot, even if NTP later loses its server.
 - The chord toggles the **effective** state, so during scheduled quiet hours a parent can force
   audio back on without editing the schedule. **The override lasts until the next boundary**: sound
   stays on for the rest of that window, and the next window starts silent as scheduled. The

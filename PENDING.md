@@ -67,27 +67,6 @@ The reference board's password was pasted into a chat on 2026-09-30, and the `1.
 
 ---
 
-## Decided, not built
-
-### Quiet hours wait for a synced clock
-
-**Decided 2026-10-02: until the clock has synced, scheduled quiet hours do not apply — the box is
-audible.** A Pi has no real-time clock; until NTP answers it runs on the time its last shutdown
-saved, so a box unplugged overnight may believe it is still 20:15 at 07:30 and stay silent. Between
-the two wrong answers, the box makes noise.
-
-The root agent already publishes `timeSynced` (`true` / `false` / `null`, `src/net/netState.ts`);
-nothing acts on it. To build: feed it to `src/core/quietHours.ts` through the controller, keep the
-schedule off while it is not `true`, and update `docs/PRODUCT.md` § Silence and quiet hours. Two
-details to settle while doing it:
-
-- **`null` means "cannot tell"** (no `timedatectl`, an agent predating the field). Treating it as
-  unsynced means such a box never goes quiet; treating it as synced brings back the original risk.
-- **A box with no internet never syncs**, so it never goes quiet on schedule. That follows from the
-  decision; the manual chord still works.
-
----
-
 ## Known gaps
 
 ### The admin panel does not block while the box restarts after a save

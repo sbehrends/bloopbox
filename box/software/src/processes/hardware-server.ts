@@ -246,6 +246,8 @@ async function main(): Promise<void> {
       link.current?.markRead(index, messageIds);
     },
     stats,
+    // Only a real device has a clock that can be wrong at boot; the simulator's is the host's.
+    awaitClockSync: kind !== 'simulator',
     /*
      * Every failure the controller swallows so the next press still works. One stable message,
      * with the kind as a field, so `journalctl -u bloopbox-hardware | grep 'device fault'` lists
@@ -596,6 +598,9 @@ async function main(): Promise<void> {
       refreshStatus();
     },
     onReading: (state) => {
+      // `null` is "cannot tell", which is not synced: the schedule waits for a yes.
+      if (state?.timeSynced === true) controller.markClockSynced();
+
       const observation: NetworkObservation = {
         available: state?.available ?? false,
         online: state?.online ?? false,

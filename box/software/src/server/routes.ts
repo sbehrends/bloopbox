@@ -14,6 +14,7 @@ import {
 import { readBoolean, readField, readString } from '../ipc/payload.ts';
 import type { NetState } from '../net/netState.ts';
 import { isPowerAction, type PowerAction } from '../system/power.ts';
+import type { RecentEvent } from '../system/recentEvents.ts';
 import type { SshAccess } from '../system/sshAccess.ts';
 import type { SystemInfo } from '../system/systemInfo.ts';
 import type { StatsSnapshot } from '../stats/statsStore.ts';
@@ -86,6 +87,8 @@ export type RoutesContext = {
   readonly requestPower: (action: PowerAction) => Promise<boolean>;
   /** The ssh login this device generated on first boot, or null where it made none. */
   readonly sshAccess: () => Promise<SshAccess | null>;
+  /** The warnings and errors logged since this process started, newest first. */
+  readonly recentEvents: () => readonly RecentEvent[];
   /**
    * Where a failure behind a 4xx/5xx goes. The panel shows the parent a sentence; the journal is
    * where the reason has to be, or a box that "would not save" can only be debugged by guessing.
@@ -458,7 +461,7 @@ export function createApiRouter(context: RoutesContext): Router {
 
   /**
    * Wipes every piece of user configuration and lands the device back at first boot
-   * (PENDING.md, "A factory-reset control that wipes all user configuration").
+   * (`docs/PRODUCT.md` § What the admin panel shows, and when).
    *
    * Three things, because config.json is only one of the three places a device remembers who
    * it belongs to: the config itself, the WhatsApp session on disk, and the Wi-Fi profile in
@@ -624,6 +627,15 @@ export function createApiRouter(context: RoutesContext): Router {
     const access = await context.sshAccess();
     res.set('Cache-Control', 'no-store');
     res.json(access === null ? { available: false } : { available: true, ...access });
+  });
+
+  /*
+   * What went wrong lately, for the health card: the post-mortem a parent can reach without ssh.
+   * Behind the gate, because a log line can name a file, a network or a contact's button.
+   */
+  router.get('/system/events', admin, (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ events: context.recentEvents() });
   });
 
   /* ---- diagnostics ---- */

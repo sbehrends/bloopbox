@@ -32,7 +32,7 @@
   --accent-soft: #dff1fa;
   /* The shadow under a pressed-in control — the tactile part of the brand, in CSS. */
   --accent-deep: #0284b4;
-  /* Navy on teal is 4.6:1; white on teal is 2.9:1 and fails. Hence navy. */
+  /* Navy on teal is 5.1:1; white on teal is 2.8:1 and fails. Hence navy. */
   --on-accent: var(--brand-navy);
   --warm: var(--brand-yellow);
   --pop: var(--brand-coral);

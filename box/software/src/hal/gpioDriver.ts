@@ -48,7 +48,7 @@ import { SettledLine } from './settledLine.ts';
  * buses stay available, and grouped for tidy ribbon wiring.
  *
  * These are the **defaults**. `BUTTON_PINS` / `LED_PINS` below override them per device,
- * which is what lets a reduced MVP board run the same driver — see `docs/hardware.md`.
+ * which is what lets a partly wired board run the same driver — see `docs/hardware.md`.
  */
 export const GPIO_PINS = {
   /** Buttons: switch to ground, so the line idles HIGH and reads LOW when pressed. */
@@ -65,7 +65,7 @@ const MAX_CHANNELS = 3;
  *
  * Every BCM283x board maps a BCM name to the same gpiochip0 line, so the Zero 2 W map is
  * correct on a 3B+ too — observed on 2026-08-10, where `gpioinfo` on a real 3B+ showed all
- * six lines claimed with the intended directions (PENDING.md). The override stays because
+ * six lines claimed with the intended directions (`docs/hardware-bringup.md`). The override stays because
  * opengpio ships per-board maps and a future board may not agree: `PI_BOARD` takes any
  * board name it exports, and a wrong one fails at startup listing the valid ones.
  */
@@ -76,8 +76,8 @@ export const PI_BOARD = process.env['PI_BOARD'] ?? 'RaspberryPi_Zero2W';
  *
  * A shorter list means fewer physical channels: the remaining logical channels still
  * exist everywhere above the HAL, they simply have no hardware behind them. An empty
- * value (`LED_PINS=`) claims no lines at all, which is the MVP case — a board with the
- * audio HAT's single button and no lamps.
+ * value (`LED_PINS=`) claims no lines at all, for a board with no lamps wired (what
+ * `install.sh --no-leds` writes). The reference board has all three of each.
  */
 export const BUTTON_PINS = parsePinList('BUTTON_PINS', GPIO_PINS.buttons);
 export const LED_PINS = parsePinList('LED_PINS', GPIO_PINS.leds);
@@ -287,7 +287,7 @@ export class GpioHal extends EventEmitter<HalEvents> implements Hal {
        * when calling its native binding, so requesting a pull-up here would instead set a
        * 4ms debounce and leave the line floating. Both concerns are handled properly
        * elsewhere: pull-ups come from the firmware (`gpio=17,27,22=ip,pu` in
-       * /boot/firmware/config.txt, applied by scripts/provision.sh) and debouncing is
+       * /boot/firmware/config.txt, written by deploy/install.sh) and debouncing is
        * software-side: contact chatter is settled below (`settledLine.ts`), and press length is
        * judged in core/buttonInterpreter.ts.
        */

@@ -4,7 +4,7 @@ import { DEFAULT_BUTTON_TIMINGS, type ButtonIndex, type ButtonTimings } from '..
 
 /**
  * Button timing behaviour (PRODUCT.md §1, §5) and the tap-vs-cancel resolution recorded
- * in CLAUDE.md. Everything runs on fake timers — no sleeping, no flakes.
+ * in `docs/architecture.md`. Everything runs on fake timers — no sleeping, no flakes.
  */
 
 type Recorded = { event: string; payload?: unknown };

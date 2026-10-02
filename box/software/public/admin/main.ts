@@ -10,8 +10,10 @@ import {
   textInput,
 } from '../shared/dom.ts';
 import { CHANNEL_TOKENS } from '../shared/theme.ts';
+import { describeRecentEvent, readRecentEvents, type RecentEventView } from './recentEvents.ts';
 // The same parser the device validates against, rather than a second one that can disagree.
 import { parseTarget } from '../../src/config/schema.ts';
+import type { ServerToSimulatorEvents, SimulatorToServerEvents } from '../../src/ipc/events.ts';
 
 /**
  * Admin panel (PRODUCT.md §3).
@@ -1373,8 +1375,37 @@ function describeAudio(audio: SystemView['audio']): string {
 function renderHealth(): HTMLElement {
   const section = collapsibleCard('Device health');
   const body = element('div', 'health');
+  const recent = element('div', 'health');
   const stamp = element('p', 'field-hint', 'Reading…');
-  section.append(body, stamp);
+  section.append(body, recent, stamp);
+
+  /*
+   * The warnings and errors since the software last started: the one post-mortem a parent can
+   * reach without ssh. Empty is the normal answer, and is said so rather than left blank.
+   */
+  const drawRecent = (events: readonly RecentEventView[] | null): void => {
+    recent.replaceChildren();
+    if (events === null) return;
+    recent.append(element('h3', undefined, 'Recently'));
+    if (events.length === 0) {
+      recent.append(
+        element('p', 'field-hint', 'Nothing has gone wrong since the software started.'),
+      );
+      return;
+    }
+    const list = element('ul', 'mono-line');
+    for (const event of events.slice(0, 10)) {
+      const time = new Date(event.atMs).toLocaleTimeString();
+      list.append(
+        element(
+          'li',
+          event.level === 'warn' ? undefined : 'is-bad',
+          `${time} · ${describeRecentEvent(event)}`,
+        ),
+      );
+    }
+    recent.append(list);
+  };
 
   const draw = (info: SystemView): void => {
     body.replaceChildren();
@@ -1500,7 +1531,11 @@ function renderHealth(): HTMLElement {
   };
 
   const refresh = async (): Promise<void> => {
-    const info = await fetchSystem();
+    const [info, events] = await Promise.all([
+      fetchSystem(),
+      getJson('/api/system/events').then(readRecentEvents, () => null),
+    ]);
+    drawRecent(events);
     if (info) {
       draw(info);
       return;
@@ -1819,7 +1854,7 @@ function dangerConfirm(options: {
 }
 
 /**
- * Wipes every piece of user configuration (PENDING.md, "A factory-reset control").
+ * Wipes every piece of user configuration (`docs/PRODUCT.md` § What the admin panel shows, and when).
  *
  * Deliberately does not use `saveButton`/`noteRestarting` like every other control here. Those
  * poll for the device coming back, which after this it will not — not on this network. It
@@ -2047,7 +2082,10 @@ async function main(): Promise<void> {
   }
 
   // Live status without polling.
-  const socket: Socket = io({ transports: ['websocket', 'polling'] });
+  // The admin panel only listens, to the same default namespace the simulator uses.
+  const socket: Socket<ServerToSimulatorEvents, SimulatorToServerEvents> = io({
+    transports: ['websocket', 'polling'],
+  });
   socket.on('sim:status', (payload: unknown) => {
     if (isStatusView(payload) && statusLine) statusLine.textContent = describeStatus(payload);
   });

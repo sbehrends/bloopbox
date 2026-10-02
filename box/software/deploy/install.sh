@@ -2,8 +2,8 @@
 #
 # Installs bloopbox on a Raspberry Pi. Run from inside an unpacked release tarball:
 #
-#   tar xzf bloopbox-0.1.0-linux-arm64.tar.gz
-#   sudo ./bloopbox-0.1.0-linux-arm64/install.sh
+#   tar xzf bloopbox-<version>-linux-arm64.tar.gz
+#   sudo ./bloopbox-<version>-linux-arm64/install.sh
 #
 # Safe to re-run: an upgrade swaps the application directory and leaves /data (config,
 # WhatsApp credentials) and /etc/bloopbox/environment (the bridge token) untouched.
@@ -57,9 +57,9 @@ Options:
                      the recorded audio profile to one the box contradicts
   -h, --help         This message
 
-The MVP board (Pi 3B+ + WM8960 HAT, the HAT's own button as button 1, no lamps) is:
+The reference board (Pi 3B+ with the WM8960 HAT, three buttons, three lamps) is:
 
-  sudo ./install.sh --audio-hat wm8960 --no-leds
+  sudo ./install.sh --audio-hat wm8960
 
 Both of those are remembered in /etc/bloopbox/profile, so an upgrade needs neither flag
 again. Passing one changes what this box is recorded as; passing nothing keeps it.
@@ -116,7 +116,7 @@ step "resolving the hardware profile"
 # block those same flags drive is deleted and regenerated on EVERY run. So an upgrade run
 # without the flags left the environment pointing at a codec whose overlay it had just
 # removed. The box booted, joined Wi-Fi, connected to WhatsApp, reported READY, and made no
-# sound at all. That is what this step exists to make impossible. See PENDING.md.
+# sound at all. That is what this step exists to make impossible. See docs/deployment.md.
 #
 #   explicit flag  >  recorded profile  >  inferred from an existing environment  >  usb
 

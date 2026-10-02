@@ -164,9 +164,27 @@ if command -v amixer >/dev/null 2>&1; then
 
   # 2. The DAC-to-output-amp routing. Off is total silence: the card enumerates, `aplay`
   #    streams the file and exits 0, and every level reads healthy.
+  #
+  #    Entries are parsed as audio-init.sh parses them: `Name` is a switch that must read
+  #    [on], `Name=Value` is a level (the mic boost, `… LINPUT1=3`) that prints no [on]/[off]
+  #    at all, so its raw value is compared instead.
   if [[ -n "${ALSA_ENABLE_SWITCHES:-}" ]]; then
     while IFS= read -r switch_name; do
       [[ -n "${switch_name}" ]] || continue
+      if [[ "${switch_name}" == *=* ]]; then
+        level_name="${switch_name%%=*}"
+        level_want="${switch_name#*=}"
+        level_have="$(amixer sget "${level_name}" 2>/dev/null |
+          sed -nE 's/^ +(Mono|Front Left): +((Playback|Capture) +)?(-?[0-9]+).*/\4/p' | head -1)"
+        if [[ -z "${level_have}" ]]; then
+          fail "routing: ${level_name}" "not a level on this card"
+        elif [[ "${level_have}" == "${level_want}" ]]; then
+          pass "routing: ${level_name}" "${level_have}"
+        else
+          fail "routing: ${level_name}" "${level_have}, not ${level_want} — the microphone is faint"
+        fi
+        continue
+      fi
       switch_state="$(amixer sget "${switch_name}" 2>/dev/null | grep -oE '\[(on|off)\]' | head -1)"
       case "${switch_state}" in
         '[on]') pass "routing: ${switch_name}" "on" ;;

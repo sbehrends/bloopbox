@@ -9,7 +9,7 @@ import { DeviceStatus, type DeviceSnapshot } from './deviceState.ts';
  *
  * `PRODUCT.md` §6 describes each pattern in isolation, but they overlap in practice (a send
  * flash on LED 1 while LED 1 has an unread message). {@link resolveLed} is the single place
- * that arbitrates, using the priority ladder documented in CLAUDE.md.
+ * that arbitrates, using the priority ladder in `docs/architecture.md` (decision D-01).
  */
 
 /** Timings, straight from the spec's signal matrix. Tests assert against these. */

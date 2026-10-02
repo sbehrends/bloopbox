@@ -3,7 +3,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 
 /**
- * What the device knows about its own network (PENDING.md, "AP hotspot / captive portal").
+ * What the device knows about its own network (`docs/PRODUCT.md` § First Boot).
  *
  * The daemon runs unprivileged under `ProtectSystem=strict`, so it cannot ask
  * NetworkManager anything. `deploy/net-agent.sh` runs as root, polls `nmcli`, and publishes
@@ -83,7 +83,8 @@ export type NetState = {
    * A Pi has no real-time clock, so until NTP answers it runs on whatever time the last shutdown
    * saved — and quiet hours read that clock. **Null is "cannot tell", not "unsynced"**: no
    * `timedatectl` on the box, an agent that predates this field, or an answer that was not yes or
-   * no. Observation only; nothing in the daemon acts on it yet (PENDING.md).
+   * no. Scheduled quiet hours wait for a `true` (`DeviceController.markClockSynced`); the
+   * health card shows all three.
    */
   readonly timeSynced: boolean | null;
 };

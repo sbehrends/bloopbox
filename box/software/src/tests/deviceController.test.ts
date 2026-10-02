@@ -695,6 +695,74 @@ describe('receiving', () => {
     expect(controller.queue.count(1)).toBe(1);
   });
 
+  describe('while the child is recording [D-17]', () => {
+    const arrive = (index: 0 | 1 | 2, messageId: string): void => {
+      controller.handleIncoming(index, {
+        messageId,
+        path: join(workDir, `${messageId}.ogg`),
+        receivedAt: Date.now(),
+        durationMs: 1400,
+      });
+    };
+    const chimes = (): number => hal.cueSequence().filter((cue) => cue === AudioCue.Notify).length;
+
+    it('lights the button but does not chime into the open microphone', async () => {
+      // Speaker and microphone are centimetres apart: a chime now is in the child's message.
+      hal.fixedDurationMs = 3000;
+      hal.pressButton(0);
+      await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 50);
+      expect(hal.activeRecordings.size).toBe(1);
+
+      arrive(1, 'during-take');
+      await flush();
+      expect(controller.state.unreadCount(1)).toBe(1);
+      expect(chimes()).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(HOLD_MS - RECORD_THRESHOLD_MS - 50);
+      hal.releaseButton(0);
+      await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS + 50);
+      await waitFor(() => sent.length > 0, 'the take to be sent');
+      // Dropped, not deferred: the lamp has been saying it all along.
+      expect(chimes()).toBe(0);
+    });
+
+    it('does not chime during the bip either, before the microphone has opened', async () => {
+      const cues = holdCues();
+      hal.pressButton(0);
+      await vi.advanceTimersByTimeAsync(RECORD_THRESHOLD_MS + 10);
+      expect(hal.cueSequence()).toEqual([AudioCue.Pop]);
+
+      arrive(2, 'during-bip');
+      await flush();
+      expect(chimes()).toBe(0);
+      cues.release();
+      cues.restore();
+    });
+
+    it('does not chime in the carry-on window, while the take can still resume', async () => {
+      hal.fixedDurationMs = 3000;
+      hal.pressButton(0);
+      await vi.advanceTimersByTimeAsync(HOLD_MS);
+      hal.releaseButton(0);
+      await vi.advanceTimersByTimeAsync(RESUME_GRACE_MS / 2);
+
+      arrive(1, 'in-window');
+      await flush();
+      expect(controller.state.unreadCount(1)).toBe(1);
+      expect(chimes()).toBe(0);
+    });
+
+    it('chimes again once the take is over', async () => {
+      hal.fixedDurationMs = 3000;
+      await press(0, HOLD_MS);
+      await waitFor(() => sent.length > 0, 'the take to be sent');
+
+      arrive(1, 'after-take');
+      await waitFor(() => chimes() === 1, 'the chime');
+      expect(hal.cueSequence().at(-1)).toBe(AudioCue.Notify);
+    });
+  });
+
   it('gets the note ready to play the moment it arrives [D-10]', () => {
     /*
      * The decode used to sit between the tap and the first sound, on a machine where spawning
@@ -955,7 +1023,7 @@ describe('silent mode', () => {
    * through `quietHours.timezone`, a local-time fixture would put the window an offset away
    * on every machine but Greenwich.
    */
-  async function withQuietHours(now: Date): Promise<DeviceController> {
+  async function withQuietHours(now: Date, awaitClockSync = false): Promise<DeviceController> {
     await controller.dispose();
     await config.update({
       quietHours: { enabled: true, startTime: '20:00', endTime: '07:00', timezone: 'UTC' },
@@ -967,6 +1035,7 @@ describe('silent mode', () => {
       config,
       deleteFile,
       send: () => Promise.resolve(),
+      awaitClockSync,
     });
     rebuilt.setStatus(DeviceStatus.Ready);
     await rebuilt.start();
@@ -979,6 +1048,36 @@ describe('silent mode', () => {
 
     expect(scheduled.state.silentMode).toBe(true);
     expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
+    await scheduled.dispose();
+  });
+
+  /*
+   * A Pi boots on the time its last shutdown saved. Until NTP answers, a schedule read off that
+   * clock can be hours wrong, so a real device stays audible until the time is known.
+   */
+  it('stays audible on a device until the clock has synced, then follows the schedule', async () => {
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 22, 30, 0)), true);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    // No timer applies it behind the sync's back.
+    await vi.advanceTimersByTimeAsync(2 * QUIET_HOURS_MAX_SLEEP_MS);
+    expect(scheduled.state.silentMode).toBe(false);
+
+    scheduled.markClockSynced();
+    expect(scheduled.state.silentMode).toBe(true);
+    expect(scheduled.state.snapshot().silentFromSchedule).toBe(true);
+    await scheduled.dispose();
+  });
+
+  it('applies the schedule once synced, including its next boundary', async () => {
+    const scheduled = await withQuietHours(new Date(Date.UTC(2026, 5, 15, 19, 59, 30)), true);
+    scheduled.markClockSynced();
+    // A second report changes nothing: the sync latches.
+    scheduled.markClockSynced();
+    expect(scheduled.state.silentMode).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30 * 1000);
+    expect(scheduled.state.silentMode).toBe(true);
     await scheduled.dispose();
   });
 

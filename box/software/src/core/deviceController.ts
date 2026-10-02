@@ -107,6 +107,15 @@ export type DeviceControllerOptions = {
    * interaction path, so it must return at once; anything it throws is ignored.
    */
   readonly onFault?: (fault: DeviceFault) => void;
+  /**
+   * Holds scheduled quiet hours off until {@link DeviceController.markClockSynced} is called.
+   *
+   * A Pi has no real-time clock: until NTP answers it runs on the time its last shutdown saved,
+   * and a schedule read off that clock can be hours wrong. So on a real device the box stays
+   * audible until the time is known (PRODUCT.md §7). Off by default, for the simulator and the
+   * tests, whose clocks are right.
+   */
+  readonly awaitClockSync?: boolean;
 };
 
 /** How often the quiet-hours schedule is re-evaluated when no transition is imminent. */
@@ -187,6 +196,8 @@ export class DeviceController {
    * and the box went quiet again by 21:15. An override now lasts until the next boundary.
    */
   #scheduleInWindow: boolean | null = null;
+  /** Whether the wall clock can be trusted for the schedule. Latches; see `markClockSynced`. */
+  #clockSynced: boolean;
   #started = false;
 
   constructor(options: DeviceControllerOptions) {
@@ -197,6 +208,7 @@ export class DeviceController {
     this.#markRead = options.markRead;
     this.#stats = options.stats;
     this.#onFault = options.onFault;
+    this.#clockSynced = options.awaitClockSync !== true;
 
     this.queue = new AudioQueueManager({
       hal: options.hal,
@@ -337,10 +349,14 @@ export class DeviceController {
     this.#stats?.recordReceived(index, note.durationMs);
 
     /*
-     * A courtesy, silenced at night — and held back while a note is playing. The speaker is one
-     * output, so this chime used to cut off the note being listened to, which was then counted as
-     * heard, deleted and reported read. The lamp already says something new is waiting.
+     * A courtesy, silenced at night, held back while a note is playing (the speaker is one
+     * output, and the chime would cut the note off) and while a microphone is open, from the bip
+     * to the end of the carry-on window: the speaker sits centimetres from the microphone, so a
+     * chime then is recorded into the child's message. Either way the lamp already says something
+     * new is waiting. Dropped, not deferred: a chime after the child lets go would announce a note
+     * they can already see blinking.
      */
+    if (this.#captures.size > 0) return;
     void this.#courtesyCue(AudioCue.Notify);
   }
 
@@ -731,6 +747,18 @@ export class DeviceController {
   /* ---- quiet hours ---- */
 
   /**
+   * The wall clock has been set from the network, so the schedule can be read off it.
+   *
+   * One-way for the life of the process: a clock that was right once stays right when NTP later
+   * loses its server, and dropping quiet hours mid-night over that would wake the room.
+   */
+  markClockSynced(): void {
+    if (this.#clockSynced) return;
+    this.#clockSynced = true;
+    this.#evaluateQuietHours();
+  }
+
+  /**
    * Applies the schedule on its edges and sleeps exactly until the next boundary, rather than
    * polling every minute — on a device that runs for months, that adds up.
    *
@@ -743,6 +771,9 @@ export class DeviceController {
       this.#quietHoursTimer = null;
     }
     if (!this.#started) return;
+
+    // An unsynced clock applies no schedule and needs no timer: `markClockSynced` wakes this.
+    if (!this.#clockSynced) return;
 
     const { quietHours } = this.#config.current;
     const now = new Date();

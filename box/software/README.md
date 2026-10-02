@@ -4,7 +4,7 @@ The two Node.js daemons that run the box, plus the four browser UIs, the packagi
 scripts. This is the whole of bloopbox that exists today.
 
 **Everything here runs from this directory.** There is no root `package.json` and no npm workspaces
-(see [`../../website/README.md`](../../website/README.md) for when that changes), so:
+(see [`../../website/README.md`](../../website/README.md) for why), so:
 
 ```bash
 cd box/software
@@ -22,7 +22,7 @@ For what the device *does* — install it, set it up, what the lights mean — s
 npm install
 npm run sounds      # build the audio cue WAVs — they are not committed (the MP3 sources are)
 npm run doctor      # verify ffmpeg and the audio devices
-npm run check       # format + lint + typecheck + test with coverage. The gate; it must pass
+npm run check       # format + lint + typecheck + tests with coverage. The gate; it must pass
 ```
 
 `npm install` also installs the pre-commit hook, which runs the same gate. The hook itself lives at
@@ -42,12 +42,12 @@ npm run dev:web     # the four UIs with hot reload on :5174, proxying to :3000
 Then open <http://localhost:5174/simulator/>. Add a third terminal for `npm run dev:wa` (the
 WhatsApp bridge) only when you need real pairing or sending.
 
-Set `CONFIG_PATH=./data/config.json` if you are testing anything that saves settings — the default is
-the device's `/data`, which does not exist on a dev machine, and without it every save fails
-silently back to `config.default.json` in RAM. `NOTES_DIR` and `STATS_PATH` want pointing at `./data`
-for the same reason: without them arriving notes and the activity totals go nowhere, silently, which
-is exactly what they are designed to do on a box whose card is unwritable. The full environment table
-is in [`../../docs/architecture.md`](../../docs/architecture.md#environment).
+Set `CONFIG_PATH=./data/config.json` if you are testing anything that saves settings. The defaults
+are the device's `/data` paths, which do not exist on a dev machine: without it the server runs on
+`config.default.json` in RAM and every save fails. `STATS_PATH=./data/stats.json` likewise, or the
+activity totals persist nowhere. `npm run dev:hw` already sets `SIMULATOR_MODE`, `PORTAL_PORT=8080`
+and `NOTES_DIR=./data/notes`; anything else run off-device has to set `NOTES_DIR` itself. The full
+environment table is in [`../../docs/architecture.md`](../../docs/architecture.md#environment).
 
 The admin panel's **Device health** card works off-device and reports what a Mac can answer:
 temperature and the board name come back as dashes, and **Shut down** answers 503, because both need
@@ -84,7 +84,7 @@ config save leaves the server down. Use it for editing source, not for testing c
 
 ```bash
 npx vitest run src/tests/button.test.ts        # one file
-npx vitest run -t 'discards a short recording' # one test by name
+npx vitest run -t 'honours a custom debounce window' # one test by name
 npm run test:watch
 npm run test:coverage                          # the full per-file table, plus coverage/index.html
 ```
@@ -92,22 +92,29 @@ npm run test:coverage                          # the full per-file table, plus c
 Timing-sensitive suites — LED patterns, debounce, purge TTL — run on **fake timers**. Never add a
 real sleep. Server-layer tests drive a real Express app on an ephemeral port with `fetch`.
 
+`npm run check` runs the suite with coverage and fails if a total drops below the ratchet in
+`vitest.config.ts`, the one place the thresholds are written down. The whole gate takes about ten
+seconds.
+
 ## All the scripts
 
 | Command                 | Does                                                  |
 | ----------------------- | ----------------------------------------------------- |
-| `npm run check`         | **The gate.** Format check, lint, typecheck, tests    |
+| `npm run check`         | **The gate.** `format:check`, `lint`, `typecheck`, `test:gate` |
 | `npm run dev`           | Hardware server and WhatsApp bridge together          |
 | `npm run dev:hw`        | Hardware server, supervised — restarts on config save |
 | `npm run dev:hw:watch`  | Hardware server with file watching, no supervisor     |
 | `npm run dev:wa`        | WhatsApp bridge only                                  |
 | `npm run dev:web`       | Vite dev server for the four browser UIs              |
 | `npm run typecheck`     | Both tsconfigs — server and browser                   |
-| `npm run lint`          | oxlint, with type-aware rules                         |
-| `npm run format`        | prettier (markdown is deliberately out of scope)      |
+| `npm run lint`          | oxlint, with type-aware rules (`lint:fix` applies fixes) |
+| `npm run format`        | prettier (markdown is deliberately out of scope); `format:check` only checks |
+| `npm test`              | Vitest, once, no coverage                             |
+| `npm run test:gate`     | Vitest with coverage, failing below the ratchet in `vitest.config.ts` |
 | `npm run test:watch`    | Vitest in watch mode                                  |
-| `npm run test:coverage` | Per-file coverage table and HTML report (the gate checks the totals) |
+| `npm run test:coverage` | The full per-file coverage table and an HTML report in `coverage/` |
 | `npm run build`         | Compile the server to `dist/` and the UIs to `dist/public/` |
+| `npm run start:hw`      | Run the built hardware server from `dist/` (`start:wa` for the bridge) |
 | `npm run doctor`        | Verify ffmpeg and audio device prerequisites          |
 | `npm run sounds`        | Rebuild the audio cue WAVs — tone recipes plus the designed recordings in `src/audio/samples/` |
 | `npm run clean`         | Delete build output: `dist/`, `release/`, `coverage/`  |
@@ -116,18 +123,26 @@ real sleep. Server-layer tests drive a real Express app on an ephemeral port wit
 | `npm run release:smoke` | Install and boot that tarball in an arm64 container   |
 | `npm run release:image` | Build a flashable SD card image (Linux + root)        |
 
+Two more scripts are not wired to npm because they need Docker or a systemd: `scripts/test-onboarding.sh`
+(first-boot onboarding against a built tarball, only `nmcli` faked) and
+`scripts/test-net-agent-sandbox.sh` (the root agent under its unit's sandbox, as root). CI runs both;
+[`../../docs/deployment.md`](../../docs/deployment.md) covers the release side.
+
 ## Where things live
 
 ```
 src/core/        pure domain logic — button interpreter, LED animator, state, network supervisor
 src/hal/         everything physical, behind one interface: GPIO, simulator, mock
 src/audio/       ffmpeg pipeline, cues, the unread queue, the 48h purge
-src/whatsapp/    Baileys client and the contact whitelist
+src/whatsapp/    Baileys client, the bridge's decisions (bridge.ts), and the contact whitelist
 src/config/      Zod schema and the atomic config manager
 src/server/      Express routes, admin auth, the bridge link, the captive portal
 src/net/         reads what the root network agent publishes
+src/stats/       activity totals, in their own file beside the config
+src/system/      health readings, the recent-events ring, the reboot/poweroff request
 src/ipc/         the event contract between the two daemons — edit this first
-src/processes/   the two daemons
+src/processes/   the two daemons — composition roots, wiring only
+src/logger.ts    pino, a child logger per subsystem, and the hook feeding the health card
 src/tests/       Vitest, node environment
 public/          the four browser UIs on a shared design system — built by Vite, not tsc
 deploy/          systemd units, the installer, the root network agent, the debugging kit
@@ -157,5 +172,6 @@ re-scanning a QR with the phone that owns it. It is gitignored, so `git clean -X
 *will* take it: reach for that only when losing the pairing is what you actually want.
 
 [`../../docs/architecture.md`](../../docs/architecture.md) explains why it is split this way and
-which rules are load-bearing. [`../../CLAUDE.md`](../../CLAUDE.md) is the conventions and the
-toolchain traps — read it before changing the build.
+which rules are load-bearing. [`CLAUDE.md`](./CLAUDE.md) is the rules and toolchain traps for this
+package, under the repo-wide [`../../CLAUDE.md`](../../CLAUDE.md) — read both before changing the
+build.

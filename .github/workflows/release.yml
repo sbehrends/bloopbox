@@ -19,6 +19,14 @@ concurrency:
 permissions:
   contents: read
 
+# The hardware a release is built for: the one board this software has been tested on, a
+# Raspberry Pi 3B+ with the Waveshare WM8960 Audio HAT, three buttons and three lamps
+# (docs/hardware.md). It decides the image's audio profile and its file name, and the release
+# notes below name the same board. The Pi Zero 2 W is the product's target but has never run it,
+# so no release claims it. Change all three together if the tested hardware changes.
+env:
+  AUDIO_HAT: wm8960
+
 jobs:
   # The same gate as every push. A tag that cannot pass it must not become a release.
   # gate_only, because the packaging job below is this workflow's own.
@@ -121,9 +129,12 @@ jobs:
       - name: Build the image
         # /mnt is the runner's large scratch disk — the uncompressed image is several GB.
         run: |
+          # The profile goes into the name, as a local build does, so a card cannot be flashed
+          # for the wrong board by mistake.
           sudo ./scripts/build-sd-image.sh \
             --work-dir /mnt/bloopbox-image \
-            --output "release/$(basename "$(ls release/*.tar.gz)" .tar.gz | sed 's/-linux-arm64//')-sd.img.xz" \
+            --audio-hat "${AUDIO_HAT}" \
+            --output "release/$(basename "$(ls release/*.tar.gz)" .tar.gz | sed 's/-linux-arm64//')-${AUDIO_HAT}-sd.img.xz" \
             ${WIFI_COUNTRY:+--wifi-country "$WIFI_COUNTRY"} \
             ${IMAGE_PASSWORD:+--password "$IMAGE_PASSWORD"}
         env:
@@ -198,16 +209,26 @@ jobs:
           printf 'attaching:\n'; printf '  %s\n' "${assets[@]}"
 
           notes=$(cat <<'EOF'
-          Install on a Raspberry Pi Zero 2 W running Raspberry Pi OS Trixie (64-bit):
+          Built and tested for a Raspberry Pi 3B+ with the Waveshare WM8960
+          Audio HAT, three arcade buttons and three lamps (wiring in
+          `docs/hardware.md`). The Pi Zero 2 W is the target but has not been
+          tested yet.
+
+          Easiest: flash the `-wm8960-sd.img.xz` to a card and boot. Nothing
+          needs installing; set up Wi-Fi through the `bloopbox-…` hotspot or
+          `bloopbox-wifi.txt` on the boot partition.
+
+          Or install the tarball on Raspberry Pi OS Trixie (64-bit), then reboot
+          so the HAT's overlay and the button pull-ups take effect:
 
           ```
           tar xzf bloopbox-*-linux-arm64.tar.gz
-          sudo ./bloopbox-*-linux-arm64/install.sh
+          sudo ./bloopbox-*-linux-arm64/install.sh --audio-hat wm8960
+          sudo reboot
           ```
 
-          Or flash the `-sd.img.xz` for a card that needs no install step. See
-          `docs/deployment.md`. Each device makes its own ssh password on first
-          boot; the admin panel shows it under Advanced → SSH access.
+          Each device makes its own ssh password on first boot; the admin panel
+          shows it under Advanced → SSH access. See `docs/deployment.md`.
           EOF
           )
 

@@ -144,8 +144,10 @@ describe('the two daemons stay apart', () => {
     ).toEqual([]);
   });
 
-  it('nothing the WhatsApp bridge loads touches the HAL or GPIO', () => {
-    const reached = [...reach(['src/processes/whatsapp-bridge.ts'], { runtimeOnly: true })];
+  it('nothing the WhatsApp bridge reaches, even for a type, touches the HAL or GPIO', () => {
+    // Type-only included since the note-file contract moved to ipc/noteFiles.ts: the bridge's
+    // one path into hal/ was a type, via audio/recovery.ts and the queue.
+    const reached = [...reach(['src/processes/whatsapp-bridge.ts'])];
     expect(reached.filter((name) => name === 'opengpio' || name.startsWith('src/hal/'))).toEqual(
       [],
     );

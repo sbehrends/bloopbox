@@ -187,7 +187,7 @@ describe('atomic writes', () => {
     const saved = await config.save(await validConfig());
 
     // No change event: settings are applied by restarting the daemon, so nothing observes
-    // a write in-process. See "Config is snapshot at boot" in CLAUDE.md.
+    // a write in-process. See "Snapshot at boot; saving restarts the daemon" in docs/architecture.md.
     expect(saved.system.configured).toBe(true);
     expect(config.current).toEqual(saved);
   });

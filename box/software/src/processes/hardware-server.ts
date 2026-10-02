@@ -16,7 +16,8 @@ import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
 import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { CAPTURE_FILTER_CHAIN, PLAYBACK_FILTER_CHAIN } from '../audio/ffmpeg.ts';
-import { notePath, RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
+import { notePath, recoverUnplayedNotes } from '../audio/recovery.ts';
+import { RECOVERY_MAX_AGE_MS } from '../ipc/noteFiles.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
 import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
 import { ConfigManager } from '../config/configManager.ts';
@@ -27,7 +28,7 @@ import { createHal, selectHalKind } from '../hal/index.ts';
 import { SimulatorHal } from '../hal/simulatorDriver.ts';
 import type { Hal } from '../hal/types.ts';
 import { BRIDGE_NAMESPACE, type WhatsAppConnectionState } from '../ipc/events.ts';
-import { childLogger } from '../logger.ts';
+import { childLogger, recentEvents } from '../logger.ts';
 import {
   NetworkIntent,
   NetworkSupervisor,
@@ -48,10 +49,20 @@ import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.t
 import { denyFraming } from '../server/csrf.ts';
 import { serveSocketsOn } from '../server/socketListeners.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
-import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
+import { SocketSimulatorTransport, type SimulatorServer } from '../server/simulatorTransport.ts';
 import { Shutdown } from './shutdown.ts';
 
 const log = childLogger('hardware');
+/**
+ * One child per subsystem, so the journal can be read a strand at a time
+ * (`journalctl -u bloopbox-hardware -o cat | grep '"mod":"net"'`) and the health card's
+ * "Recently" list says where a warning came from.  The routes have their own, `routes`.
+ */
+const deviceLog = log.child({ mod: 'device' });
+const bridgeLog = log.child({ mod: 'bridge' });
+const netLog = log.child({ mod: 'net' });
+const purgeLog = log.child({ mod: 'purge' });
+const simLog = log.child({ mod: 'simulator' });
 
 /**
  * Set once the shutdown path is wired. Routes are constructed before it exists, so they call
@@ -163,7 +174,7 @@ async function main(): Promise<void> {
   app.use(denyFraming());
   app.use(express.json({ limit: '128kb' }));
   const httpServer = createServer(app);
-  const io = new Server(httpServer, {
+  const io: SimulatorServer = new Server(httpServer, {
     // Audio chunks from the browser can be sizeable; allow headroom over the default 1MB.
     maxHttpBufferSize: 4 * 1024 * 1024,
   });
@@ -235,13 +246,15 @@ async function main(): Promise<void> {
       link.current?.markRead(index, messageIds);
     },
     stats,
+    // Only a real device has a clock that can be wrong at boot; the simulator's is the host's.
+    awaitClockSync: kind !== 'simulator',
     /*
      * Every failure the controller swallows so the next press still works. One stable message,
      * with the kind as a field, so `journalctl -u bloopbox-hardware | grep 'device fault'` lists
      * them all and the kind says which.
      */
     onFault: (fault) => {
-      log.warn(
+      deviceLog.warn(
         {
           fault: fault.kind,
           index: fault.index,
@@ -290,7 +303,7 @@ async function main(): Promise<void> {
       // Only a genuinely new code restarts the clock: a status repeat is not a rotation.
       if (next !== null && next !== whatsappQr) whatsappQrAt = Date.now();
       whatsappQr = next;
-      log.info({ state, detail }, 'whatsapp status');
+      bridgeLog.info({ state, detail }, 'whatsapp status');
       refreshStatus();
     },
     onIncoming: (payload) => {
@@ -302,13 +315,13 @@ async function main(): Promise<void> {
        */
       const path = notePath(NOTES_DIRECTORY, payload.index, payload.messageId);
       if (path === null || resolve(payload.path) !== path) {
-        log.warn(
+        bridgeLog.warn(
           { index: payload.index, expected: path, reported: payload.path },
           'refused a voice note whose path is not where notes live',
         );
         return;
       }
-      log.info({ index: payload.index, messageId: payload.messageId }, 'voice note received');
+      bridgeLog.info({ index: payload.index, messageId: payload.messageId }, 'voice note received');
       controller.handleIncoming(payload.index, {
         messageId: payload.messageId,
         path,
@@ -318,10 +331,10 @@ async function main(): Promise<void> {
     },
     onRevoked: ({ index, messageId }) => {
       const removed = controller.revokeNote(index, messageId);
-      log.info({ index, messageId, removed }, 'voice note deleted by its sender');
+      bridgeLog.info({ index, messageId, removed }, 'voice note deleted by its sender');
     },
     onConnectionChange: (connected) => {
-      log.info({ connected }, 'bridge link');
+      bridgeLog.info({ connected }, 'bridge link');
       if (!connected) {
         whatsappState = 'disconnected';
         refreshStatus();
@@ -400,6 +413,7 @@ async function main(): Promise<void> {
       return requestPowerAction(action);
     },
     sshAccess: () => readSshAccess(),
+    recentEvents: () => recentEvents.list(),
   };
 
   /*
@@ -477,30 +491,30 @@ async function main(): Promise<void> {
               durationMs: TEST_NOTE_DURATION_MS,
             });
           }
-          log.info({ index: buttonIndexToKey(index), count }, 'injected incoming notes');
+          simLog.info({ index: buttonIndexToKey(index), count }, 'injected incoming notes');
         })();
       },
       reboot: () => {
-        log.info('replaying boot sequence');
+        simLog.info('replaying boot sequence');
         beginBoot();
       },
       injectWifiFailure: (down) => {
         // Latched until something clears it: the agent's own reading must not silently
         // undo what a tester just staged.
         wifiOverride = down;
-        log.info({ down }, 'injected wifi state');
+        simLog.info({ down }, 'injected wifi state');
         refreshStatus();
       },
       injectApMode: (active) => {
         // Latched like the Wi-Fi injector, and left latched: the real reading would flip it
         // straight back on any device that does have an agent.
         apOverride = active;
-        log.info({ active }, 'injected setup hotspot state');
+        simLog.info({ active }, 'injected setup hotspot state');
         refreshStatus();
       },
       injectSessionExpiry: () => {
         whatsappState = 'loggedOut';
-        log.info('injected whatsapp session expiry');
+        simLog.info('injected whatsapp session expiry');
         refreshStatus();
       },
       injectWhatsAppConnected: () => {
@@ -508,7 +522,7 @@ async function main(): Promise<void> {
         // Hands the network back to the agent rather than pinning it up.
         wifiOverride = null;
         apOverride = null;
-        log.info('injected whatsapp connected');
+        simLog.info('injected whatsapp connected');
         refreshStatus();
       },
     });
@@ -522,7 +536,10 @@ async function main(): Promise<void> {
     // sees the queue as it is then rather than as it was at boot.
     keep: () => controller.protectedFiles(),
     onResult: (result) => {
-      log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'audio purged');
+      purgeLog.info(
+        { deleted: result.deleted.length, freedBytes: result.freedBytes },
+        'audio purged',
+      );
     },
   });
 
@@ -536,7 +553,10 @@ async function main(): Promise<void> {
     directory: NOTES_DIRECTORY,
     keep: () => controller.protectedFiles(),
     onResult: (result) => {
-      log.info({ deleted: result.deleted.length, freedBytes: result.freedBytes }, 'notes purged');
+      purgeLog.info(
+        { deleted: result.deleted.length, freedBytes: result.freedBytes },
+        'notes purged',
+      );
     },
   });
 
@@ -550,7 +570,7 @@ async function main(): Promise<void> {
    * that explicitly says the network is gone.
    */
   /**
-   * Decides when the setup hotspot goes up (PENDING.md). Pure; the privileged half is the
+   * Decides when the setup hotspot goes up (`docs/PRODUCT.md` § First Boot). Pure; the privileged half is the
    * root agent, reached by writing a request file it consumes.
    */
   const supervisor = new NetworkSupervisor({
@@ -562,11 +582,11 @@ async function main(): Promise<void> {
     void (async (): Promise<void> => {
       const written = await requestNetAction(action);
       if (written) {
-        log.info({ action }, 'asked the network agent');
+        netLog.info({ action }, 'asked the network agent');
       } else {
         // The supervisor will ask again on a later tick; on a dev machine there is no agent
         // and no request directory, which is exactly this path and is not a problem.
-        log.debug({ action }, 'could not write a network request');
+        netLog.debug({ action }, 'could not write a network request');
       }
     })();
   };
@@ -574,10 +594,13 @@ async function main(): Promise<void> {
   const netWatcher = new NetStateWatcher({
     onWifiDownChange: (down) => {
       wifiObserved = down;
-      log.info({ down, ssid: netWatcher.last?.ssid ?? null }, 'wifi state changed');
+      netLog.info({ down, ssid: netWatcher.last?.ssid ?? null }, 'wifi state changed');
       refreshStatus();
     },
     onReading: (state) => {
+      // `null` is "cannot tell", which is not synced: the schedule waits for a yes.
+      if (state?.timeSynced === true) controller.markClockSynced();
+
       const observation: NetworkObservation = {
         available: state?.available ?? false,
         online: state?.online ?? false,
@@ -586,7 +609,7 @@ async function main(): Promise<void> {
 
       if (observation.apActive !== apObserved) {
         apObserved = observation.apActive;
-        log.info({ apActive: apObserved }, 'setup hotspot state changed');
+        netLog.info({ apActive: apObserved }, 'setup hotspot state changed');
         refreshStatus();
       }
 
@@ -595,11 +618,11 @@ async function main(): Promise<void> {
     },
     onAgentHealthChange: (healthy) => {
       if (healthy) {
-        log.info('network agent is publishing');
+        netLog.info('network agent is publishing');
       } else {
         // Not an outage: we simply stop knowing. Logged because on the device it means the
         // net agent unit is down, which doctor.sh also checks for.
-        log.warn('no fresh reading from the network agent — wifi state is unknown');
+        netLog.warn('no fresh reading from the network agent — wifi state is unknown');
       }
     },
   });
@@ -644,16 +667,16 @@ async function main(): Promise<void> {
     // `bloopbox-debug on` turns into a readable timeline of what the lights did and when —
     // `src/core/` is I/O-free by design and will never log for itself, and on a device with
     // no screen a reconstruction after the fact is the only way to see a timing bug.
-    log.debug(controller.state.snapshot(), 'state');
+    deviceLog.debug(controller.state.snapshot(), 'state');
   });
 
-  // The raw edges, before debouncing. A press the interpreter discards leaves no other
+  // Every settled edge, before the interpreter judges it. A press the interpreter discards leaves no other
   // trace, and "the button did nothing" is the report we will actually get.
   hal.on('buttonDown', ({ index }) => {
-    log.debug({ index, edge: 'down' }, 'button');
+    deviceLog.debug({ index, edge: 'down' }, 'button');
   });
   hal.on('buttonUp', ({ index }) => {
-    log.debug({ index, edge: 'up' }, 'button');
+    deviceLog.debug({ index, edge: 'up' }, 'button');
   });
 
   // Show the boot chase and play the boot sound, then let real status through.

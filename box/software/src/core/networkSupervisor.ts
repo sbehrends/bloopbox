@@ -1,6 +1,6 @@
 /**
- * Decides when the setup hotspot goes up and when it comes down (PENDING.md, "AP hotspot /
- * captive portal").
+ * Decides when the setup hotspot goes up and when it comes down (`docs/PRODUCT.md` § First
+ * Boot).
  *
  * Pure and I/O-free like the rest of `src/core/`: it is fed observations and returns an
  * intent, and something else does the privileged work (`deploy/net-agent.sh`, as root). That

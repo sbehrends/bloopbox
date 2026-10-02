@@ -11,6 +11,14 @@ import type { AudioCue } from '../audio/cues.ts';
  *  - `/bridge`      — the WhatsApp daemon, which connects as a client on localhost.
  */
 
+/*
+ * How these maps are used: every endpoint passes them as Socket.io's generics (`Server<Listen,
+ * Emit>` on the hardware server, `Socket<Listen, Emit>` — reversed — in a client), so an event
+ * name that does not exist, or an emit with the wrong payload, fails the typecheck. Listeners
+ * still take `payload: unknown` and narrow it with `ipc/payload.ts`: the types say what a peer
+ * should send, not what arrives on the wire.
+ */
+
 /** Namespace the WhatsApp bridge connects to. */
 export const BRIDGE_NAMESPACE = '/bridge';
 

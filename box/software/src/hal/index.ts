@@ -12,7 +12,7 @@ import type { Hal, HalOptions } from './types.ts';
 
 export type HalKind = 'gpio' | 'simulator' | 'mock';
 
-/** Which driver the environment asks for. `SIMULATOR_MODE=true` wins. */
+/** Which driver the environment asks for: `HAL_DRIVER=mock` first, then `SIMULATOR_MODE=true`, else GPIO. */
 export function selectHalKind(env: NodeJS.ProcessEnv = process.env): HalKind {
   if (env['HAL_DRIVER'] === 'mock') return 'mock';
   if (env['SIMULATOR_MODE'] === 'true') return 'simulator';

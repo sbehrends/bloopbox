@@ -101,7 +101,8 @@ function resolves(document: string | undefined, cited: string): boolean {
   }
   // A name: up to the first punctuation that ends a phrase, or a closing quote.
   const name = normalise(cited.replace(/^["“]/, '').split(/["”)`,;:]|\.(\s|$)/, 1)[0] ?? '');
-  if (name.length < 3) return false;
+  // Two characters at least: `§ CI` is a real heading, a lone letter is not a name.
+  if (name.length < 2) return false;
   return candidates.some((path) =>
     (HEADINGS.get(path) ?? []).some(
       (heading) => heading.startsWith(name) || name.startsWith(heading),

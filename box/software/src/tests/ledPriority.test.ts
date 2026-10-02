@@ -4,7 +4,7 @@ import { LED_TIMINGS, resolveLed, type LedOverlay } from '../core/ledAnimator.ts
 import type { ButtonIndex } from '../config/schema.ts';
 
 /**
- * The LED priority ladder (CLAUDE.md), which resolves collisions PRODUCT.md §6 leaves
+ * The LED priority ladder (`docs/architecture.md`, D-01), which resolves collisions PRODUCT.md §6 leaves
  * open. `resolveLed` is pure, so these assertions need no timers at all.
  */
 

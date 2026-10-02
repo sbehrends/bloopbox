@@ -53,7 +53,7 @@ describe('voiceNoteContent', () => {
     ).toMatchObject({ ptt: true });
   });
 
-  it('ignores a view-once note, which is an open product question rather than an oversight', () => {
+  it('ignores a view-once note, by decision: only ordinary voice notes play', () => {
     expect(voiceNoteContent({ viewOnceMessage: { message: { audioMessage: PTT } } })).toBeNull();
     expect(voiceNoteContent({ viewOnceMessageV2: { message: { audioMessage: PTT } } })).toBeNull();
     expect(

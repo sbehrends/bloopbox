@@ -7,7 +7,7 @@
 #   sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
 #
 # Flash the result with Raspberry Pi Imager or dd, put it in the Pi, and the device comes
-# up on the network with the admin panel on port 3000. Nothing needs installing over ssh.
+# up on the network with the admin panel at http://bloopbox.local. Nothing needs installing over ssh.
 #
 # Requires Linux and root: it attaches the image to a loop device and chroots into it.
 # That rules out running it directly on macOS — use CI (.github/workflows/release.yml),
@@ -76,9 +76,9 @@ Options:
 Without --wifi-ssid the image still boots: it writes bloopbox-wifi.txt onto the boot
 partition, which any laptop can fill in before first boot.
 
-The MVP board — a Pi 3B+ with a WM8960 audio HAT, its own button, and no lamps:
+The reference board — a Pi 3B+ with the WM8960 audio HAT, three buttons and three lamps:
 
-  sudo ./scripts/build-sd-image.sh --audio-hat wm8960 --no-leds
+  sudo ./scripts/build-sd-image.sh --audio-hat wm8960
 
 A non-default hardware profile is written into the image's filename, so images for two
 different boards cannot silently overwrite each other in ./release.

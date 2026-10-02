@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import pino from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BufferJSON, DisconnectReason, initAuthCreds } from 'baileys';
-import { extractStatusCode, isPaired, WhatsAppClient } from '../whatsapp/client.ts';
+import {
+  baileysLogLevel,
+  extractStatusCode,
+  isPaired,
+  WhatsAppClient,
+} from '../whatsapp/client.ts';
 import { FakeWASocket } from './support/fakeWASocket.ts';
 
 /**
@@ -102,7 +107,7 @@ async function markPairedByQrScan(authDirectory: string): Promise<void> {
  * Not defensive padding: Baileys' `useMultiFileAuthState` saves with a plain `writeFile`,
  * which truncates before it writes, and polling this in a loop hits the empty window often
  * enough to fail the test outright. That the window is reachable at all is the point — see
- * `PENDING.md`, "Baileys writes its credentials non-atomically".
+ * `docs/architecture.md` (`creds.json` is written atomically).
  */
 async function readRegisteredFlag(authDirectory: string): Promise<unknown> {
   const raw = await readFile(join(authDirectory, 'creds.json'), 'utf8');
@@ -346,5 +351,18 @@ describe('WhatsAppClient#start and #beginLinking', () => {
       'the registered flag to be persisted',
     );
     expect(client.state).toBe('connected');
+  });
+});
+
+describe('Baileys log level', () => {
+  it('is warn unless raised on purpose, whatever LOG_LEVEL says', () => {
+    // Below warn, Baileys logs full WhatsApp addresses, which no masking can reach.
+    expect(baileysLogLevel(undefined)).toBe('warn');
+    expect(baileysLogLevel('debug')).toBe('debug');
+  });
+
+  it('falls back on a value pino would refuse, rather than stopping the bridge', () => {
+    expect(baileysLogLevel('verbose')).toBe('warn');
+    expect(baileysLogLevel('')).toBe('warn');
   });
 });

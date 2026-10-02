@@ -1,6 +1,7 @@
 import { io, type Socket } from 'socket.io-client';
 import { element } from '../shared/dom.ts';
 import { CHANNEL_OFF_TOKENS, CHANNEL_TOKENS, readToken } from '../shared/theme.ts';
+import type { ServerToSimulatorEvents, SimulatorToServerEvents } from '../../src/ipc/events.ts';
 
 /**
  * Virtual device front-end (PRODUCT.md §5).
@@ -59,7 +60,11 @@ const device = {
   lensOff: readTriple(CHANNEL_OFF_TOKENS, ['#c4b58c', '#c39b93', '#8fa9b4']),
 } as const;
 
-const socket: Socket = io({ transports: ['websocket', 'polling'] });
+// Typed by the shared maps (reversed: a client listens to what the server emits). The payload
+// types below stay defensive anyway — they narrow what arrives, the maps say what should.
+const socket: Socket<ServerToSimulatorEvents, SimulatorToServerEvents> = io({
+  transports: ['websocket', 'polling'],
+});
 
 /** Authoritative LED state, pushed by the server. Never computed here. */
 const ledStates: boolean[] = Array.from({ length: BUTTON_COUNT }, () => false);

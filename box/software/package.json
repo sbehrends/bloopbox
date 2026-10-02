@@ -1,6 +1,6 @@
 {
   "name": "bloopbox",
-  "version": "0.1.0",
+  "version": "1.0.0-rc.1",
   "private": true,
   "description": "Screenless WhatsApp voice messenger for kids aged 2-5. Three arcade buttons, hold to send, tap to play.",
   "type": "module",

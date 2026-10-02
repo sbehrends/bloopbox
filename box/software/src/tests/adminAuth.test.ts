@@ -189,7 +189,7 @@ describe('once the device is configured', () => {
      *
      * Kept because the alternative is worse. The guard cannot tell "mid-onboarding" from
      * "corrupted", so refusing to serve turns a recoverable device into one that needs the SD
-     * card pulled — in a house with no screen. See the watch item in PENDING.md; changing this
+     * card pulled — in a house with no screen. `docs/architecture.md` has the reasoning; changing this
      * test means a recovery path exists.
      */
     api = await startApi({ configured: true });

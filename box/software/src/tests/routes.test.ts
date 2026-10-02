@@ -441,7 +441,7 @@ describe('POST /wifi/join', () => {
   });
 });
 
-describe('POST /audio/test', () => {
+describe('POST /audio/test [D-13]', () => {
   it('plays the boot cue so the speaker can be judged by ear', async () => {
     api = await startApi({ configured: false });
 

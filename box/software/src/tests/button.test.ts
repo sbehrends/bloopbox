@@ -155,7 +155,7 @@ describe('configurable timings', () => {
   });
 });
 
-describe('debounce — presses under the debounce window', () => {
+describe('debounce — presses under the debounce window [D-02]', () => {
   it('are dropped with no audible feedback at all', () => {
     const { interpreter, names } = setup();
 
@@ -183,7 +183,7 @@ describe('debounce — presses under the debounce window', () => {
   });
 });
 
-describe('tap — between debounce and the record threshold', () => {
+describe('tap — between debounce and the record threshold [D-02]', () => {
   it('plays the queue when that contact has unread messages', () => {
     const { interpreter, names } = setup({ unread: [2] });
 
@@ -237,7 +237,7 @@ describe('tap — between debounce and the record threshold', () => {
  * open long enough to hold a message — see `#isMessage`. Without this, lowering the threshold
  * would have made tap-to-play unreachable for any press over 150 ms.
  */
-describe('tap — past the record threshold but short of a message', () => {
+describe('tap — past the record threshold but short of a message [D-02]', () => {
   it('plays the queue rather than sending an empty take', () => {
     const { interpreter, names } = setup({ unread: [1] });
 
@@ -293,7 +293,7 @@ describe('tap — past the record threshold but short of a message', () => {
   });
 });
 
-describe('hold — at or beyond the record threshold', () => {
+describe('hold — at or beyond the record threshold [D-02]', () => {
   it('confirms the recording at the threshold and commits on release', () => {
     const { interpreter, names, find } = setup();
 
@@ -340,7 +340,7 @@ describe('hold — at or beyond the record threshold', () => {
  * (PRODUCT.md §1). Nothing here consumes the queue — the interpreter only ever asks whether
  * one is waiting, and it is the *tap* that plays it.
  */
-describe('hold — on a button with notes waiting', () => {
+describe('hold — on a button with notes waiting [D-03]', () => {
   it('refuses the send instead of recording', () => {
     const { interpreter, names, find } = setup({ unread: [1] });
 
@@ -464,7 +464,7 @@ describe('hold — on a button with notes waiting', () => {
   });
 });
 
-describe('the resume window — letting go by accident', () => {
+describe('the resume window — letting go by accident [D-04]', () => {
   it('does not commit the instant the button comes up', () => {
     const { interpreter, names } = setup();
 
@@ -672,7 +672,7 @@ describe('the resume window — letting go by accident', () => {
   });
 });
 
-describe('silent-mode chord — Button 1 + Button 3', () => {
+describe('silent-mode chord — Button 1 + Button 3 [D-12]', () => {
   it('toggles silent mode after a 3 second hold', () => {
     const { interpreter, names } = setup();
 
@@ -778,7 +778,7 @@ describe('silent-mode chord — Button 1 + Button 3', () => {
  * One button at a time. A toddler holding one button grabs at the others; without the lockout
  * each grab opened a second take beside the first, or answered with a beep mid-sentence.
  */
-describe('lockout — one button owns the box', () => {
+describe('lockout — one button owns the box [D-05]', () => {
   it('ignores a second button while the first is being held', () => {
     const { interpreter, log, find } = setup();
 
@@ -936,7 +936,7 @@ describe('robustness', () => {
    * with only one of its buttons so far, would freeze the whole box. The watchdog drops such a press once
    * it has been down longer than any real press can be.
    */
-  describe('a press whose release never arrives', () => {
+  describe('a press whose release never arrives [D-05]', () => {
     const STUCK_MS = stuckPressMs(DEFAULT_BUTTON_TIMINGS, 30);
 
     it('is dropped silently, and the other buttons work again', () => {
@@ -1022,7 +1022,7 @@ describe('robustness', () => {
  * the child heard an ordinary "oops", but their voice had been captured for nothing. The hold is
  * now refused at the bip moment, like read-only, and no capture event ever fires.
  */
-describe('a button with no contact', () => {
+describe('a button with no contact [D-11]', () => {
   it('refuses the hold at the record threshold instead of opening a capture', () => {
     const { interpreter, names, find, log } = setup({ unassigned: [1] });
 
@@ -1080,7 +1080,7 @@ describe('a button with no contact', () => {
  * half as much as the first — a read-only box that also stopped playing would be broken, not
  * read-only.
  */
-describe('read-only mode', () => {
+describe('read-only mode [D-11]', () => {
   it('refuses the hold at the record threshold instead of opening a capture', () => {
     const { interpreter, names } = setup({ readOnly: true });
 

@@ -28,7 +28,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test:gate": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --coverage.reporter=text --coverage.reporter=html",
     "doctor": "tsx scripts/doctor.ts",
     "sounds": "tsx scripts/generate-sounds.ts",
     "clean": "rm -rf dist release coverage ./*.tsbuildinfo",
@@ -36,7 +37,7 @@
     "release": "./scripts/build-release.sh",
     "release:smoke": "./scripts/smoke-test-release.sh",
     "release:image": "./scripts/build-sd-image.sh",
-    "check": "run-s format:check lint typecheck test",
+    "check": "run-s format:check lint typecheck test:gate",
     "dev:hw:watch": "SIMULATOR_MODE=true tsx watch src/processes/hardware-server.ts"
   },
   "dependencies": {

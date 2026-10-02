@@ -31,7 +31,7 @@ function frame(
   return [a!, b!, c!];
 }
 
-describe('ladder step 1 — recording beats everything', () => {
+describe('ladder step 1 — recording beats everything [D-01]', () => {
   it('holds the recording button solid even during an error state with unread messages', () => {
     const state = snapshot({
       status: DeviceStatus.WifiError,
@@ -47,7 +47,7 @@ describe('ladder step 1 — recording beats everything', () => {
   });
 });
 
-describe('ladder step 2 — overlays beat status and unread', () => {
+describe('ladder step 2 — overlays beat status and unread [D-01]', () => {
   it('flashes only the sending button, leaving the others on their steady pattern', () => {
     const state = snapshot({ unreadCounts: [0, 0, 5] });
     const overlay: LedOverlay = { kind: 'sentFlash', index: 0, elapsedMs: 0 };
@@ -80,7 +80,7 @@ describe('ladder step 2 — overlays beat status and unread', () => {
   });
 });
 
-describe('ladder step 3 — lifecycle status', () => {
+describe('ladder step 3 — lifecycle status [D-01]', () => {
   it('chases one LED at a time while booting', () => {
     const state = snapshot({ status: DeviceStatus.Booting });
     const step = LED_TIMINGS.bootStepMs;
@@ -146,7 +146,7 @@ describe('ladder step 3 — lifecycle status', () => {
   });
 });
 
-describe('ladder step 4 — unread', () => {
+describe('ladder step 4 — unread [D-01]', () => {
   it('blinks the unread button identically in silent mode and in audible mode', () => {
     const silent = snapshot({ silentMode: true, unreadCounts: [2, 0, 0] });
     const audible = snapshot({ silentMode: false, unreadCounts: [2, 0, 0] });
@@ -168,7 +168,7 @@ describe('ladder step 4 — unread', () => {
   });
 });
 
-describe('ladder step 5 — off, silent mode included', () => {
+describe('ladder step 5 — off, silent mode included [D-01]', () => {
   /**
    * Silent mode is deliberately invisible: the box on a bedside table at night must look
    * exactly like an audible one. Only the moment it flips is shown, by the `silentTransition`

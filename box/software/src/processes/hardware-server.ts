@@ -10,6 +10,7 @@
 import express from 'express';
 import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
@@ -224,6 +225,7 @@ async function main(): Promise<void> {
   const controller = new DeviceController({
     hal,
     config,
+    deleteFile: (path) => rm(path, { force: true }),
     send: async (request: OutboundRequest) => {
       const bridge = link.current;
       if (!bridge?.connected) throw new Error('WhatsApp bridge is not connected');

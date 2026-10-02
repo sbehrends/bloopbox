@@ -10,7 +10,7 @@ import { writeAgentRequest } from '../net/netState.ts';
  * and acts. Nothing from this file is ever evaluated as shell.
  *
  * The same file as the network requests, deliberately. The rule that makes that channel safe is
- * **one writer per directory** (`docs/architecture.md` § Networking), and a second request file
+ * **one writer per directory** (`docs/architecture.md` § Three processes, and what each is allowed to touch), and a second request file
  * beside the first would not add a boundary — the agent's allowlist is the boundary, and it is
  * one list. What is worth saying out loud is that the list is now wider than networking: an
  * action arriving there can power the device off.

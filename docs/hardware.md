@@ -5,12 +5,12 @@ proven.
 
 > **The audio is measured; the GPIO is not.** Everything about the WM8960 HAT below — its mixer
 > control names, the 26 dB of amplifier stages, the three microphone settings — was measured on a
-> real board on 2026-08-10 and 2026-08-17, and each figure says so. The GPIO is **partly proven**: on
-> the same Pi 3B+ the driver claims all six lines and button 1 (GPIO17) registers presses. Buttons 2
-> and 3 and the three lamps are wired but not yet recorded as working, so their switch polarity, LED
-> polarity and colour order are still unverified, and `gpioDriver.ts` carries a `TODO(hardware)`
-> banner saying so. [`hardware-bringup.md`](./hardware-bringup.md) is the order to
-> prove the rest in. The section at the foot of this page is the current line between the two.
+> real board on 2026-08-10 and 2026-08-17, and each figure says so. The GPIO is **proven on that
+> board**: on the same Pi 3B+, the bench session of 2026-09-30 had all three buttons register and all
+> three lamps light with the default polarity, yellow / coral / teal left to right (`PENDING.md` has
+> the record). What is not proven is the Pi Zero 2 W target, and `gpioDriver.ts` carries a
+> `TODO(hardware)` banner saying so. [`hardware-bringup.md`](./hardware-bringup.md) is the order to
+> prove it in. The section at the foot of this page is the current line between the two.
 
 ---
 

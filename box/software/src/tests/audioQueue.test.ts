@@ -204,7 +204,7 @@ describe('resilience', () => {
   });
 });
 
-describe('interruption', () => {
+describe('interruption [D-07]', () => {
   it('returns unplayed notes to the front of the queue, in order', async () => {
     const queue = manager();
     const first = note();
@@ -298,7 +298,7 @@ describe('interruption', () => {
   });
 });
 
-describe('silent mode', () => {
+describe('silent mode [D-13]', () => {
   it('still plays the voice notes — playback is never suppressed', async () => {
     silent = true;
     const queue = manager();

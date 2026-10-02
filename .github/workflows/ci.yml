@@ -17,6 +17,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only by default. Nothing here pushes, comments or publishes; a job that ever needs more asks
+# for it by name, as release.yml's publishing job does.
+#
+# Every third-party action below is pinned to a commit, with the tag it was in a comment. A tag can
+# be moved by whoever controls the action's repository, and these steps run with the job's token.
+# Dependabot (.github/dependabot.yml) proposes the bumps.
+permissions:
+  contents: read
+
 jobs:
   # Which parts of the monorepo this push actually touched. Cheap (a few seconds), and it is what
   # keeps a docs-only or website-only change from spending twelve minutes emulating arm64.
@@ -28,11 +37,11 @@ jobs:
       web: ${{ steps.decide.outputs.web }}
       docs: ${{ steps.decide.outputs.docs }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Only meaningful where there is a diff to compare against. A tag, a manual dispatch or a
       # call from release.yml has none, and the step is skipped — handled below.
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: filter
         if: |
           github.event_name == 'pull_request' ||
@@ -65,9 +74,11 @@ jobs:
           docs="${FILTER_DOCS:-true}"
           # Called by release.yml: this is a tag being packaged, so nothing may be skipped.
           if [[ "${GATE_ONLY}" == "true" ]]; then box=true; web=true; docs=true; fi
-          echo "box=${box}"   >> "$GITHUB_OUTPUT"
-          echo "web=${web}"   >> "$GITHUB_OUTPUT"
-          echo "docs=${docs}" >> "$GITHUB_OUTPUT"
+          {
+            echo "box=${box}"
+            echo "web=${web}"
+            echo "docs=${docs}"
+          } >> "$GITHUB_OUTPUT"
           printf 'box=%s web=%s docs=%s\n' "${box}" "${web}" "${docs}"
 
   box-gate:
@@ -81,9 +92,9 @@ jobs:
       run:
         working-directory: box/software
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           # Matches packaging/versions.env, so what CI validates is what the device runs.
           node-version: '24.18.1'
@@ -97,6 +108,11 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg
 
       - run: npm ci
+
+      # What ships to the device, at high and above. Dev tooling is excluded: it never leaves the
+      # build machine, and an advisory in a test runner is not a reason to block a fix.
+      - name: npm audit (production dependencies)
+        run: npm audit --omit=dev --audit-level=high
 
       # Not committed — src/audio/sounds/*.wav is generated. Must run before the gate.
       - run: npm run sounds
@@ -121,18 +137,18 @@ jobs:
       run:
         working-directory: box/software
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up QEMU for arm64
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: arm64
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       # Exports ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL, which `--cache-to type=gha` needs and
       # which a raw `docker buildx build` (as opposed to docker/build-push-action) does not get.
-      - uses: crazy-max/ghaction-github-runtime@v3
+      - uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3.1.0
 
       - name: Build the release tarball
         env:
@@ -150,7 +166,12 @@ jobs:
       - name: Smoke test it on bare Debian Trixie arm64
         run: ./scripts/smoke-test-release.sh
 
-      - uses: actions/upload-artifact@v4
+      # First-boot onboarding end to end against the same tarball: hotspot, portal, scan, join.
+      # Only the radio is faked (packaging/fake-nmcli.sh).
+      - name: Onboarding test
+        run: ./scripts/test-onboarding.sh
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bloopbox-release
           # Action input, so not covered by `defaults.run.working-directory` above.
@@ -159,6 +180,54 @@ jobs:
             box/software/release/*.tar.gz.sha256
           retention-days: 14
           if-no-files-found: error
+
+  # The onboarding test runs the agent in a container with no systemd, so no sandbox — which is how
+  # the agent shipped unable to clear its own requests under ProtectSystem=strict (review 0.8). This
+  # runs it under bloopbox-net.service's own [Service] properties, on a runner that has systemd.
+  net-agent-sandbox:
+    name: net agent under its systemd sandbox
+    needs: changes
+    if: needs.changes.outputs.box == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: box/software
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24.18.1'
+
+      # sudo resets PATH, and the agent parses requests with the node setup-node just installed.
+      - run: sudo env "PATH=${PATH}" ./scripts/test-net-agent-sandbox.sh
+
+  # Neither prettier nor oxlint reads shell, and a third of the box is shell. The pre-commit hook
+  # runs ShellCheck only where it happens to be installed and only over staged files; this is the
+  # complete pass. Same severity as the hook.
+  shellcheck:
+    name: shellcheck
+    needs: changes
+    if: needs.changes.outputs.box == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: ShellCheck every tracked shell script
+        run: |
+          set -euo pipefail
+          # By shebang as well as extension: .githooks/ holds scripts with no `.sh`. A regex on the
+          # captured first line, not `head | grep -q` (the SIGPIPE tripwire in CLAUDE.md).
+          shebang='^#!.*(/|env )(ba)?sh( |$)'
+          scripts=()
+          while IFS= read -r -d '' file; do
+            first="$(head -n1 -- "${file}")"
+            if [[ "${file}" == *.sh || "${first}" =~ ${shebang} ]]; then
+              scripts+=("${file}")
+            fi
+          done < <(git ls-files -z -- '*.sh' .githooks box/software/deploy box/software/packaging)
+          printf 'checking %d scripts\n' "${#scripts[@]}"
+          shellcheck --version | head -2
+          shellcheck --severity=warning "${scripts[@]}"
 
   website:
     name: website (typecheck, static export)
@@ -171,9 +240,9 @@ jobs:
       run:
         working-directory: website
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24.18.1'
           cache: npm
@@ -185,7 +254,7 @@ jobs:
       # after a full compile, and it is what a developer runs locally.
       - run: npm run check
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bloopbox-website
           path: website/out
@@ -198,7 +267,7 @@ jobs:
     if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       # Python stdlib only and no npm install, so this stays a ten-second job on a docs-only push.
       - run: .github/scripts/check-doc-links.py
 
@@ -209,7 +278,7 @@ jobs:
   # leaving the PR blocked forever. One stable check name, whatever the filter decided.
   ci:
     name: ci
-    needs: [changes, box-gate, box-package, website, docs-links]
+    needs: [changes, box-gate, box-package, net-agent-sandbox, shellcheck, website, docs-links]
     if: always()
     runs-on: ubuntu-latest
     steps:

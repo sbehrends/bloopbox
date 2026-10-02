@@ -1,7 +1,5 @@
-import { rm } from 'node:fs/promises';
 import { AudioCue, shouldPlayCue } from '../audio/cues.ts';
 import { AudioQueueManager, type QueuedNote } from '../audio/queueManager.ts';
-import type { ConfigManager } from '../config/configManager.ts';
 import { enabledContacts, type ButtonIndex, type DeviceConfig } from '../config/schema.ts';
 import type { Hal, RecordingHandle } from '../hal/types.ts';
 import { ButtonInterpreter } from './buttonInterpreter.ts';
@@ -13,7 +11,8 @@ import { isWithinQuietHours, msUntilNextTransition } from './quietHours.ts';
  * Wires the device together: HAL events in, intents out, LEDs and audio as a result.
  *
  * This is the only place that knows how the pieces relate, which keeps every other module
- * independently testable. It owns no I/O of its own — the HAL and ConfigManager do that.
+ * independently testable. It owns no I/O of its own: the HAL, the config it is handed and
+ * `deleteFile` do that, and the composition root decides what each of them is.
  *
  * Config is read when this is constructed and never re-read. Saving settings restarts the
  * daemon (see `requestRestart` in the hardware server), which is both simpler and safer than
@@ -80,9 +79,20 @@ export type DeviceFault = {
   readonly detail?: Readonly<Record<string, string | number>>;
 };
 
+/** What the controller reads of the config. `ConfigManager` satisfies it; so does a literal. */
+export type ConfigSnapshot = {
+  readonly current: DeviceConfig;
+};
+
 export type DeviceControllerOptions = {
   readonly hal: Hal;
-  readonly config: ConfigManager;
+  readonly config: ConfigSnapshot;
+  /**
+   * Deletes a note's file: a played or revoked note, or a take too short to send. Resolves once
+   * the file is gone, including when it never existed. A rejection is reported as a `delete`
+   * fault and otherwise ignored, because the purge collects whatever is left.
+   */
+  readonly deleteFile: (path: string) => Promise<void>;
   /** Ships a finished recording to WhatsApp. Resolves once accepted. */
   readonly send: (request: OutboundRequest) => Promise<void>;
   /** Tells the bridge a queue was played, so it can mark the messages read. */
@@ -135,7 +145,8 @@ export class DeviceController {
   readonly queue: AudioQueueManager;
 
   readonly #hal: Hal;
-  readonly #config: ConfigManager;
+  readonly #config: ConfigSnapshot;
+  readonly #deleteFile: (path: string) => Promise<void>;
   readonly #interpreter: ButtonInterpreter;
   readonly #animator: LedAnimator;
   readonly #send: (request: OutboundRequest) => Promise<void>;
@@ -181,6 +192,7 @@ export class DeviceController {
   constructor(options: DeviceControllerOptions) {
     this.#hal = options.hal;
     this.#config = options.config;
+    this.#deleteFile = options.deleteFile;
     this.#send = options.send;
     this.#markRead = options.markRead;
     this.#stats = options.stats;
@@ -597,7 +609,7 @@ export class DeviceController {
     if (durationMs < MIN_USABLE_AUDIO_MS) {
       // Not an exception, but the one signal that a microphone is delivering nothing at all.
       this.#fault('capture-empty', index, undefined, { durationMs });
-      await rm(path, { force: true }).catch((error: unknown) => {
+      await this.#deleteFile(path).catch((error: unknown) => {
         this.#fault('delete', index, error, { path });
       });
       await this.#courtesyCue(AudioCue.Oops);
@@ -685,7 +697,7 @@ export class DeviceController {
       this.#playedPaths(messageIds)
         .filter((path) => !stillQueued.has(path))
         .map(async (path) => {
-          await rm(path, { force: true }).catch((error: unknown) => {
+          await this.#deleteFile(path).catch((error: unknown) => {
             this.#fault('delete', index, error, { path });
           });
           // The decode `prepare()` made is derived from a file that no longer exists.
@@ -696,7 +708,7 @@ export class DeviceController {
 
   /** Deletes one note's file and the decode `prepare()` made of it. Never rejects. */
   async #discard(path: string): Promise<void> {
-    await rm(path, { force: true }).catch((error: unknown) => {
+    await this.#deleteFile(path).catch((error: unknown) => {
       this.#fault('delete', null, error, { path });
     });
     await this.#hal.release(path).catch((error: unknown) => {

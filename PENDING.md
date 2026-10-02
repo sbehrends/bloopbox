@@ -579,25 +579,23 @@ non-Apple machine: the site shows the brand's letterform, the device's four UIs 
 face. That is the accepted consequence of the constraint, not drift — but it is the strongest
 argument yet for doing the subsetted WOFF2 work above, since the reference now exists.
 
-### Coverage still fails its own thresholds
+### Coverage: a ratchet in the gate now, with known holes
 
-`npm run test:coverage` reports 87% statements / 79% branches against declared thresholds of 80,
-and `npm run check` does not run it. What is left, in order of size:
+**Resolved 2026-10-01 (review Phase 3):** `npm run check` runs with coverage, and the thresholds in
+`vitest.config.ts` are a ratchet at that day's figures (91% statements / 83% branches / 89%
+functions / 92% lines). `src/server/simulatorTransport.ts` is excluded by name, and `gpioDriver.ts`
+is counted. What is still thin, in order of size, for whoever raises the numbers next:
 
-- **`src/whatsapp/` at 86% / 77%** (from 58% / 49% on 2026-09-23). Baileys is injected into
-  `WhatsAppClient` and `tests/support/fakeWASocket.ts` drives the reconnect ladder, QR
-  exhaustion, the unlink race, the ephemeral unwrap and the download caps. What is left in
-  `client.ts` is mostly pairing-code and group-listing glue and LID resolution. The call site that
-  enforces *whitelist before download* is still in `src/processes/whatsapp-bridge.ts`, which is
-  excluded from coverage — moving it into `createBridge()` is review Phase 2F.
-- **`src/server/simulatorTransport.ts`** — no tests, and **deliberately not getting any**. It is
-  the browser end of a debugging tool: it never runs on a device, and when it breaks the person
-  looking at it is the one who broke it. `bridgeLink.test.ts` is the template if that ever stops
-  being true. It stays in the coverage denominator, so the 80% thresholds cannot be reached
-  without excluding it — worth doing at the same time as any other change to `vitest.config.ts`.
-- **`src/audio/` at 75%** — the ffmpeg pipeline's error paths.
+- **`src/whatsapp/`** — what is left in `client.ts` is mostly pairing-code and group-listing glue
+  and LID resolution. The call site that enforces *whitelist before download* is still in
+  `src/processes/whatsapp-bridge.ts`, which is excluded from coverage — moving it into
+  `createBridge()` is review Phase 2F.
+- **`src/audio/`** — the ffmpeg pipeline's error paths.
 - Three timeout paths in `bridgeLink.ts` (send 60s, pairing 20s, groups 10s) are deliberately
   uncovered: they need fake timers, which do not mix with real sockets.
+- `src/server/simulatorTransport.ts` is **deliberately not getting tests**: it is the browser end of
+  a debugging tool and never runs on a device. `bridgeLink.test.ts` is the template if that ever
+  stops being true.
 
 ### The mark is drawn twice and copied twice more, and nothing enforces that the four agree
 
@@ -1747,7 +1745,7 @@ once in the journal), `handledRequestId` was published, and `/run/bloopbox/net-r
 gone. The original notes follow.
 
 
-Changed 2026-09-23 (`docs/deployment.md` § the request channel). The agent no longer deletes
+Changed 2026-09-23 (`docs/deployment.md` § How the device knows whether Wi-Fi is up). The agent no longer deletes
 `/run/bloopbox/net-request.json`: it acts once per request id, records the id in
 `/run/bloopbox-net/handled-request-id`, and publishes it as `handledRequestId`, and the daemon
 deletes its own file when that id comes back. The reason was reasoned from systemd's documented

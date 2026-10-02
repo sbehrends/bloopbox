@@ -28,12 +28,12 @@ import type { Logger } from 'pino';
 import { SettledLine } from './settledLine.ts';
 
 /**
- * ============================ UNVERIFIED ON HARDWARE ============================
+ * ======================== UNVERIFIED ON THE TARGET BOARD ========================
  *
  * TODO(hardware): written against opengpio@2.0.2's published API. On the reference board (Pi 3B+,
- * WM8960 HAT, three buttons, three lamps) the six lines are claimed and button 1 registers; buttons
- * 2–3, the lamps and the Pi Zero 2 W are not yet recorded as working. Work through
- * `docs/hardware-bringup.md` before trusting those. Most likely first failures:
+ * WM8960 HAT) all three buttons, all three lamps and audio work (bench, 2026-09-30). The Pi Zero 2 W
+ * has never run it. Work through `docs/hardware-bringup.md` on one before trusting it there. Most
+ * likely first failures:
  *   - LEDs inverted -> set LED_ACTIVE_HIGH=false.
  *   - Buttons read backwards or float -> the firmware pull-ups are not applied (see below).
  *   - ALSA device names differ -> set ALSA_CAPTURE_DEVICE / ALSA_PLAYBACK_DEVICE.

@@ -22,7 +22,7 @@ For what the device *does* — install it, set it up, what the lights mean — s
 npm install
 npm run sounds      # build the audio cue WAVs — they are not committed (the MP3 sources are)
 npm run doctor      # verify ffmpeg and the audio devices
-npm run check       # format + lint + typecheck + test. This is the gate; it must pass
+npm run check       # format + lint + typecheck + test with coverage. The gate; it must pass
 ```
 
 `npm install` also installs the pre-commit hook, which runs the same gate. The hook itself lives at
@@ -86,7 +86,7 @@ config save leaves the server down. Use it for editing source, not for testing c
 npx vitest run src/tests/button.test.ts        # one file
 npx vitest run -t 'discards a short recording' # one test by name
 npm run test:watch
-npm run test:coverage                          # v8; thresholds are declared but not yet met
+npm run test:coverage                          # the full per-file table, plus coverage/index.html
 ```
 
 Timing-sensitive suites — LED patterns, debounce, purge TTL — run on **fake timers**. Never add a
@@ -106,7 +106,7 @@ real sleep. Server-layer tests drive a real Express app on an ephemeral port wit
 | `npm run lint`          | oxlint, with type-aware rules                         |
 | `npm run format`        | prettier (markdown is deliberately out of scope)      |
 | `npm run test:watch`    | Vitest in watch mode                                  |
-| `npm run test:coverage` | Coverage report                                       |
+| `npm run test:coverage` | Per-file coverage table and HTML report (the gate checks the totals) |
 | `npm run build`         | Compile the server to `dist/` and the UIs to `dist/public/` |
 | `npm run doctor`        | Verify ffmpeg and audio device prerequisites          |
 | `npm run sounds`        | Rebuild the audio cue WAVs — tone recipes plus the designed recordings in `src/audio/samples/` |

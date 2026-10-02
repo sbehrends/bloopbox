@@ -75,6 +75,13 @@ docker run --rm \
       " "$1" "$2"
     }
     called() { grep -qF "$1" /run/fake-nm/calls.log; }
+    # Captured, then matched: `curl | grep -q` under pipefail fails when grep exits first.
+    status_says() {
+      case "$(curl -fsS --max-time 2 http://127.0.0.1:3000/api/status)" in
+        *"$1"*) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
     # How many times the agent asked nmcli for something. Read from the file, not a pipe.
     times_called() { grep -cF "$1" /run/fake-nm/calls.log || true; }
     acknowledged() {
@@ -149,15 +156,17 @@ docker run --rm \
     await "the API" curl -fsS --max-time 2 http://127.0.0.1:3000/api/status
     # Polled, not read once: the boot chase is held for BOOT_ANIMATION_MS before real status
     # is allowed through, so an immediate read always says BOOTING.
-    await "the setup rung" bash -c \
-      "curl -fsS --max-time 2 http://127.0.0.1:3000/api/status | grep -q SETUP_PORTAL"
+    await "the setup rung" status_says SETUP_PORTAL
     echo "GET /api/status -> $(curl -fsS http://127.0.0.1:3000/api/status)"
     echo "the LED ladder is on the setup rung"
 
     echo
     echo "--- 5. the portal is served, and offers the networks the agent found ---"
-    curl -fsS --max-time 5 http://127.0.0.1:8080/portal/ | grep -qi "<html" \
-      || fail "the portal is not being served on the captive-portal port"
+    PORTAL_HTML="$(curl -fsS --max-time 5 http://127.0.0.1:8080/portal/ || true)"
+    case "${PORTAL_HTML}" in
+      *"<html"* | *"<HTML"*) : ;;
+      *) fail "the portal is not being served on the captive-portal port" ;;
+    esac
     SCAN="$(curl -fsS --max-time 5 http://127.0.0.1:3000/api/wifi/scan)"
     echo "GET /api/wifi/scan -> ${SCAN}"
     case "${SCAN}" in

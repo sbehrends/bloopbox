@@ -23,6 +23,9 @@ const {
  */
 const HOLD_MS = RECORD_THRESHOLD_MS + MIN_RECORDING_MS + 500;
 
+/** The production deletion. `src/core/` does no I/O, so the composition root hands it over. */
+const deleteFile = (path: string): Promise<void> => rm(path, { force: true });
+
 import {
   DeviceController,
   MIN_USABLE_AUDIO_MS,
@@ -109,6 +112,7 @@ beforeEach(async () => {
   controller = new DeviceController({
     hal,
     config,
+    deleteFile,
     send: (request) => {
       if (sendResult === 'fail') return Promise.reject(new Error('bridge offline'));
       sent.push(request);
@@ -193,7 +197,7 @@ async function press(index: 0 | 1 | 2, holdMs: number): Promise<void> {
 }
 
 describe('recording and sending', () => {
-  it('sends a recording that is long enough', async () => {
+  it('sends a recording that is long enough [D-09]', async () => {
     hal.fixedDurationMs = 3000;
 
     await press(0, HOLD_MS);
@@ -209,7 +213,27 @@ describe('recording and sending', () => {
     expect(hal.cueSequence()).toEqual([AudioCue.Pop, AudioCue.Whoosh]);
   });
 
-  it('plays the bip before opening the microphone, never during', async () => {
+  it('plays the whoosh only once the take is finalised [D-08]', async () => {
+    // The bip's rule at the other end of the take: a cue over a capture still closing is recorded
+    // into it. Finalising is held open here, so a whoosh played first would show up before it.
+    hal.fixedDurationMs = 3000;
+    let finalise: (() => void) | undefined;
+    const original = hal.stopRecording.bind(hal);
+    vi.spyOn(hal, 'stopRecording').mockImplementation(async (handle) => {
+      await new Promise<void>((resolve) => {
+        finalise = resolve;
+      });
+      return original(handle);
+    });
+    await press(0, HOLD_MS);
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop]);
+
+    finalise?.();
+    await waitFor(() => hal.cueSequence().includes(AudioCue.Whoosh), 'the whoosh after finalising');
+    expect(hal.cueSequence()).toEqual([AudioCue.Pop, AudioCue.Whoosh]);
+  });
+
+  it('plays the bip before opening the microphone, never during [D-06]', async () => {
     /*
      * The speaker is centimetres from the microphone: a cue played while capture is open is
      * recorded into the message, which is exactly what the pop used to do 500ms into every
@@ -338,7 +362,7 @@ describe('the resume window', () => {
  * The interpreter block is unit-tested in `button.test.ts`; what matters here is what the
  * child actually gets — no microphone, no send, and the "oops" that says so.
  */
-describe('holds on a button with notes waiting', () => {
+describe('holds on a button with notes waiting [D-03]', () => {
   /** Queues one note on button 0 and waits for its lamp to be lit. */
   function queueNote(id = 'm-block'): string {
     const path = join(workDir, `${id}.ogg`);
@@ -484,7 +508,7 @@ describe('taps', () => {
  * microphone and cues share its output, so a bip, an "oops" or an open capture would all land
  * on top of the message the child is listening to.
  */
-describe('while a note is playing', () => {
+describe('while a note is playing [D-05] [D-07]', () => {
   /** Queues a note on button 0, taps it, and holds playback open until the returned call. */
   async function startPlayback(): Promise<() => Promise<void>> {
     hal.holdPlayback = true;
@@ -622,6 +646,7 @@ describe('while a note is playing', () => {
     const deferred = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: () => pendingSend,
     });
     await controller.dispose();
@@ -657,7 +682,7 @@ describe('while a note is playing', () => {
 });
 
 describe('receiving', () => {
-  it('lights the button immediately and chimes, without waiting on audio', () => {
+  it('lights the button immediately and chimes, without waiting on audio [D-15]', () => {
     controller.handleIncoming(1, {
       messageId: 'm1',
       path: '/tmp/m1.ogg',
@@ -670,7 +695,7 @@ describe('receiving', () => {
     expect(controller.queue.count(1)).toBe(1);
   });
 
-  it('gets the note ready to play the moment it arrives', () => {
+  it('gets the note ready to play the moment it arrives [D-10]', () => {
     /*
      * The decode used to sit between the tap and the first sound, on a machine where spawning
      * ffmpeg is not free. Arrival is the moment nobody is waiting — the lamp is blinking and
@@ -686,7 +711,7 @@ describe('receiving', () => {
     expect(hal.prepared).toEqual(['/tmp/m1.ogg']);
   });
 
-  it('prepares a note restored at boot too, not only a freshly delivered one', () => {
+  it('prepares a note restored at boot too, not only a freshly delivered one [D-10]', () => {
     controller.restoreUnread(2, {
       messageId: 'm2',
       path: '/tmp/m2.ogg',
@@ -860,7 +885,7 @@ describe('a note deleted for everyone', () => {
   });
 });
 
-describe('boot announcement', () => {
+describe('boot announcement [D-15]', () => {
   it('plays the boot sound once when the boot window opens', async () => {
     hal.clearHistory();
 
@@ -937,7 +962,12 @@ describe('silent mode', () => {
     });
     vi.setSystemTime(now);
     // Standing in for the restart a config save triggers.
-    const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    const rebuilt = new DeviceController({
+      hal,
+      config,
+      deleteFile,
+      send: () => Promise.resolve(),
+    });
     rebuilt.setStatus(DeviceStatus.Ready);
     await rebuilt.start();
     return rebuilt;
@@ -1020,7 +1050,12 @@ describe('silent mode', () => {
     });
     // 19:00 UTC is 20:00 in Berlin in June (CEST, UTC+2 — so 18:00 UTC is the boundary).
     vi.setSystemTime(new Date(Date.UTC(2026, 5, 15, 18, 30, 0)));
-    const scheduled = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    const scheduled = new DeviceController({
+      hal,
+      config,
+      deleteFile,
+      send: () => Promise.resolve(),
+    });
     scheduled.setStatus(DeviceStatus.Ready);
     await scheduled.start();
 
@@ -1029,7 +1064,7 @@ describe('silent mode', () => {
   });
 });
 
-describe('the silent-mode chord', () => {
+describe('the silent-mode chord [D-12]', () => {
   it('toggles silent mode without sending anything', async () => {
     hal.pressButton(0);
     hal.pressButton(2);
@@ -1077,7 +1112,7 @@ describe('the silent-mode chord', () => {
    * the release had just played. Now the cancel reaches the capture before the bip ends, and
    * nothing opens at all.
    */
-  it('never opens the microphone for a press released during the bip', async () => {
+  it('never opens the microphone for a press released during the bip [D-06]', async () => {
     const start = vi.spyOn(hal, 'startRecording');
     const cues = holdCues();
 
@@ -1104,7 +1139,7 @@ describe('the silent-mode chord', () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it('never opens the microphone once stopped, even behind a bip still playing', async () => {
+  it('never opens the microphone once stopped, even behind a bip still playing [D-06]', async () => {
     const start = vi.spyOn(hal, 'startRecording');
     const cues = holdCues();
 
@@ -1138,7 +1173,7 @@ describe('the silent-mode chord', () => {
  * Failures the child never hears about beyond an "oops" still have to reach the journal. Each was
  * once caught and dropped here, which left a box on the bench answering "oops" with nothing logged.
  */
-describe('a button with no contact', () => {
+describe('a button with no contact [D-11]', () => {
   it('never opens the microphone, answers "oops" and sends nothing', async () => {
     // Bench finding 2026-09-30: it used to record, encode and fail in the bridge.
     await config.update({ contacts: { button2: { enabled: false } } });
@@ -1146,6 +1181,7 @@ describe('a button with no contact', () => {
     controller = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();
@@ -1226,12 +1262,34 @@ describe('reported faults', () => {
     );
   });
 
+  it('reports a file it could not delete, and carries on', async () => {
+    // The take too short to send is deleted at once; a failed delete is left for the purge.
+    await controller.dispose();
+    controller = new DeviceController({
+      hal,
+      config,
+      deleteFile: () => Promise.reject(new Error('EACCES')),
+      send: () => Promise.resolve(),
+      onFault: (fault) => faults.push(fault),
+    });
+    controller.setStatus(DeviceStatus.Ready);
+    hal.fixedDurationMs = MIN_USABLE_AUDIO_MS - 50;
+    await press(1, HOLD_MS);
+    await waitFor(() => kinds().includes('delete'), 'the failed delete to be reported');
+
+    const fault = faults.find(({ kind }) => kind === 'delete');
+    expect(fault).toMatchObject({ index: 1, detail: { path: expect.any(String) } });
+    expect(fault?.error).toBeInstanceOf(Error);
+    await waitFor(() => hal.cueSequence().includes(AudioCue.Oops), 'the oops after it');
+  });
+
   it('keeps working when the reporter itself throws', async () => {
     // Reporting must never be the thing that breaks the next press.
     await controller.dispose();
     const throwing = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();
@@ -1275,6 +1333,7 @@ describe('disposal', () => {
     const rebuilt = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();
@@ -1323,7 +1382,12 @@ describe('config is snapshot, not watched', () => {
 
     // Standing in for the restart.
     await controller.dispose();
-    const rebuilt = new DeviceController({ hal, config, send: () => Promise.resolve() });
+    const rebuilt = new DeviceController({
+      hal,
+      config,
+      deleteFile,
+      send: () => Promise.resolve(),
+    });
     rebuilt.setStatus(DeviceStatus.Ready);
 
     hal.pressButton(0);
@@ -1347,7 +1411,7 @@ describe('config is snapshot, not watched', () => {
  * a sound where the bip would have been, a microphone that never opens, and a receiving
  * half that carries on exactly as before.
  */
-describe('read-only mode', () => {
+describe('read-only mode [D-11]', () => {
   /**
    * Stands in for the restart a config save triggers, since config is snapshot at boot.
    *
@@ -1378,6 +1442,7 @@ describe('read-only mode', () => {
     const rebuilt = new DeviceController({
       hal,
       config,
+      deleteFile,
       send: (request) => {
         sent.push(request);
         return Promise.resolve();

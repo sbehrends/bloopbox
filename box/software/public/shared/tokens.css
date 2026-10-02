@@ -4,7 +4,7 @@
    Three layers, in order:
      1. brand      — the five palette colours, exactly as the brand sheet states them.
      2. semantic   — what a colour is *for* (`--bg`, `--danger`). Rules reference these only.
-     3. channel    — per-button identity, because the buttons are colour-coded (§Overview).
+     3. channel    — per-button identity, because the buttons are colour-coded (PRODUCT.md §1).
 
    Everything a page can style is here, so the brand kit at /brand/ can show the real thing
    rather than a picture of it. */

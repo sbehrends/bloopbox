@@ -249,7 +249,7 @@ function renderContacts(
   for (const [index, key] of BUTTON_KEYS.entries()) {
     const contact = config.contacts[key];
     const row = element('div', 'contact');
-    // The buttons are colour-coded on the enclosure (§Overview); the row wears the same colour
+    // The buttons are colour-coded on the enclosure (PRODUCT.md §1); the row wears the same colour
     // so a parent matches the form to the thing in front of the child without reading it.
     row.style.setProperty('--channel', `var(${CHANNEL_TOKENS[index] ?? '--border-strong'})`);
     row.append(element('h3', undefined, BUTTON_LABELS[key]));

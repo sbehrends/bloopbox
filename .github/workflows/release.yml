@@ -14,6 +14,11 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Read-only by default; only the job that publishes the release asks for `contents: write`. Actions
+# are pinned to commits for the reason given in ci.yml.
+permissions:
+  contents: read
+
 jobs:
   # The same gate as every push. A tag that cannot pass it must not become a release.
   # gate_only, because the packaging job below is this workflow's own.
@@ -39,20 +44,20 @@ jobs:
       run:
         working-directory: box/software
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24.18.1'
 
       # GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping
       # runs-on for an arm64 runner makes this several times faster and needs no other change.
       - name: Set up QEMU for arm64
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: arm64
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build the release tarball
         id: build
@@ -63,7 +68,7 @@ jobs:
       - name: Smoke test it on bare Debian Trixie arm64
         run: ./scripts/smoke-test-release.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-tarball
           # Action input, so not covered by `defaults.run.working-directory`.
@@ -81,9 +86,9 @@ jobs:
       run:
         working-directory: box/software
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-tarball
           # Must land where build-sd-image.sh looks for it: <its own root>/release.
@@ -136,7 +141,7 @@ jobs:
       - name: Fix ownership of the outputs
         run: sudo chown -R "$(id -u):$(id -g)" release
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sd-card-image
           path: |
@@ -159,15 +164,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: release-tarball
           path: release
           merge-multiple: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: sd-card-image
           path: release

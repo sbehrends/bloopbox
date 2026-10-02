@@ -18,7 +18,7 @@
   "rules": {
     "typescript/no-explicit-any": "error",
     "typescript/consistent-type-imports": "error",
-    "no-console": "off",
+    "no-console": "error",
 
     "typescript/no-floating-promises": "error",
     "typescript/no-misused-promises": "error",
@@ -27,6 +27,10 @@
     "typescript/require-await": "error",
     "typescript/no-unsafe-type-assertion": "error",
     "typescript/no-deprecated": "error",
+    "typescript/switch-exhaustiveness-check": "error",
+
+    "import/no-cycle": "error",
+    "max-lines": ["error", { "max": 700, "skipBlankLines": true, "skipComments": true }],
 
     "typescript/prefer-readonly-parameter-types": "off",
     "typescript/strict-void-return": "off",
@@ -48,7 +52,8 @@
       "plugins": ["vitest"],
       "rules": {
         "typescript/no-non-null-assertion": "off",
-        "typescript/no-unnecessary-condition": "off"
+        "typescript/no-unnecessary-condition": "off",
+        "max-lines": "off"
       }
     },
     {
@@ -62,6 +67,12 @@
       "rules": {
         "typescript/no-extraneous-class": "off",
         "typescript/no-explicit-any": "off"
+      }
+    },
+    {
+      "files": ["public/admin/main.ts"],
+      "rules": {
+        "max-lines": ["error", { "max": 1550, "skipBlankLines": true, "skipComments": true }]
       }
     }
   ]

@@ -156,15 +156,16 @@ devices, the firmware pull-ups, `/data`, the tmpfs, the cue files and both servi
 sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
 # -> release/bloopbox-<version>-<pi-os-date>-sd.img.xz  (~660 MB)
 
-# For the MVP board — Pi 3B+ with a WM8960 audio HAT, its own button, no lamps:
-sudo ./scripts/build-sd-image.sh --audio-hat wm8960 --no-leds
-# -> release/bloopbox-<version>-<pi-os-date>-wm8960-noleds.img.xz
+# For the reference board — Pi 3B+ with the WM8960 HAT, three buttons and three lamps:
+sudo ./scripts/build-sd-image.sh --audio-hat wm8960
+# -> release/bloopbox-<version>-<pi-os-date>-wm8960.img.xz
 ```
 
 **Match the flags to the board.** `--audio-hat` and `--no-leds` are passed straight through to
-`install.sh` inside the image, and they are the difference between a card that works on the MVP
-board and one that boots with the wrong ALSA device and three LED lines claimed on pins nothing is
-wired to. Getting it wrong means ssh-ing in to re-run the installer, which is the whole thing the
+`install.sh` inside the image, and they are the difference between a card that works on a board
+and one that boots with the wrong ALSA device, or with its lamps never driven. `--no-leds` is only
+for a board with no lamps wired; the reference board has all three, so never pass it there. It
+belonged to the first, lampless bring-up board of 2026-08-10, which no longer exists. Getting it wrong means ssh-ing in to re-run the installer, which is the whole thing the
 image exists to avoid. A non-default profile goes into the filename, so two boards' images cannot
 overwrite each other in `release/`, and the `.credentials.txt` beside the image records the exact
 `install.sh` line it was built with.
@@ -440,11 +441,24 @@ Decisions worth knowing:
 
 ## CI
 
-- [`ci.yml`](../.github/workflows/ci.yml) — on every push and PR: `npm run check`, plus building
-  the arm64 tarball and smoke-testing it. Packaging breaks quietly (a missing runtime package, a
-  path that only resolves in the source tree), so it is checked on the same cadence as the tests.
+- [`ci.yml`](../.github/workflows/ci.yml) — on every push and PR: `npm run doctor`, `npm audit`
+  over the production dependencies (high and above fails), `npm run check`, then building the arm64
+  tarball, smoke-testing it and running the onboarding test against it. Packaging breaks quietly (a
+  missing runtime package, a path that only resolves in the source tree), so it is checked on the
+  same cadence as the tests. Two more jobs: ShellCheck over every tracked shell script, at the
+  hook's severity, and the net agent run under its own unit's sandbox
+  ([`test-net-agent-sandbox.sh`](../box/software/scripts/test-net-agent-sandbox.sh)), because the
+  container tests have no systemd and so never exercised `ProtectSystem=strict` — which is how the
+  agent shipped unable to clear its own requests.
 - [`release.yml`](../.github/workflows/release.yml) — on a `v*` tag: the gate, then the tarball,
   then the SD image, then a GitHub release with the tarball, the image and their checksums.
+
+**Both workflows run with `permissions: contents: read`**, and only the job that publishes a
+release asks for `contents: write`. **Every action is pinned to a commit**, with its tag in a
+comment: a tag can be moved by whoever controls the action's repository, and the steps run with the
+job's token. [`dependabot.yml`](../.github/dependabot.yml) proposes the bumps weekly, grouped, for
+the actions and both lockfiles; Baileys is excluded, because it is pinned to an exact release
+candidate on purpose.
 
 GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping `runs-on` for
 an arm64 runner makes it several times faster and needs no other change.
@@ -466,7 +480,7 @@ a download either.
 ## What none of this proves
 
 Everything above has been exercised: the tarball builds, installs and boots on arm64 Trixie, and
-the image has been mounted back and booted from inside. What has **not** happened is any of it
-running on a Raspberry Pi with buttons attached. Pin numbers, lamp polarity and ALSA device
-names remain unverified, `arecord`/`aplay`/`amixer` have never been called against real
-hardware, and no WhatsApp account has been paired. See `PENDING.md`.
+the image has been mounted back and booted from inside. Since 2026-09-30 a card flashed from it has
+also booted the reference board (a Pi 3B+ with the WM8960 HAT), made its ssh password on first
+boot, onboarded through the hotspot and linked WhatsApp, with all three buttons and lamps working.
+What has **not** happened is any of it on the Pi Zero 2 W the product targets. See `PENDING.md`.

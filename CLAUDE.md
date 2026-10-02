@@ -43,7 +43,7 @@ eagerly at launch, but one **below** the cwd only when it first touches a file i
 | Tier | File | Loaded | Holds |
 | ---- | ---- | ------ | ----- |
 | 1 | this file | always | The map, the gate, and tripwires as one-liners |
-| 2 | `box/software/CLAUDE.md` | when a box file is touched | Toolchain, Baileys, opengpio, packaging, the decisions and which test locks each |
+| 2 | `box/software/CLAUDE.md` | when a box file is touched | Toolchain, Baileys, opengpio, packaging, and an index of the decisions (`D-01`…), whose table lives in `docs/architecture.md` |
 | 3 | `docs/*.md` | on demand, by `Read` | The full reasoning, with diagrams |
 
 **When adding a rule, put it in the lowest tier that still catches the mistake.** A rule only needed
@@ -54,7 +54,7 @@ ESLint and opengpio tripwires are duplicated below as single lines.
 ## Before you report a task done
 
 ```bash
-cd box/software && npm run check     # format + lint + typecheck + test
+cd box/software && npm run check     # format + lint + typecheck + test, with the coverage ratchet
 cd website      && npm run check     # typecheck + static export — only if you touched the site
 ```
 
@@ -62,7 +62,7 @@ The box gate must pass. That is the only gate for device work; the site has its 
 knows about the other.
 
 It is also a **pre-commit hook** (`.githooks/pre-commit`, wired up by the `prepare` script in
-`box/software/package.json`, so `npm install` installs it — no husky). The whole gate takes about six
+`box/software/package.json`, so `npm install` installs it — no husky). The whole gate takes about ten
 seconds, so the hook runs all of it rather than just a typecheck, plus `bash -n` over any staged
 shell script since neither prettier nor oxlint looks at those, plus a relative-link check over any
 staged markdown. It **skips the npm half entirely when nothing under `box/software/` is staged**, so a
@@ -94,11 +94,12 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
   filesystem work is awaited, assert with a `waitFor` condition, not a fixed number of yields.
 - **Do not write `cmd | grep -q` in the shell scripts.** `grep -q` exits at the first match, the
   producer takes a SIGPIPE, and `set -o pipefail` fails the whole check. This bit three separate
-  checks during bring-up.
-- **`gpioDriver.ts` is only partly proven on hardware.** On the reference board (Pi 3B+, WM8960 HAT,
-  three buttons and three lamps) button 1 and audio are proven; buttons 2–3, the lamps and the
-  Zero 2 W are not yet. Do not add code paths that only work with real GPIO — development runs on
-  the simulator.
+  checks during bring-up. `src/tests/shellScripts.test.ts` now fails on it in any script with
+  pipefail on.
+- **`gpioDriver.ts` is proven on the reference board, not on the target.** On the Pi 3B+ with the
+  WM8960 HAT, all three buttons, all three lamps and audio work (bench, 2026-09-30); the Pi Zero 2 W
+  has never run it. Do not add code paths that only work with real GPIO — development runs on the
+  simulator.
 - **The whitelist in `src/whatsapp/whitelist.ts` is the safety boundary of the product.** A toddler
   must not be reachable by strangers. Change it only deliberately, and read its tests first.
 - **Timing values live in exactly one place and are exported**, so tests assert against the same
@@ -113,7 +114,7 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
 | `README.md`                | The monorepo front door: what bloopbox is, the layout, install, set up, use |
 | `box/software/README.md`   | The dev-facing half: environment, the gate, the simulator, the scripts    |
 | `box/software/CLAUDE.md`   | Tier 2 above — the rules for changing the box software                    |
-| `docs/PRODUCT.md`          | What the device does. Behaviour, the LED matrix, the config schema. **Do not renumber its sections** — 39 source files cite them |
+| `docs/PRODUCT.md`          | What the device does. Behaviour, the LED matrix, the config schema. **Do not renumber its sections** — the source cites them, and `docCitations.test.ts` fails on any `§` that stops resolving |
 | `docs/architecture.md`     | How the software is put together, and the decisions behind it             |
 | `docs/hardware.md`         | Parts, wiring, GPIO pins, ALSA. Authoritative over `box/hardware/`       |
 | `docs/audio-quality.md`    | Measured capture/playback quality: gain staging, noise, filter choices   |

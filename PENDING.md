@@ -353,7 +353,11 @@ has no ESLint (`npm run check` is `tsc --noEmit` plus the export).
 `/manual/` shows its gaps on the page rather than hiding them:
 
 1. **The card image cannot be downloaded.** Step 1's button points at an empty releases page, and
-   the manual says so. It needs a published `--audio-hat wm8960` build (`docs/deployment.md`).
+   the manual says so. It needs a published `--audio-hat wm8960` build (`docs/deployment.md`), and
+   **`release.yml` does not make one today**: its image job calls `build-sd-image.sh` with no
+   `--audio-hat`, so a tagged release would publish a USB-audio image, and its release notes still
+   name the Zero 2 W and show `install.sh` with no flags. Decide which profile a public image is for
+   before the first tag.
 2. **The waitlist form posts nowhere.** `waitlist.endpoint` in `website/lib/site.ts` is
    `https://example.invalid/...`. The site is a static export, so it must post to a third-party
    endpoint (Formspree, Buttondown, a Google Form). While `waitlist.configured` is false the panel

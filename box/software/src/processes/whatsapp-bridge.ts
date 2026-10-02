@@ -49,7 +49,11 @@ const lifecycle = new Shutdown({ log });
 
 async function main(): Promise<void> {
   lifecycle.installHandlers();
-  const client = new WhatsAppClient({ authDirectory: AUTH_DIRECTORY, logger: log });
+  // A child each, so the journal says whether a line is the connection's or a decision's.
+  const client = new WhatsAppClient({
+    authDirectory: AUTH_DIRECTORY,
+    logger: log.child({ mod: 'client' }),
+  });
 
   const socket: Socket<ServerToBridgeEvents, BridgeToServerEvents> = io(
     `${HARDWARE_URL}${BRIDGE_NAMESPACE}`,
@@ -72,7 +76,7 @@ async function main(): Promise<void> {
     recordingDirectory: RECORDING_DIRECTORY,
     probeDuration: probeDurationMs,
     removeFile: (path) => rm(path, { force: true }),
-    log,
+    log: log.child({ mod: 'bridge' }),
   });
 
   socket.on('connect', () => {

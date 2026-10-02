@@ -170,6 +170,19 @@ logs each one at `warn` as `device fault`. The routes take the same approach wit
 `log` in `RoutesContext`, so every 4xx/5xx that stands for a failure leaves its reason in the
 journal. The rule for new code: **a catch that swallows must report**.
 
+**The error policy, in three rules.**
+
+1. **Core reports, it does not throw or log.** A failure `src/core/` absorbs so the next press
+   still works goes to `onFault` with a `DeviceFaultKind`; core has no logger.
+2. **Adapters throw.** The HAL, the WhatsApp client and the file helpers reject with an `Error`
+   that says what failed; whoever decides what happens next catches it.
+3. **A catch that swallows logs, once, with a stable message.** At `warn` if the device carries on,
+   `error` if something the family asked for did not happen. The message is a fixed phrase
+   (`device fault`, `send failed`), never built from data, so it can be grepped and counted; what
+   varies goes in fields. Each subsystem logs through its own child, so every line carries
+   `proc` and `mod`: `device`, `bridge`, `net`, `purge`, `simulator` and `routes` in the hardware
+   server, `client` and `bridge` in the WhatsApp bridge.
+
 **The last warnings and errors are on the health card too.** A pino `logMethod` hook in
 `logger.ts`, inherited by every child logger, copies each warn-or-worse line into an in-memory
 ring of 50 (`system/recentEvents.ts`). `GET /api/system/events`, behind the admin gate, serves it

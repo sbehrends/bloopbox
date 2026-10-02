@@ -63,10 +63,11 @@ knows about the other.
 
 It is also a **pre-commit hook** (`.githooks/pre-commit`, wired up by the `prepare` script in
 `box/software/package.json`, so `npm install` installs it — no husky). The whole gate takes about ten
-seconds, so the hook runs all of it rather than just a typecheck, plus `bash -n` over any staged
-shell script since neither prettier nor oxlint looks at those, plus a relative-link check over any
-staged markdown. It **skips the npm half entirely when nothing under `box/software/` is staged**, so a
-docs-only commit is instant. `git commit --no-verify` bypasses it.
+seconds, so the hook runs all of it rather than just a typecheck. Around it: `bash -n` (and ShellCheck,
+when installed) over any staged shell script, since neither prettier nor oxlint looks at those; the
+relative-link check over every markdown file when any is staged; and the site's typecheck when a
+site file is staged. It **skips the box gate entirely when nothing under `box/software/` is
+staged**, so a docs-only commit is instant. `git commit --no-verify` bypasses it.
 
 The hook checks the working tree, not the staged snapshot: committing a subset of files can still
 pass here and be broken in isolation, which is what CI is for.
@@ -93,9 +94,8 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
 - **Never add a real sleep to a test.** Timing-sensitive suites run on fake timers; where real
   filesystem work is awaited, assert with a `waitFor` condition, not a fixed number of yields.
 - **Do not write `cmd | grep -q` in the shell scripts.** `grep -q` exits at the first match, the
-  producer takes a SIGPIPE, and `set -o pipefail` fails the whole check. This bit three separate
-  checks during bring-up. `src/tests/shellScripts.test.ts` now fails on it in any script with
-  pipefail on.
+  producer takes a SIGPIPE, and `set -o pipefail` fails the whole check.
+  `src/tests/shellScripts.test.ts` fails on it in any script with pipefail on.
 - **`gpioDriver.ts` is proven on the reference board, not on the target.** On the Pi 3B+ with the
   WM8960 HAT, all three buttons, all three lamps and audio work (bench, 2026-09-30); the Pi Zero 2 W
   has never run it. Do not add code paths that only work with real GPIO — development runs on the
@@ -122,6 +122,7 @@ Violating any of these wastes a whole task or ships a broken device. The reasoni
 | `docs/hardware-bringup.md` | The gated plan for the first real device, and the debugging kit           |
 | `docs/BRAND.md`            | Visual direction and the design system's locked decisions                |
 | `PENDING.md`               | The backlog: known gaps, unverified claims, watch items                  |
+| `docs/review-2026-09.md`   | The September 2026 review and its phased plan. A dated record, not kept current |
 
 **When you change behaviour, update the document that owns it in the same commit.** Findings go in
 `PENDING.md` rather than staying in conversation — check it before starting something.
@@ -137,3 +138,6 @@ aggregating `ci` job**, not the individual ones — a skipped job passes branch 
 filtering with `on: push: paths:` would make a required check never report and block the PR forever.
 
 `.github/workflows/release.yml` is deliberately **not** filtered: a tag must rebuild everything.
+
+There is no git remote yet, so **none of this has run on GitHub**: a workflow change is unproven until
+it does.

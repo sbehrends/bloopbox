@@ -23,7 +23,8 @@ npm run build      # export only, into out/
 npm run preview    # serve out/ the way a static host would
 ```
 
-CI runs `npm run check` on any push that touches `website/`, and uploads `out/` as an artifact.
+CI runs `npm run check` on a push to `main` or a pull request that touches `website/`, and uploads
+`out/` as an artifact.
 Nothing publishes it yet — there is no host configured.
 
 ## Layout
@@ -36,6 +37,7 @@ app/
 ├── manual/
 │   ├── page.tsx      the build manual: eleven steps, the parts, the wiring
 │   └── page.module.css
+├── print-prep/       a tool page: three photos laid out as button-cap prints. Not indexed
 ├── globals.css       element defaults and the primitives more than one section uses
 └── tokens.css        the brand, machine-readable. The only file here with a colour literal
 components/
@@ -44,6 +46,7 @@ components/
 ├── Lockup.tsx        mark + wordmark
 ├── Figure.tsx        an illustration, or a placeholder carrying the prompt for one
 ├── GpioDiagram.tsx   the 40-pin header, drawn from data
+├── LightSignature.tsx the box's lamp patterns, animated — see below
 └── WaitlistForm.tsx  "I'd rather not build it myself"
 lib/site.ts           the links, the parts list and the names the pages repeat
 public/               the mark, the favicon, and the manual's photography
@@ -88,8 +91,8 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
 - **The header's nav is a prop, not a constant.** Both pages' section links are anchors *into
   themselves*, so a shared list would send a reader on the manual back to the home page to find
   "How it works". `SiteHeader` owns only the lockup, the manual link and the GitHub button.
-- **The manual's placeholders are visible.** Six of its nine illustrations do not exist yet, and
-  each renders as a dashed box containing the prompt that will generate it (`Figure.tsx`, which also
+- **The manual's placeholders are visible.** An illustration that does not exist yet renders as a
+  dashed box containing the prompt that will generate it (`Figure.tsx`, which also
   owns the one house-style clause every prompt shares). Swapping one in is `prompt` out, `src` in.
   A page that hides its gaps is a page nobody finishes.
 - **The light signature is animated, and it is a port.** `LightSignature.tsx` carries the box's own
@@ -162,7 +165,5 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
   it at a real service and flip `waitlist.configured` to drop the setup note.
 - **The manual's download button leads nowhere**, because no release is published. It needs a
   `--audio-hat wm8960` build — `docs/deployment.md`.
-- **Six of the manual's nine illustrations are placeholders.** They are listed, with their prompts,
-  on the page itself.
 - Nothing hosts `out/` yet. Any static host will do.
 - There is no social preview image — `openGraph` declares no `images`.

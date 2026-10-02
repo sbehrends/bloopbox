@@ -31,10 +31,10 @@ values below are the shipped defaults.
 2. At `recordThresholdMs` (150 ms) the short high **"pop"** plays, and **the microphone opens once
    it has finished**. The bip is the invitation to speak, not a report that recording began.
 
-   > **Deliberate deviation.** The original spec played the pop the instant the button was held, over
-   > an already-open microphone. The speaker sits centimetres from the microphone, so the bip was
-   > recorded into the head of every message. Opening capture behind the cue is what keeps it out —
-   > at the price of everything said before the bip, which is the point of making the bip prompt.
+   > **Why capture waits for the bip.** The speaker sits centimetres from the microphone, so a bip
+   > played over an open microphone is recorded into the head of every message. Opening capture
+   > behind the cue keeps it out — at the price of anything said before the bip, which is the point
+   > of making the bip prompt.
    >
    > It also means this threshold cannot be the tap/hold boundary, since the bip has to play long
    > before a tap and a hold are distinguishable. See step 6.
@@ -47,13 +47,13 @@ values below are the shipped defaults.
 5. The window expires. The audio is converted to `.ogg` (Opus, `ptt: true`), the upward **"whoosh"**
    plays, and it is sent to WhatsApp. Once WhatsApp accepts it the lamp flashes 3× rapidly.
 
-   The cue plays *after* the capture is finalised, deliberately: the speaker sits next to the
-   microphone, and playing it first recorded it into the tail of every message.
+   The cue plays *after* the capture is finalised, for the same reason as step 2: played first, it
+   would be recorded into the tail of every message.
 
-   **One sound, not two.** A successful send used to play the whoosh and then a designed "delivered"
-   swoosh once WhatsApp accepted it; back to back they read as one confused noise rather than as two
-   facts. Delivery is now reported by the lamp alone. Only a *failure* adds a second sound — the
-   "oops" — which is the case worth interrupting a child for.
+   **One sound, not two.** There is no separate "delivered" sound: back to back with the whoosh,
+   two cues read to a child as one confused noise rather than as two facts. Delivery is reported by
+   the lamp alone. Only a *failure* adds a second sound — the "oops" — which is the case worth
+   interrupting a child for.
 
 6. **A press that never held the microphone open long enough to carry a message is a tap**, whether
    or not the bip played. With messages waiting it plays them (below); with nothing waiting it
@@ -65,12 +65,12 @@ values below are the shipped defaults.
    that catches nothing, which is the accepted cost of a prompt bip; on a blinking one no
    microphone opens at all, so there is no bip either (see "Listening comes first").
 
-   `minRecordingMs` was **raised from 500 ms to 1000 ms on 2026-09-08**, after a child playing with
-   the buttons sent a run of empty notes. Half a second is well inside what a toddler produces by
-   pressing things, and every one of those arrives on a parent's phone as a real message. A full
-   second has to be held on purpose, and still fits a one-word "hola". The cost is that a very
-   short word is now a tap and answers "oops" — a refusal the child can hear and repeat, where a
-   silent empty send is one nobody notices.
+   `minRecordingMs` is a full second because half a second is well inside what a toddler produces
+   just by pressing things — a child playing with the buttons once sent a run of empty notes at
+   500 ms, and every one of those arrives on a parent's phone as a real message. A second has to be
+   held on purpose, and still fits a one-word "hola". The cost is that a very short word is a tap
+   and answers "oops" — a refusal the child can hear and repeat, where a silent empty send is one
+   nobody notices.
 
 7. A press shorter than `debounceMs` (60 ms) is ignored entirely, silently — that is a toddler
    brushing past.
@@ -94,8 +94,8 @@ Bounds:
   or the take is a failed capture and answers "oops". That floor is 150 ms and is not configurable —
   it separates "the microphone produced audio" from "the microphone produced nothing", which is not
   a feel judgement.
-- **A send that fails is dropped, not retried** — see §7 and the watch item in `PENDING.md`. There
-  is no outbound queue, on purpose.
+- **A send that fails is dropped, not retried** — see the watch item in `PENDING.md`. There is no
+  outbound queue, on purpose.
 
 ### Receiving a message
 
@@ -106,20 +106,22 @@ Bounds:
 2. In audible mode a soft **"notify"** chime plays — **unless a note is already playing**, when it
    is held back. The assigned lamp starts **blinking slowly** (0.8 s on / 0.8 s off).
 
-   > The speaker is one output, so a chime cuts off whatever is playing. It used to, and the note
-   > it cut off was counted as heard, deleted and reported read. Nothing plays over a note now —
-   > not the chime, the whoosh or the "oops" — and a note that is cut off anyway (the admin panel's
-   > speaker test is the one sound allowed to) goes back to the front of its queue, still unread.
+   > **Nothing plays over a note** — not the chime, the whoosh or the "oops". The speaker is one
+   > output, so a cue cuts off whatever is playing, and a note cut off that way would be counted as
+   > heard, deleted and reported read. The admin panel's speaker test is the one sound allowed to
+   > interrupt, and a note it cuts off goes back to the front of its queue, still unread.
+
 3. The child taps that button once. Every pending note from that sender plays **sequentially, oldest
    first**, separated by a short soft chime, and the lamp goes out once the queue finishes — or
    keeps blinking if another note arrived while it played.
 
    The note is **decoded to WAV when it arrives**, not when it is tapped. `aplay` reads no other
-   container, and paying for an ffmpeg process at the tap put a visible pause between a child
+   container, and paying for an ffmpeg process at the tap would put a visible pause between a child
    pressing a blinking button and hearing anything. Arrival is the moment nobody is waiting.
 4. If read receipts are enabled (`whatsapp.markPlayedAsRead`, on by default), playing a note marks
    it read upstream, so the person who recorded it sees their two ticks turn blue. It is optional
-   because it also reports *when* a small child is at the box.
+   because it also reports *when* a small child is at the box. A receipt still goes out if the
+   WhatsApp bridge restarted in between (§8).
 
 A played note's file is deleted immediately, which is what makes *present on disk* mean *unread*.
 
@@ -135,7 +137,6 @@ in the same run is skipped.
 
 **A button with notes waiting takes no message until they have been heard.** While its lamp is
 blinking, that button only plays: a tap plays the queue, and a hold is refused with the "oops".
-Added 2026-09-08.
 
 The reason is that the child cannot read a screen. The blinking lamp is the entire notice that
 somebody spoke to them, and a hold straight through it sends a reply to something they never heard —
@@ -147,8 +148,7 @@ The details, all of which are the difference between a rule and an annoyance:
 
 - **No microphone opens, and no bip plays.** The capture is withheld at `recordThresholdMs`, where
   the bip would have been. Nothing is recorded and nothing is discarded — and a tap on a blinking
-  button now reaches the message ~90 ms sooner than it used to, because the bip is gone from in
-  front of it.
+  button reaches the message with no bip in front of it.
 - **The refusal waits for release.** At the threshold a press is not yet a hold: the boundary is
   `recordThresholdMs + minRecordingMs` and is only knowable when the button comes up. Answering at
   the threshold instead would turn every press over 150 ms into "that did not send" and make a
@@ -165,14 +165,12 @@ The details, all of which are the difference between a rule and an annoyance:
 
 ### A button with no contact
 
-A button with no contact assigned (or a disabled one) takes no message, and it now says so the
-way read-only does: a hold is refused with the "oops" at the moment the bip would have played, and
-**the microphone never opens**. A quick tap answers "oops" as any empty button does, and notes still
-waiting on it — assigned before a contact was removed — still play with a tap.
-
-Before 2026-09-30 such a hold bipped, recorded, encoded, and was refused only by the bridge. The
-child heard the same "oops", a few seconds later, but their voice had been captured into RAM for a
-message that could never be sent. Found on the bench, through the `device fault` log.
+A button with no contact assigned (or a disabled one) takes no message, and says so the way
+read-only does: a hold is refused with the "oops" at the moment the bip would have played, and
+**the microphone never opens**, so a child's voice is never captured for a message that could not be
+sent. A quick tap answers "oops" as any empty button does, and notes still waiting on it — assigned
+before a contact was removed — still play with a tap. The unread rule above is checked first, so a
+button still holding notes stays playable.
 
 ### Read-only mode
 
@@ -217,31 +215,8 @@ It can also be scheduled — see §7.
 
 ## 2. Hardware
 
-Full bill of materials, wiring, GPIO assignments and the ALSA notes are in
-[`hardware.md`](./hardware.md). The shape of it:
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                     ENCLOSURE (WOOD / 3D PRINT)                        │
-│                                                                        │
-│   ┌─────────────┐       ┌─────────────┐       ┌─────────────┐          │
-│   │ [ MOM ] LED │       │ [ DAD ] LED │       │ [GRANDMA]LED│          │
-│   └──┬───┬──────┘       └──┬───┬──────┘       └──┬───┬──────┘          │
-│      │   │ lamp 3 V        │   │ lamp 3 V        │   │ lamp 3 V        │
-│      │   └─────┐           │   └─────┐           │   └─────┐           │
-│      │ switch  │           │ switch  │           │ switch  │           │
-│      ▼         ▼           ▼         ▼           ▼         ▼           │
-│   ┌──────────────────────────────────────────────────────────────┐     │
-│   │                  Raspberry Pi Zero 2 W                       │     │
-│   └────────────────────────────┬─────────────────────────────────┘     │
-│                                │ I²S + I²C                             │
-│                                ▼                                       │
-│                         ┌─────────────┐                                │
-│                         │ WM8960 HAT  │                                │
-│                         │ mic + spkr  │                                │
-│                         └─────────────┘                                │
-└────────────────────────────────────────────────────────────────────────┘
-```
+Full bill of materials, wiring diagram, GPIO assignments, the ALSA notes and the record of what has
+been proven are in [`hardware.md`](./hardware.md). The shape of it:
 
 | Component      | Selected spec                          | Purpose                                                        |
 | -------------- | -------------------------------------- | -------------------------------------------------------------- |
@@ -252,12 +227,14 @@ Full bill of materials, wiring, GPIO assignments and the ALSA notes are in
 
 Buttons are on BCM `GPIO17 / 27 / 22` with **firmware** pull-ups; LED drive lines are on
 `GPIO23 / 24 / 25`. **The lamps are 3 V and hang directly off those pins** — no driver board — so
-each one goes between its pin and ground and a HIGH lights it. The HAT occupies `GPIO2 / 3` (I²C) and `18–21` (I²S), which collides with
-neither. The OS target is **Raspberry Pi OS Trixie 64-bit**, forced by the GPIO addon's libgpiod v2
-requirement.
+each one goes between its pin and ground and a HIGH lights it. The HAT occupies `GPIO2 / 3` (I²C)
+and `18–21` (I²S), which collides with neither. The OS target is **Raspberry Pi OS Trixie 64-bit**,
+forced by the GPIO addon's libgpiod v2 requirement.
 
-**The ALSA path is measured on a real HAT; no GPIO path has ever run on a real chip.** See
-`hardware.md` for both the measurements and the line between them.
+**The one real device is the reference board** — a Pi 3B+ with the WM8960 HAT, three buttons and
+three lamps — and on it every button, every lamp and audio in both directions are proven. **The
+Pi Zero 2 W the bill of materials selects has not yet run any of it.** See
+`hardware.md` § What is proven, and what is not.
 
 ---
 
@@ -299,9 +276,10 @@ contact picker with no account behind it is a form that silently cannot work.
   reachable on purpose: audio and button timings need no account, and are what bring-up wants
   while pairing is still open.
 - **While `connecting`** — the link buttons are withheld. Pressing one mid-connect starts a second
-  attempt on a session that is still opening, which is what used to break both.
-- **Linked** — Contacts, Quiet hours, WhatsApp, Wi-Fi, then Advanced. *Read receipts* is a setting
-  for a live account, so it appears only once the state is `connected`.
+  attempt on a session that is still opening, which breaks both.
+- **Linked** — Contacts, Sending (read-only mode), Quiet hours, WhatsApp, Wi-Fi, then Advanced
+  (Audio, Button timings, Device health, Factory reset). *Read receipts* is a setting for a live
+  account, so it appears only once the state is `connected`.
 - **Activity sits above everything, in both layouts.** It is the only card that reports rather
   than asks — see below.
 - **On the first link of a page's life the panel reloads itself**, because Contacts and its group
@@ -338,30 +316,37 @@ button is a wrong number or a contact who has not replied, and nothing else on t
 ### Device health, and turning the box off
 
 An *Advanced* card, collapsed until asked for and polling only while it is open. It reports what the
-board says about itself — SoC temperature, how long the machine has been powered on, how long the
-*software* has been running (the two diverge on a settings save, and a service uptime that keeps
-resetting is a crash loop), processor busy time and load, memory, free space on the card and in the
-RAM disk, the Wi-Fi network and signal, and whether the **clock** has been set from the network yet
-("synced", "not synced yet", or "unknown" where the box cannot tell — a Pi has no clock battery, and
-quiet hours read that clock). Every reading is nullable: a value the box cannot obtain is a dash or
-"unknown", never a zero or a "no".
+board says about itself — the board model, SoC temperature, how long the machine has been powered
+on, how long the *software* has been running (the two diverge on a settings save, and a service
+uptime that keeps resetting is a crash loop), processor busy time and load, memory, free space on the
+card and in the RAM disk, whether the configured sound card is actually present, the Wi-Fi network
+and signal, and whether the **clock** has been set from the network yet ("synced", "not synced yet",
+or "unknown" where the box cannot tell — a Pi has no clock battery, and quiet hours read that clock).
+Every reading is nullable: a value the box cannot obtain is a dash or "unknown", never a zero or a
+"no".
 
-The same information is in `bloopbox-doctor`, which needs SSH — a tool a parent should never need.
+Under the readings, **Recently** lists the warnings and errors the hardware server has logged since
+it last started, newest first — or says that nothing has gone wrong. When the box answers with an
+"oops" and nothing else, this is the post-mortem a parent can reach without ssh. It is held in
+memory, so it empties on every restart, which is also every settings save.
+
+The same information is in `bloopbox-doctor`, which needs SSH — a tool a parent should
+never need.
 
 **Restart** and **Shut down** sit at the bottom of it, behind the same two-tap confirm as the factory
-reset. The box has no power button, and pulling the plug is what lost an unread note once already
-(§8), so "shut down, then unplug" is the safe way to move it between rooms. The daemon is
-unprivileged and cannot talk to systemd, so the request goes to the root agent by the same
-enum-validated file channel a Wi-Fi join uses; the agent stops the units the ordinary way, which is
-what flushes the counters and finalises anything mid-write. Where there is no agent — any development
-machine — the panel says the box cannot power itself off rather than reporting a failure.
+reset. The box has no power button, so "shut down, then unplug" is the safe way to move it between
+rooms (§8). The daemon is unprivileged and cannot talk to systemd, so the request goes to the root
+agent by the same enum-validated file channel a Wi-Fi join uses; the agent stops the units the
+ordinary way, which is what flushes the counters and finalises anything mid-write. Where there is no
+agent — any development machine — the panel says the box cannot power itself off rather than
+reporting a failure.
 
 **SSH access** sits below them: the ssh login this box made for itself on its first boot, shown
 only when asked for and hidden again with the same button. A flashed card carries no password of
 its own, because one image is copied onto many cards, so this is the one place the password can be
 read — for whoever is helping debug the box, never needed for setup. On a box installed by hand, or
-from a card built with an explicit password, it says so and shows nothing. `docs/deployment.md` has
-the mechanism.
+from a card built with an explicit password, it says so and shows nothing.
+[`deployment.md`](./deployment.md) § The ssh password has the mechanism.
 
 ### First Boot
 
@@ -388,8 +373,9 @@ the passphrase does not sit in clear text.
 
 ### The config schema
 
-Inferred from the Zod schema in [`../src/config/schema.ts`](../box/software/src/config/schema.ts), which is the
-single source of truth — there is no hand-written parallel interface.
+Inferred from the Zod schema in [`src/config/schema.ts`](../box/software/src/config/schema.ts),
+which is the single source of truth — there is no hand-written parallel interface. Values shown are
+the shipped defaults, except `system`, `wifi` and `contacts`, which show a configured device.
 
 ```json
 {
@@ -452,11 +438,14 @@ Cross-field rules, enforced against the **merged** config on every save:
   (§1, sending, step 6)
 - an enabled contact must have a target
 
-`buttons`, `whatsapp` and `mode` were each added after devices already had a `config.json`, so all
-three use Zod's `.prefault({})` and an absent or partial section fills in from field defaults rather
-than failing validation and wiping the parent's contacts.
+Anything added after devices already had a `config.json` defaults itself, so a file written before
+it still parses rather than failing validation, falling back to defaults and wiping the parent's
+contacts. The `buttons`, `whatsapp` and `mode` sections use Zod's `.prefault({})`; the later
+`audio` fields and `quietHours.timezone` carry field defaults.
 
-`PUT /api/config` accepts **any subset of any section, to any depth**.
+`PUT /api/config` accepts **any subset of any section, to any depth** — except `version`,
+`system.adminPasswordHash` and `system.configured`, which are not client-editable (of `system`, only
+`hostname` is).
 
 ---
 
@@ -481,8 +470,8 @@ isolated behind a Hardware Abstraction Layer.
 │                │ files in /run                                            │
 │                ▼                                                          │
 │  ┌────────────────────────────┐                                           │
-│  │ 3. bloopbox-net (root)     │  nmcli: state, AP up/down, join, forget    │
-│  │    deploy/net-agent.sh     │                                           │
+│  │ 3. bloopbox-net (root)     │  nmcli: state, AP up/down, join, forget;   │
+│  │    deploy/net-agent.sh     │  reboot / poweroff                        │
 │  └────────────────────────────┘                                           │
 └──────────────────────────────────────────────────────────────────────────┘
              │
@@ -504,29 +493,29 @@ isolated behind a Hardware Abstraction Layer.
 
 **Process 2 — `whatsapp-bridge.ts`**
 
-- Maintains the Baileys WhatsApp connection and its credentials in `/data/auth_info`.
-- Downloads inbound voice notes to the RAM disk and notifies process 1 over the IPC contract.
+- Maintains the Baileys WhatsApp connection and its credentials in `/data/auth_info`, written
+  atomically so a power cut cannot unlink the box.
+- Downloads inbound voice notes to the card (`/data/notes`, §8) and notifies process 1 over the IPC
+  contract.
 - Enforces the **whitelist** before downloading anything.
 
 It is deliberately not bound to process 1: WhatsApp is an unofficial API on a release candidate, and
 a crash there must not take the buttons and lights with it.
 
 **Process 3 — `net-agent.sh`**, as root. The daemons run unprivileged under `ProtectSystem=strict`
-and cannot talk to NetworkManager. The agent polls `nmcli` every 5 s and publishes one JSON document
-the daemon reads; the daemon writes back a strictly enum-validated action (`ap-up` / `ap-down` /
-`join` / `forget`). One writer per directory. **A missing or stale reading means *unknown*, and unknown is
-reported as "not down"** — an outage is never invented from silence.
-
-> Earlier drafts of this document said the processes were managed by `pm2` and that GPIO went
-> through `rpio`/`pigpio`. Both are wrong: it is systemd and `opengpio`, and there is a third unit.
+and cannot talk to NetworkManager or systemd. The agent polls `nmcli` every 5 s and publishes one
+JSON document the daemon reads; the daemon writes back a strictly enum-validated action (`ap-up` /
+`ap-down` / `join` / `forget`, plus `reboot` / `poweroff` from the health card). One writer per
+directory. **A missing or stale reading means *unknown*, and unknown is reported as "not down"** —
+an outage is never invented from silence.
 
 ### The safety boundary
 
-[`../src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) accepts **only** the configured
-JIDs. Unknown numbers, groups nobody assigned, status broadcasts, newsletters and the device's own
-echoed sends are all dropped, **before download**, so a stranger's audio never reaches the disk.
-JIDs are normalised first, so a contact is recognised whichever of their linked devices they send
-from.
+[`src/whatsapp/whitelist.ts`](../box/software/src/whatsapp/whitelist.ts) accepts **only** the
+configured JIDs. Unknown numbers, groups nobody assigned, status broadcasts, newsletters and the
+device's own echoed sends are all dropped, **before download**, so a stranger's audio never reaches
+the disk. JIDs are normalised first, so a contact is recognised whichever of their linked devices
+they send from, and under either of WhatsApp's addressing schemes (the phone number or the LID).
 
 For a group target, **membership is the permission**: assigning "the family chat" accepts everyone
 in it. The speaker is logged but not gated on.
@@ -554,31 +543,29 @@ Injected notes are synthesised 1.4 s tones with a distinct pitch per button (G4 
 
 ### Test suite (Vitest)
 
+The suites that lock the behaviour in this document:
+
 | Suite                                  | Verifies                                                                 |
 | -------------------------------------- | ------------------------------------------------------------------------ |
-| `hal.test.ts`                          | Driver selection and the mock's recorded LED output                       |
+| `button.test.ts`                       | Debounce, tap-versus-hold, the carry-on window, the lockout, the silent chord (§1) |
+| `deviceController.test.ts`             | The wiring: cues, capture commit, refusals, the lamp going out when a queue drains (§1) |
+| `deviceState.test.ts`                  | The observable state machine and its change events                        |
 | `ledAnimator.test.ts`                  | Every §6 pattern's digital output, on fake timers                        |
 | `ledPriority.test.ts`                  | The per-LED priority ladder where §6's patterns collide                   |
-| `button.test.ts`                       | Debounce, tap-versus-hold, the carry-on window, the silent chord          |
-| `deviceState.test.ts`                  | The observable state machine and its change events                        |
-| `deviceController.test.ts`             | The wiring: cues, capture commit, the lamp going out when a queue drains  |
 | `audioQueue.test.ts`                   | FIFO ordering when several notes arrive from one contact                  |
-| `purge.test.ts`                        | Auto-deletion of audio older than 48 h                                   |
-| `recovery.test.ts`                     | Rebuilding the unread queue from the recordings directory after a restart |
-| `quietHours.test.ts`                   | The schedule, including a window that wraps past midnight                 |
-| `config.test.ts`, `configDefault.test.ts` | Validation, atomic writes, the fallback, and the `phone` → `target` migration |
-| `whitelist.test.ts`                    | The safety boundary, written from "anything not assigned must not get through" |
-| `whatsappClient.test.ts`               | Disconnect-reason handling, the pairing-code lock, and the deferred-connect gate — all via a mocked socket |
-| `offlineDelivery.test.ts`              | Notes sent while the box was off arriving on reconnect                    |
-| `routes.test.ts`, `adminAuth.test.ts`  | The REST surface and the auth boundary, against a real Express app        |
-| `bridgeLink.test.ts`                   | The token gate, against a real Socket.io server and client                |
-| `captivePortal.test.ts`                | Probe redirection while the hotspot is up, and silence when it is not     |
-| `netState.test.ts`, `networkSupervisor.test.ts` | Reading the agent's document, and when the hotspot goes up      |
-| `payload.test.ts`                      | Narrowing untrusted request bodies                                        |
+| `quietHours.test.ts`                   | The schedule, including a window that wraps past midnight (§7)            |
+| `soundFiles.test.ts`                   | Every designed cue's source recording is committed (§7)                  |
+| `purge.test.ts`, `recovery.test.ts`    | The 48 h TTL, and rebuilding the unread queue after a restart (§8)        |
+| `mediaDownload.test.ts`, `readKeys.test.ts` | Bounded downloads, and read receipts surviving a bridge restart (§8) |
+| `config.test.ts`, `configDefault.test.ts` | Validation, atomic writes, the fallback, and the `phone` → `target` migration (§3) |
+| `networkSupervisor.test.ts`, `netState.test.ts` | When the hotspot goes up, and unknown is not an outage (§3, §4) |
+| `whitelist.test.ts`, `bridge.test.ts`  | The safety boundary, written from "anything not assigned must not get through", and "delete for everyone" (§1, §4) |
+| `stats.test.ts`                        | What the Activity card counts (§3)                                        |
 
-Timing-sensitive suites run on **fake timers**; no test sleeps. Coverage thresholds of 80% are
-declared but **not currently met** (~77% statements / 68% branches) and `npm run check` does not run
-them — `src/whatsapp/` is the large remaining hole. See `PENDING.md`.
+The rest — the server surface and its auth boundary, the GPIO driver on a mocked opengpio, the
+shell scripts, the architecture and documentation checks — and how the suite is run (fake timers,
+real Express apps, the coverage ratchet) are in [`architecture.md`](./architecture.md) § Tests. The
+decisions table there names the test that locks each design decision.
 
 ---
 
@@ -586,8 +573,8 @@ them — `src/whatsapp/` is the large remaining hole. See `PENDING.md`.
 
 All lighting is binary (on/off) with spatial meaning: **Button 1 (left), Button 2 (centre), Button 3
 (right)**. Timings are exported as `LED_TIMINGS` in
-[`../src/core/ledAnimator.ts`](../box/software/src/core/ledAnimator.ts), so the tests assert against the same
-numbers the runtime uses.
+[`src/core/ledAnimator.ts`](../box/software/src/core/ledAnimator.ts), so the tests assert against
+the same numbers the runtime uses.
 
 | Device state | Pattern (1 / 2 / 3) | Animation and timing | Meaning |
 | ------------ | ------------------- | -------------------- | ------- |
@@ -602,13 +589,12 @@ numbers the runtime uses.
 | **Recording** | `[X]` (pressed button) | **Solid on** | Capture in progress — including the carry-on window after release |
 | **Message sent** | `[X]` (pressed button) | 3 fast flashes, 0.1 s on / 0.1 s off | Delivered to WhatsApp |
 
-Two things this table cannot express on its own:
+Three things this table cannot express on its own:
 
 - **Solid always means something is wrong**, except on the single button being held. That is why the
   hotspot got a rhythm instead of a fourth blink rate.
-- **Silent mode has no idle pattern.** It used to pulse the outer pair 0.1 s every 4 s; that was
-  removed on 2026-09-08, because a box being quiet in a dark bedroom should look quiet too. Only the
-  transition above shows, including the scheduled 20:00 / 07:00 edges (§7).
+- **Silent mode has no idle pattern.** A box being quiet in a dark bedroom should look quiet too.
+  Only the transition above shows, including at the scheduled quiet-hours edges (§7).
 - **These patterns collide.** A send flash wants lamp 1 at the same moment an unread message
   does. They are resolved **per lamp, first match wins**, by a fixed priority ladder — see
   [`architecture.md`](./architecture.md#the-led-priority-ladder). The setup hotspot deliberately
@@ -626,19 +612,13 @@ Two things this table cannot express on its own:
 | `boot.wav`    | Designed startup sound (825 ms)       | Recorded  | The device has come up                         |
 | `pop.wav`     | High, ultra-short (90 ms)             | Tones     | A press has passed `recordThresholdMs`. **Plays before the microphone opens** |
 | `whoosh.wav`  | Upward sweep                          | Tones     | A recording has been committed — the only sound a send makes |
-| `oops.wav`    | Low double-beep                       | Tones     | A tap that sends nothing, a failed send, or a hold on a read-only box (§1) |
+| `oops.wav`    | Low double-beep                       | Tones     | Nothing was sent: a tap with nothing waiting, an empty capture, a failed send, or a refused hold — read-only, notes waiting, no contact (§1) |
 | `chime.wav`   | Short soft chime                      | Tones     | Separator between queued notes during playback |
 | `notify.wav`  | Designed arrival sound (318 ms)       | Recorded  | A voice note arrived                           |
 
-Two cues are **beyond the original cue list**. `notify.wav`: §7 never named an inbound chime but
-stated that silent mode suppresses one, which implies it exists. `boot.wav`: §6 defines a boot LED
-pattern but names no sound, and on a box with no screen the noise it makes when power returns is the
-only way a parent across the room learns it came back.
-
-One has been **retired**: `swoosh.wav`, the designed "delivered to WhatsApp" sound. Removed
-2026-08-17 because it played immediately after the whoosh and the pair read as noise rather than as
-two separate facts — see §1, sending, step 5. Its source recording (`success.mp3`) stays in
-`samples/` unreferenced, because a checkout can regenerate a WAV but not a recording.
+`boot.wav` exists because on a box with no screen, the noise it makes when power returns is the only
+way a parent across the room learns it came back. `notify.wav` is the audible half of an arrival;
+the blinking lamp is the half that stays.
 
 **The WAVs are generated, not committed** — `npm run sounds` builds all six, and a fresh clone has
 none. Two of them are **designed recordings**, committed as MP3 under `box/software/src/audio/samples/`
@@ -646,12 +626,14 @@ and mastered by that script; the rest are synthesised from tone recipes in it. B
 WAV per cue into the same directory under the cue's own name, so nothing downstream — the HAL, the
 `/sounds` route, the simulator — can tell which kind a cue is. `aplay` on the device reads WAV and
 nothing else, which is why even the designed sounds are transcoded rather than shipped as authored.
+`samples/` also holds `success.mp3`, the source of the retired "delivered" cue (§1, sending,
+step 5): unreferenced, and kept because a checkout can regenerate a WAV but not a recording.
 
 Mastering is a decision in `scripts/generate-sounds.ts`, not a filter's side effect:
 
-- **Every cue is trimmed to its audible span.** The three sources arrive padded out to a round two or
-  three seconds of silence, and a cue file's length is dwell time on the audio device — untrimmed,
-  "delivered" would hold the speaker for 2 s to say something that takes 400 ms, and the chime
+- **Every cue is trimmed to its audible span.** The recordings arrive padded with seconds of
+  silence, and a cue file's length is dwell time on the audio device — untrimmed, a cue would hold
+  the speaker for seconds to say something that takes a few hundred milliseconds, and the chime
   separating two queued notes would land on top of it.
 - **Peak level is declared per cue on one 0–1 scale**, shared with the synthesised tones' `gain`. The
   designed sounds and the beeps come out of the same small speaker next to a child's ear, so a cue
@@ -674,8 +656,8 @@ Mastering is a decision in `scripts/generate-sounds.ts`, not a filter's side eff
 - The chord toggles the **effective** state, so during scheduled quiet hours a parent can force
   audio back on without editing the schedule. **The override lasts until the next boundary**: sound
   stays on for the rest of that window, and the next window starts silent as scheduled. The
-  schedule is applied only when it changes its mind, never re-asserted in between — it used to be,
-  every 15 minutes, which took the sound away again before a parent had finished the bedtime story.
+  schedule is applied only when it changes its mind, never re-asserted in between — re-asserting it
+  would take the sound away again before a parent had finished the bedtime story.
 
 Behaviour while silent:
 
@@ -684,11 +666,15 @@ Behaviour while silent:
 | Inbound notification chime | **Suppressed.** The lamp blinks silently                            |
 | Boot sound                 | **Suppressed.** Power returns at whatever hour the grid decides; the boot LED chase still runs |
 | Record start / stop cues   | **Suppressed**                                                     |
-| Sent / oops cues           | **Suppressed**                                                     |
-| **Playback of a voice note** | **Not suppressed.** Always plays at the configured volume         |
+| Oops                       | **Suppressed**                                                     |
+| **Playback of a voice note** | **Not suppressed.** Always plays at the configured volume, with the separator chime between notes |
 | LED patterns               | **Unaffected, and nothing added.** The mode shows only as the one-off transition chase |
 
 Playback is never silenced because a child who taps a light expects to hear something.
+
+One consequence worth knowing: because the "oops" is suppressed, **during quiet hours a failed send
+produces no sound at all**, and the missing send flash is the only indication. The same applies to
+every refused hold (§1): at night the child gets the lamp under their finger and nothing else.
 
 **Loudness is four numbers, not one**, because the output chain has four stages and they multiply:
 `speakerVolumePercent` is the digital DAC volume, `ampVolumePercent` the analogue output stage, and
@@ -696,129 +682,151 @@ Playback is never silenced because a child who taps a light expects to hear some
 2026-08-17, the last three powered up at −20 dB, 0 and 0 — leaving the box roughly 26 dB quieter
 than the hardware allows, with no setting of the first able to reach it. All four are in the admin
 panel because the top of the range is not automatically right: the boosts trade headroom for
-distortion, which depends on the speaker and the enclosure. **Amplifier Test speaker** plays the
-start-up cue on demand so the result can be judged by ear, and is the one sound that ignores silent
-mode — someone tuning the box is asking a direct question.
+distortion, which depends on the speaker and the enclosure. **Test speaker**, in the Audio card,
+plays the start-up cue on demand so the result can be judged by ear, and is the one sound that
+ignores silent mode — someone tuning the box is asking a direct question.
 
-**There used to be a second field, `maxVolumeCapPercent`** — a ceiling a parent set once, with the
-volume as the daily knob. It was removed on 2026-08-17. It never delivered the protection it
-implied: both fields sat in the same admin card behind the same save button, so anyone who could
-raise the volume could raise the cap in the same click. What it did deliver was a save that failed
-with an error naming a field the parent had not touched. A ceiling only earns a second field if it
-is harder to change than the thing it caps.
-
-One consequence worth knowing: `oops` is suppressed too, so **during quiet hours a failed send
-produces no sound at all**, and the LED error pattern is the only indication. The same applies to a
-read-only box refusing a hold (§1): at night the child gets the lamp under their finger and nothing
-else.
+**There is no separate volume cap.** A ceiling a parent sets once, behind the same save button as
+the volume it caps, protects nothing — anyone who can raise the volume can raise the cap in the
+same click — and all it adds is a save that fails over a field the parent did not touch. A ceiling
+only earns a second field if it is harder to change than the thing it caps. The hard ceiling is
+`max(100)` on the volume itself.
 
 ---
 
 ## 8. OS protection and storage safety
 
-| Measure | Status |
-| ------- | ------ |
-| **RAM disk for outbound audio (`tmpfs`)** | **Built.** Captures, ffmpeg conversion and decoded playback buffers live in `/run/bloopbox`, via `RuntimeDirectory=` in both units. `/run` is already a tmpfs, so **nothing the child records** ever touches the card or can fill it |
-| **Inbound notes on the card** | **Built 2026-09-06.** Arriving notes go to `/data/notes` so an unheard one survives a power cut — the most likely restart in a child's room. Bounded by the same 48 h purge, and deleted the moment they are played. See §1 |
-| **Inbound downloads bounded** | **Built 2026-09-24.** A note is refused over 2 MB — declared or delivered — and an attempt times out after 60 s, with two retries on a network failure. It is written as `<name>.part`, synced, and renamed into place only when complete, so a power cut mid-download never leaves something boot recovery would take for an unread note |
-| **Automatic purge (TTL)** | **Built.** Audio is deleted 48 h after creation whether it has been heard or not, swept hourly — except a note still queued behind a blinking lamp, which waits for the tap rather than vanishing from under it (the queue itself does not outlive a restart past the 8 h recovery window). Playback deletes a note immediately |
-| **Atomic config writes** | **Built.** Temp file → `fsync` → `rename`. A half-written config during power loss would brick the device |
-| **Shut down without pulling the plug** | **Built 2026-09-06.** The box has no power button, and an unplug mid-write is what motivated the row above it. *Device health* → **Shut down** stops the units the ordinary way, which flushes the activity counters and finalises anything in flight. See §3 |
-| **Fallback on invalid config** | **Built.** A missing or corrupt `/data/config.json` falls back to `config.default.json` **in RAM** and boots into onboarding. It never crashes the daemon |
-| **Hardware watchdog** | **Built.** BCM watchdog plus its systemd half, 15 s, so a wedged device reboots itself |
+| Measure | What it does |
+| ------- | ------------ |
+| **RAM disk for outbound audio (`tmpfs`)** | Captures, ffmpeg conversion and decoded playback buffers live in `/run/bloopbox`, via `RuntimeDirectory=` in both units. `/run` is already a tmpfs, so **nothing the child records** ever touches the card or can fill it |
+| **Inbound notes on the card** | Arriving notes go to `/data/notes` so an unheard one survives a power cut — the most likely restart in a child's room. Bounded by the same 48 h purge, and deleted the moment they are played. See §1 |
+| **Inbound downloads bounded** | A note is refused over 2 MB — declared or delivered — and an attempt times out after 60 s, with two retries on a network failure. It is written as `<name>.part`, synced, and renamed into place only when complete, so a power cut mid-download never leaves something boot recovery would take for an unread note |
+| **Automatic purge (TTL)** | Audio is deleted 48 h after creation whether it has been heard or not, swept hourly — except a note still queued behind a blinking lamp, which waits for the tap rather than vanishing from under it (the queue itself does not outlive a restart past the 8 h recovery window). Playback deletes a note immediately |
+| **Atomic writes** | `config.json`, `stats.json` and the WhatsApp credentials are written to a temp file, `fsync`ed, renamed into place and the directory `fsync`ed, so a power cut leaves the old file or the new one, never neither. A half-written config would brick the device; half-written credentials would silently unlink it |
+| **Shut down without pulling the plug** | The box has no power button. *Device health* → **Shut down** stops the units the ordinary way, which flushes the activity counters and finalises anything in flight. See §3 |
+| **Fallback on invalid config** | A missing or corrupt `/data/config.json` falls back to `config.default.json` **in RAM** and boots into onboarding. It never crashes the daemon |
+| **Hardware watchdog** | BCM watchdog plus its systemd half, 15 s, so a wedged device reboots itself |
 | **Read-only root filesystem (`overlayfs`)** | **Specified, not built.** `/data` currently lives *on* the root filesystem, so enabling the overlay would send every setting and the WhatsApp credentials into a RAM overlay, to vanish on reboot — a worse failure, and a silent one. It needs `/data` on its own partition first. See `PENDING.md` |
 
 Notes are **rebuilt into the unread queue at boot**, within an 8-hour window, by scanning the notes
-directory. Since 2026-09-06 that directory is on the card, so this now survives a **power cycle**
-too, not only a daemon restart.
+directory. Because that directory is on the card, this survives a **power cycle**, not only a daemon
+restart.
 
-It did not always. A note arrived, the lamp blinked, the power went out, and the note was gone —
-because playback *deletes* a note's file, which makes "present on disk" the unread flag itself.
-There is no second read-state store, so a directory in RAM lost the audio and the record that it had
-ever existed, together. WhatsApp will not re-deliver a message it has already handed over, so the
-note was unrecoverable.
+The notes have to be on the card for that to work. Playback *deletes* a note's file, which makes
+"present on disk" the unread flag itself; there is no second read-state store. A notes directory in
+RAM would lose, in one power cut, both the audio and the record that it had ever existed — and
+WhatsApp will not re-deliver a message it has already handed over, so the note would be
+unrecoverable.
 
 The privacy cost was weighed, not waved through. `/data` already holds `auth_info`, the linked
 WhatsApp session — anyone who can take the card can already speak as this account, which is worse
 than reading one voice note. Against that, a note is deleted the instant it is played, swept at 48 h
-regardless, and **the child's own recordings still never leave RAM**. The promise that changed is
-"no audio is ever at rest". The promise kept is "nothing the child records is ever at rest".
+regardless, and **the child's own recordings still never leave RAM**. The promise is "nothing the
+child records is ever at rest", not "no audio is ever at rest".
 
 Each inbound note has one small companion on the card, `wa-<i>-<id>.key`: the WhatsApp message key
 (the chat's address, the message id) needed to send the sender their read receipt, so the receipt
-survives a restart of the WhatsApp bridge. Decided 2026-10-02 on the same terms as the audio: it is
-deleted when the receipt is sent or the sender deletes the note, and otherwise purged with the audio
-at 48 h.
+survives a restart of the WhatsApp bridge. It is kept on the same terms as the audio: deleted when
+the receipt is sent or the sender deletes the note, and otherwise purged with the audio at 48 h.
 
 ---
 
 ## 9. Directory layout
 
+The box software, `box/software/` in the monorepo. The documentation lives in `docs/` at the
+repository root; the root [`README.md`](../README.md) has the monorepo layout.
+
 ```text
-bloopbox/
+box/software/
 ├── package.json                    # "type": "module" — ships in the release, load-bearing
 ├── tsconfig.json                   # src/ + scripts/: node libs, no DOM
 ├── tsconfig.web.json               # public/: DOM libs, whitelisted shared imports
 ├── tsconfig.build.json             # emit config
 ├── vite.config.ts                  # four UI entries, bundled with Rolldown
-├── vitest.config.ts
+├── vitest.config.ts                # includes the coverage ratchet
 ├── config.default.json             # fallback, resolved relative to dist/
 ├── src/
 │   ├── config/
 │   │   ├── schema.ts               # Zod schema — the source of truth for every config type
-│   │   └── configManager.ts        # atomic load / validate / merge / write
+│   │   ├── configManager.ts        # load / validate / merge / write
+│   │   └── atomicWrite.ts          # temp file, fsync, rename, fsync the directory
 │   ├── core/                       # pure, I/O-free domain logic
 │   │   ├── buttonInterpreter.ts    # edges → intents: tap, record, carry on, chord
 │   │   ├── ledAnimator.ts          # state → LED frames, and the priority ladder
 │   │   ├── deviceState.ts          # the observable state, in one place
 │   │   ├── networkSupervisor.ts    # when the setup hotspot goes up
 │   │   ├── quietHours.ts           # the schedule, wrapping past midnight
-│   │   └── deviceController.ts     # the wiring, and the only place I/O appears
+│   │   └── deviceController.ts     # the wiring; I/O only through what it is handed
 │   ├── hal/
 │   │   ├── types.ts                # the interface: buttons, LEDs, audio in and out
 │   │   ├── index.ts                # factory; loads opengpio via dynamic import()
-│   │   ├── gpioDriver.ts           # the real Pi. UNVERIFIED
+│   │   ├── gpioDriver.ts           # the real Pi; proven on the reference board
+│   │   ├── settledLine.ts          # settles switch bounce on a button line
 │   │   ├── simulatorDriver.ts      # browser canvas over Socket.io
 │   │   └── mockDriver.ts           # tests; records every setLed with a timestamp
 │   ├── audio/
+│   │   ├── samples/                # the designed cue recordings, MP3
 │   │   ├── sounds/                 # generated cue WAVs — not committed
 │   │   ├── cues.ts                 # the cue vocabulary; shared with the browser
+│   │   ├── soundFiles.ts           # where each cue's WAV and source recording live
+│   │   ├── directories.ts          # where audio lives: RAM for captures, the card for notes
 │   │   ├── ffmpeg.ts               # the Opus/ogg pipeline both ways
+│   │   ├── process.ts              # runs ffmpeg and amixer, each with a deadline
 │   │   ├── queueManager.ts         # sequential per-contact playback
 │   │   ├── purge.ts                # the 48 h TTL sweep
-│   │   └── recovery.ts             # rebuild the unread queue after a restart
+│   │   ├── recovery.ts             # rebuild the unread queue after a restart
+│   │   └── testNote.ts             # the simulator's injected notes
 │   ├── whatsapp/
+│   │   ├── bridge.ts               # the bridge's decisions: whitelist, download, receipts
 │   │   ├── client.ts               # Baileys socket, reconnect ladder, send path
-│   │   └── whitelist.ts            # THE SAFETY BOUNDARY
+│   │   ├── whitelist.ts            # THE SAFETY BOUNDARY
+│   │   ├── authState.ts            # WhatsApp credentials, written atomically
+│   │   ├── mediaDownload.ts        # bounded downloads onto the card
+│   │   ├── readKeys.ts             # the read-receipt key beside each note
+│   │   ├── holdUntilReady.ts       # holds deliveries until the whitelist has arrived
+│   │   ├── privacy.ts              # masks addresses in logs
+│   │   └── statusCode.ts           # why Baileys closed the socket
 │   ├── server/
 │   │   ├── routes.ts               # the REST surface
 │   │   ├── auth.ts                 # HTTP Basic against a bcrypt hash
+│   │   ├── csrf.ts                 # cross-site request and framing defences
 │   │   ├── bridgeLink.ts           # the token-gated /bridge namespace
 │   │   ├── captivePortal.ts        # probe redirection while the hotspot is up
+│   │   ├── socketListeners.ts      # Socket.io on both HTTP listeners
+│   │   ├── binary.ts               # binary payloads on the Socket.io transport
 │   │   └── simulatorTransport.ts   # the browser end of the simulator
 │   ├── net/netState.ts             # reads what the root agent publishes
 │   ├── stats/statsStore.ts         # what each button has carried, on the card
 │   ├── system/
 │   │   ├── systemInfo.ts           # temperature, uptime, load, memory, card space
+│   │   ├── recentEvents.ts         # the health card's "Recently" list
+│   │   ├── sshAccess.ts            # the first-boot ssh login, for the health card
 │   │   └── power.ts                # asks the root agent to reboot or shut down
 │   ├── ipc/
 │   │   ├── events.ts               # the IPC contract — edit this first
-│   │   └── noteFiles.ts            # how an inbound note is named on the card
+│   │   ├── noteFiles.ts            # how an inbound note is named on the card
+│   │   └── payload.ts              # narrowing untrusted payloads
 │   ├── processes/
 │   │   ├── hardware-server.ts      # daemon 1
-│   │   └── whatsapp-bridge.ts      # daemon 2
+│   │   ├── whatsapp-bridge.ts      # daemon 2
+│   │   └── shutdown.ts             # an orderly, bounded exit for both
+│   ├── types/opengpio.d.ts         # the slice of opengpio the GPIO driver uses
+│   ├── logger.ts                   # pino, a child logger per subsystem
 │   └── tests/                      # Vitest, node environment
 ├── public/                         # outside src/, built by Vite
-│   ├── shared/                     # tokens.css, base.css, dom.ts, theme.ts, the mark
+│   ├── shared/                     # tokens.css, base.css, dom.ts, theme.ts, the logo files
 │   ├── admin/                      # parent settings
 │   ├── simulator/                  # the virtual device
 │   ├── portal/                     # first-boot setup, over the hotspot. No Socket.io
 │   └── brand/                      # the living brand kit
 ├── deploy/                         # systemd units, install.sh, net-agent.sh, the debug kit
 ├── packaging/                      # Dockerfile.release, versions.env, fake-nmcli.sh
-├── scripts/                        # dev server, sounds, doctor, release and image builders
-├── docs/                           # this file, architecture, hardware, deployment, bring-up, brand
-└── /data/                          # persistent, gitignored, on the device
-    ├── config.json                 # generated during onboarding
-    └── auth_info/                  # Baileys credentials
+└── scripts/                        # dev server, sounds, doctor, release and image builders
+
+/data/                              # persistent, on the device's card
+├── config.json                     # generated during onboarding
+├── stats.json                      # the Activity card's totals
+├── auth_info/                      # Baileys credentials
+├── notes/                          # inbound notes and their read-receipt keys
+└── ssh-password                    # the first-boot ssh login, when the box made one
 ```

@@ -5,8 +5,9 @@ or a **flashable SD card image** with everything already in place.
 
 Both are produced by Docker on a dev machine or by CI, and the Pi compiles nothing.
 
-For a **first** device, follow [`hardware-bringup.md`](./hardware-bringup.md) rather than this page:
-it sequences the unverified subsystems so only one is in play at a time.
+For a **new board** — the Pi Zero 2 W target included — follow
+[`hardware-bringup.md`](./hardware-bringup.md) rather than this page: it sequences the subsystems so
+only one unproven thing is in play at a time, and it carries the debugging kit.
 [`hardware.md`](./hardware.md) is the wiring and the parts list.
 
 ## The target is Raspberry Pi OS Trixie, 64-bit
@@ -23,64 +24,100 @@ Pi OS Lite arm64 image is Trixie anyway.
 32-bit is not a target either: Node publishes no official armv6 build, and the Pi Zero 2 W is a
 Cortex-A53, so arm64 is both available and faster.
 
-Everything pinned — base images, the Pi OS image and its checksum, apt package lists — lives in
-[`packaging/versions.env`](../box/software/packaging/versions.env).
+Everything pinned — the Node and Debian base images, the Pi OS image and its checksum, the apt
+package lists, the root-partition growth — lives in
+[`packaging/versions.env`](../box/software/packaging/versions.env), sourced by every release script.
 
 ## Building a release
 
+From `box/software/`:
+
 ```bash
-npm run release            # -> release/bloopbox-<version>-linux-arm64.tar.gz
-npm run release:smoke      # boot it in a bare arm64 Debian Trixie container
+npm run release            # -> release/bloopbox-<version>-linux-arm64.tar.gz (+ .sha256)
+npm run release:smoke      # install and boot it in a bare arm64 Debian Trixie container
 ```
 
-The tarball (~58 MB, ~190 MB unpacked) carries:
+The tarball (~58 MB) carries:
 
 | Contents                         | Why it is in there                                                                                                                      |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `dist/`                          | Compiled server, both UIs, and the generated cue WAVs                                                                                   |
+| `dist/`                          | Compiled server, the browser UIs, and the generated cue WAVs                                                                            |
 | `node_modules/`                  | Built **for arm64**, including the compiled `opengpio` addon and sharp's prebuilt libvips. A macOS `npm ci` tree is the wrong platform. |
 | `node/bin/node`                  | The runtime, lifted out of the build image so the native addon's ABI and the runtime that loads it cannot disagree                      |
 | `package.json`                   | Not optional: without `"type": "module"` beside `dist/`, node rejects every import in it                                                |
 | `config.default.json`            | What the daemon falls back to, resolved relative to `dist/`                                                                             |
-| `install.sh`, `doctor.sh`, units | Everything below                                                                                                                        |
+| `deploy/`, flattened             | `install.sh`, the operational scripts, the systemd units and `environment.example`                                                      |
+| `release.env`                    | Version, git SHA, build date and Node version, which `install.sh` and `bloopbox-doctor` print                                            |
 
 On an Apple Silicon or arm64 Linux host this is a native build. On x86 it runs under QEMU —
 correct but slow — and needs `docker run --privileged --rm tonistiigi/binfmt --install arm64`
-once.
+once. The timestamps are pinned to the last commit (`SOURCE_DATE_EPOCH`), so rebuilding the same
+tree gives the same bytes.
 
 The build fails loudly if `opengpio` did not compile. `opengpio` is an `optionalDependency`, so
 npm shrugs off a failed build, and a release that shipped without it would install fine and
 produce a device with three dead buttons.
 
+`release:smoke` runs the installer for real in a container with no systemd, then boots both
+daemons on the mock HAL and checks the API, the panel, a cue and the bridge's token handshake — run
+it after touching `deploy/` or `packaging/`. `scripts/test-onboarding.sh` drives first-boot
+onboarding (hotspot, portal, scan, join) against the same tarball with only `nmcli` faked.
+
 ## Installing on a Pi
 
 ```bash
-scp release/bloopbox-0.1.0-linux-arm64.tar.gz pi@bloopbox.local:
-ssh pi@bloopbox.local
+scp release/bloopbox-0.1.0-linux-arm64.tar.gz <user>@bloopbox.local:
+ssh <user>@bloopbox.local
 tar xzf bloopbox-0.1.0-linux-arm64.tar.gz
-sudo ./bloopbox-0.1.0-linux-arm64/install.sh
+sudo ./bloopbox-0.1.0-linux-arm64/install.sh --audio-hat wm8960
+sudo reboot
 ```
 
 What it does:
 
-- `apt-get install ffmpeg alsa-utils libgpiod3` — the only three things npm cannot supply
+- `apt-get install ffmpeg alsa-utils libgpiod3 dnsmasq-base` — the four things npm cannot supply
+  (`dnsmasq-base` is the setup hotspot's DHCP and DNS) — plus `i2c-tools` for `--audio-hat wm8960`
 - creates the `bloopbox` system user, in the `gpio` and `audio` groups
-- creates `/data` (settings, WhatsApp credentials) owned by that user
+- creates `/data` (settings, WhatsApp credentials, inbound notes) owned by that user
 - installs the app to `/opt/bloopbox`, staged and swapped so a failed copy cannot leave
-  half an application behind
-- writes `/etc/bloopbox/environment` with a **generated** `BRIDGE_TOKEN`
-- installs and enables the systemd units
-- appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups and the watchdog,
-  opened with an explicit `[all]` so it never inherits a board filter such as `[cm4]` that the
-  file happened to end on
+  half an application behind, and links `bloopbox-doctor`, `-audio-test`, `-diagnostics`,
+  `-debug` and `-hotspot-test` into `/usr/local/bin`
+- writes `/etc/bloopbox/environment` with a **generated** `BRIDGE_TOKEN`, and
+  `/etc/bloopbox/profile` (below)
+- gives NetworkManager's shared-mode dnsmasq a wildcard (`address=/#/10.42.0.1`), which is what
+  makes a phone's captive-portal sheet open on the hotspot
+- installs and enables the systemd units, and the userspace half of the hardware watchdog
+  (`RuntimeWatchdogSec=15s`)
+- appends a marked block to `/boot/firmware/config.txt`: the GPIO pull-ups, the watchdog and any
+  HAT overlay, opened with an explicit `[all]` so it never inherits a board filter such as `[cm4]`
+  that the file happened to end on
+- adds `cgroup_enable=memory cgroup_memory=1` to `cmdline.txt`. Pi firmware switches the memory
+  controller off on boards with this little RAM, and without it every `MemoryHigh` / `MemoryMax`
+  below is inert
 - pins the journal to RAM (`journald.conf.d/50-bloopbox.conf` — see "When something is wrong")
 - restarts the services
+
+**The reboot is not optional.** The pull-ups, the HAT overlay and the memory controller are all
+firmware or kernel settings: until the reboot the buttons float and there is no sound card.
 
 Re-running it is an upgrade: `/data` and the environment file are left alone, so the parent's
 settings and the WhatsApp pairing survive.
 
+Then check it:
+
+```bash
+sudo bloopbox-doctor
+sudo bloopbox-audio-test    # speaker out, microphone in, played back
+```
+
+`bloopbox-doctor` is the bash counterpart to `npm run doctor` — the tsx version cannot run on the
+device, which has no devDependencies. It checks the runtime, the addon, ffmpeg's Opus encoder, the
+ALSA devices, mixer controls and routing, the firmware pull-ups and audio profile, `/data`, the
+tmpfs, the cue files, the services, the network agent and the clock.
+
 Useful flags: `--skip-deps`, `--no-boot-config`, `--no-watchdog`, `--no-start`, `--simulator`
-(runs the browser simulator HAL on a box with no buttons), `--prefix`, `--data-dir`, `--user`.
+(runs the browser simulator HAL on a box with no buttons), `--prefix`, `--data-dir`, `--user`,
+`--boot-dir`, `--force`.
 
 Two describe the hardware rather than the install, and both write into
 `/etc/bloopbox/environment` — which means their **environment half only takes effect on a first
@@ -89,11 +126,11 @@ tells you to edit it:
 
 | Flag | Effect |
 | ---- | ------ |
-| `--audio-hat wm8960` | Adds `dtoverlay=wm8960-soundcard`, `dtparam=i2c_arm=on` and `dtparam=audio=off` to `config.txt`, installs `i2c-tools`, and writes the codec's ALSA device, mixer and capture-rate settings. **No sound card exists until the reboot.** |
-| `--no-leds` | `LED_PINS=` — claim no output lines. The three logical channels remain; `setLed` is a no-op |
+| `--audio-hat wm8960` | Adds `dtoverlay=wm8960-soundcard`, `dtparam=i2c_arm=on` and `dtparam=audio=off` to `config.txt`, installs `i2c-tools`, and writes the codec's ALSA device, mixer controls, routing switches and capture rate. **No sound card exists until the reboot.** |
+| `--no-leds` | `LED_PINS=` — claim no output lines. The three logical channels remain; `setLed` is a no-op. Only for a board with no lamps wired |
 
-Together they are the MVP board (`docs/hardware.md`): a Pi 3B+, the HAT, the HAT's own button as
-button 1, no lamps.
+The reference board (`hardware.md`) — a Pi 3B+ with the HAT, three buttons and three lamps — is
+`--audio-hat wm8960` and **never `--no-leds`**.
 
 ### The box remembers which board it is
 
@@ -103,7 +140,7 @@ correct and keeps the board it finds.
 
 ```
 AUDIO_HAT=wm8960
-NO_LEDS=true
+NO_LEDS=false
 ```
 
 Machine-written, world-readable, and not the place for settings — those go in `environment` next
@@ -111,15 +148,14 @@ to it. The resolution order is:
 
     explicit flag  >  /etc/bloopbox/profile  >  inferred from an existing environment  >  usb
 
-The third step is a migration for boxes installed before the file existed: an environment naming
+The third step covers a box installed before the file existed: an environment naming
 `wm8960soundcard` means a wm8960 board, and an empty `LED_PINS=` means no lamps.
 
 **Why it exists.** `environment` is written once and never rewritten, but the `# >>> bloopbox >>>`
-block in `config.txt` is deleted and regenerated on *every* install. A profile that lived only in
+block in `config.txt` is deleted and regenerated on *every* install. A profile that lived only on
 the command line was therefore lost the first time anyone re-ran the installer without the flags,
-leaving the environment pointing at a codec whose overlay had just been removed. That is exactly
-what happened on 2026-09-07: the box booted, joined Wi-Fi, connected to WhatsApp, reported
-`READY` — and had no sound card at all. See `PENDING.md`.
+leaving the environment pointing at a codec whose overlay had just been removed. The box booted,
+joined Wi-Fi, reported `READY` — and had no sound card at all (2026-09-07; `PENDING.md`).
 
 Two guards stand behind the record:
 
@@ -131,65 +167,50 @@ Two guards stand behind the record:
   would make it audible, and the admin panel's health card says the same thing in words a parent
   can act on.
 
-```bash
-sudo ./install.sh --audio-hat wm8960 --no-leds
-```
-
-Then check it:
-
-```bash
-sudo bloopbox-doctor
-sudo bloopbox-audio-test    # speaker out, microphone in, played back
-```
-
-For a first device — where the GPIO, ALSA and hotspot paths have never run — follow
-[`hardware-bringup.md`](./hardware-bringup.md) instead of improvising: it sequences the gates so
-only one unverified subsystem is in play at a time, and it carries the debugging kit.
-
-That is the bash counterpart to `npm run doctor` — the tsx version cannot run on the device,
-which has no devDependencies. It checks the runtime, the addon, ffmpeg's Opus encoder, the ALSA
-devices, the firmware pull-ups, `/data`, the tmpfs, the cue files and both services.
-
 ## Building a ready-to-run SD card
 
 ```bash
-sudo ./scripts/build-sd-image.sh --wifi-ssid Home --wifi-psk secret --wifi-country DE
-# -> release/bloopbox-<version>-<pi-os-date>-sd.img.xz  (~660 MB)
-
-# For the reference board — Pi 3B+ with the WM8960 HAT, three buttons and three lamps:
+# The reference board — Pi 3B+ with the WM8960 HAT, three buttons and three lamps:
 sudo ./scripts/build-sd-image.sh --audio-hat wm8960
-# -> release/bloopbox-<version>-<pi-os-date>-wm8960.img.xz
+# -> release/bloopbox-<version>-<pi-os-image>-wm8960.img.xz  (~660 MB), plus .sha256 and .credentials.txt
+
+# With the family Wi-Fi baked in (local builds only — see CI below):
+sudo ./scripts/build-sd-image.sh --audio-hat wm8960 --wifi-ssid Home --wifi-psk secret --wifi-country DE
 ```
+
+`<pi-os-image>` is `PI_OS_IMAGE` from `versions.env` (today `2026-06-18-raspios-trixie-arm64-lite`).
+It takes the newest tarball in `release/`, so run `npm run release` first.
 
 **Match the flags to the board.** `--audio-hat` and `--no-leds` are passed straight through to
 `install.sh` inside the image, and they are the difference between a card that works on a board
-and one that boots with the wrong ALSA device, or with its lamps never driven. `--no-leds` is only
-for a board with no lamps wired; the reference board has all three, so never pass it there. It
-belonged to the first, lampless bring-up board of 2026-08-10, which no longer exists. Getting it wrong means ssh-ing in to re-run the installer, which is the whole thing the
-image exists to avoid. A non-default profile goes into the filename, so two boards' images cannot
+and one that boots with the wrong ALSA device, or with its lamps never driven. Getting it wrong
+means ssh-ing in to re-run the installer, which is the whole thing the image exists to avoid. A
+non-default profile goes into the filename (`-wm8960`, `-noleds`), so two boards' images cannot
 overwrite each other in `release/`, and the `.credentials.txt` beside the image records the exact
 `install.sh` line it was built with.
 
 Flash it with Raspberry Pi Imager (**Use custom**) or `dd`, put the card in, power up. No ssh
 step, no install step. The card carries the daemons enabled, ffmpeg and libgpiod, the firmware
-pull-ups, ssh on, a login user, and optionally your Wi-Fi.
+settings, ssh on, a login user (`bloop` by default), and optionally your Wi-Fi. First boot expands
+the root filesystem and reboots once.
 
 It needs Linux and root — it attaches the image to loop devices and chroots into it. On macOS,
-use CI or a privileged container:
+use a privileged container, from `box/software/`:
 
 ```bash
 docker run --rm --privileged --platform linux/arm64 \
   -v "$PWD":/repo -v "$PWD/release/image-work/cache":/work/cache:ro -w /repo \
   debian:trixie-slim bash -c 'apt-get update -qq && apt-get install -y --no-install-recommends \
     curl xz-utils parted e2fsprogs dosfstools openssl ca-certificates util-linux mawk zerofree && \
-    ./scripts/build-sd-image.sh --work-dir /work'
+    ./scripts/build-sd-image.sh --work-dir /work --audio-hat wm8960'
 ```
 
 **`--work-dir /work` is load-bearing there, not a preference.** The scratch image is copied with
 `cp --sparse=always`, which punches holes, and a bind mount of a macOS directory cannot — Docker
 Desktop and OrbStack both fail with `error deallocating: Invalid argument` on the very first copy.
 `/work` is the container's own filesystem, which can. Binding `…/image-work/cache` in separately is
-what keeps the ~500 MB Pi OS download between runs, since the cache lives under the work dir.
+what keeps the ~500 MB Pi OS download between runs, since the cache lives under the work dir. It
+is mounted read-only, so the cache has to be filled once first: drop `:ro` for that run.
 
 Options: `--hostname`, `--user`, `--password` (see [the ssh password](#the-ssh-password)),
 `--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--audio-hat`, `--no-leds`, `--no-ssh`,
@@ -198,18 +219,20 @@ Options: `--hostname`, `--user`, `--password` (see [the ssh password](#the-ssh-p
 ### What the builder does to the stock image
 
 1. Downloads the pinned Pi OS Lite arm64 image and **verifies its checksum**.
-2. Grows the file and the root partition by 1792 MB — Lite has nowhere near enough free space
-   for the bundled runtime plus ffmpeg. First boot still expands the partition to fill the real
-   card: the `resize` token in `cmdline.txt` is untouched and the root partition stays last.
+2. Grows the file and the root partition by `IMAGE_GROW_MB` (1792 MB) — Lite has nowhere near
+   enough free space for the bundled runtime plus ffmpeg. First boot still expands the partition
+   to fill the real card: the `resize` token in `cmdline.txt` is untouched and the root partition
+   stays last.
 3. Attaches each partition as its own loop device, using offsets from the partition table
    rather than `losetup --partscan`, which needs a udev that no container has.
-4. `apt-get install`s the runtime packages inside the image, then runs the same `install.sh`
-   the ssh route uses, with `--no-start` plus any hardware-profile flags: units are enabled
+4. `apt-get install`s `RUNTIME_PACKAGES` inside the image, then runs the same `install.sh` the ssh
+   route uses, with `--skip-deps --no-start` plus any hardware-profile flags: units are enabled
    offline and come up on first boot. An image for the WM8960 board differs from the default one
    *only* in what that one command writes to `/etc/bloopbox/environment` and `config.txt`.
+   Because of `--skip-deps`, a wm8960 image carries **no `i2c-tools`** (`PENDING.md`).
 5. Seeds the device: hostname, `userconf.txt`, the `ssh` marker, a NetworkManager keyfile for
    Wi-Fi, and two plain-text files on the boot partition (below).
-6. Zeroes the free blocks and compresses.
+6. Zeroes the free blocks (when `zerofree` is present) and compresses.
 
 The login user is handed to Pi OS's own `userconfig.service` through `userconf.txt` rather than
 created by hand. The image ships a `pi` user which that service renames, keeping its group
@@ -274,20 +297,18 @@ fallback if the new network turns out to be wrong.
 Two details that are easy to undo by accident:
 
 - **An open network removes the security setting outright** (`remove 802-11-wireless-security`).
-  `wifi-sec.key-mgmt none` looks like "open" and is static WEP to NetworkManager, which then fails
-  for want of a key — found on hardware for the hotspot on 2026-08-10, and fixed in
-  `wifi-apply.sh` only on 2026-09-24, so until then an open network typed into the admin panel
-  never connected.
+  `wifi-sec.key-mgmt none` looks like "open" but is static WEP to NetworkManager, which then fails
+  for want of a key.
 - **`nmcli --wait 10 con up`**, never the bare form. This runs inside the hardware unit's
   `ExecStartPre`, and nmcli's default is to wait 90 s for a network that is out of range — 90 s
   of dark buttons at boot and after every settings save. Activation carries on inside
   NetworkManager after nmcli stops waiting.
 
-The **AP / captive-portal fallback is built** — `PRODUCT.md` §3 (First Boot) describes the
-behaviour, and the pieces are NetworkManager's own AP mode (not `hostapd`), an open network, the root
-`bloopbox-net.service` below doing the privileged work while the unprivileged daemon serves
-`public/portal/`, the two talking through files in `/run`. None of it has touched a real radio yet;
-`PENDING.md` lists exactly what only a phone in the room can show.
+When no network is reachable the device raises its own **setup hotspot** — `PRODUCT.md` §3 (First
+Boot) describes the behaviour. The pieces are NetworkManager's own AP mode (not `hostapd`), an open
+network, the root `bloopbox-net.service` below doing the privileged work while the unprivileged
+daemon serves `public/portal/`, the two talking through files in `/run`. It has onboarded the
+reference board (bench, 2026-09-30).
 
 Editing the file on the boot partition therefore stays the **recovery** path rather than the primary
 one: it is what gets you back in when even the hotspot cannot be reached.
@@ -296,7 +317,7 @@ one: it is what gets you back in when even the hotspot cannot be reached.
 
 The hardware daemon runs as `bloopbox` under `ProtectSystem=strict`; it cannot talk to
 NetworkManager and should not be able to. So [`deploy/net-agent.sh`](../box/software/deploy/net-agent.sh) runs
-as root from `bloopbox-net.service`, polls `nmcli` every 5s and publishes one small JSON document:
+as root from `bloopbox-net.service`, polls `nmcli` every 5 s and publishes one small JSON document:
 
 ```
 /run/bloopbox-net/net-state.json   root writes, everyone reads   (the agent)
@@ -308,7 +329,7 @@ Two directories, one writer each. That is deliberate: the agent must never end u
 
 The daemon reads it through `src/net/netState.ts` and turns it into the Wi-Fi Error LED pattern.
 The rule there is worth knowing before debugging a device that "won't show the error": a missing
-file, an unparseable one, a reading older than 30s, or an agent that found no `nmcli` all mean
+file, an unparseable one, a reading older than 30 s, or an agent that found no `nmcli` all mean
 **unknown**, and unknown is reported as "not down". Only a fresh reading that explicitly says the
 network is gone lights the LEDs. Inventing an outage from missing information would light all
 three LEDs on any dev machine and on any device whose agent died.
@@ -320,8 +341,8 @@ shell; that allowlist is the whole security model of the boundary. Root opens th
 following a symlink or blocking, and ignores anything that is not a regular file of at most 4 KiB.
 
 **The agent never deletes the request, and must not try.** Under `ProtectSystem=strict` the
-daemon's runtime directory is read-only to `bloopbox-net.service`. The agent used to `rm -f` it,
-the `rm` failed silently, and the action would have run again on every 5 s poll. Now:
+daemon's runtime directory is read-only to `bloopbox-net.service`, so an `rm` there fails silently
+and the action would run again on every poll. Instead:
 
 1. every request carries a fresh `id` (`writeAgentRequest` in `src/net/netState.ts`);
 2. the agent acts on each id once, recording it in `/run/bloopbox-net/handled-request-id` before
@@ -330,8 +351,9 @@ the `rm` failed silently, and the action would have run again on every 5 s poll.
 4. the daemon, the file's only writer, deletes the request when it sees its own id come back, and
    leaves a newer request alone.
 
-A request with no id (hand-written, or from an older `bloopbox-hotspot-test`) is named by a hash of
-its content, so it also runs only once.
+A request with no id (hand-written) is named by a hash of its content, so it also runs only once.
+`scripts/test-net-agent-sandbox.sh` runs the shipped agent under the unit's own sandbox properties,
+because no container test has a systemd to apply them.
 
 **The list is wider than networking.** `reboot` and `poweroff` arrive here too, from the admin
 panel's *Device health* card via `src/system/power.ts`, because this agent is the only process in
@@ -360,9 +382,9 @@ scoped to the profile bloopbox manages: a network the imager seeded is left alon
 built with `--wifi-ssid` rejoins after a reset instead of offering a hotspot, and is re-onboarded
 over the network it is already on.
 
-When the hotspot goes up is decided in `src/core/networkSupervisor.ts`: 20s of no network on an
-unconfigured device, 3 minutes on a configured one (a flat 30s would pop a hotspot into the house
-every time the router reboots), then every 60s the hotspot steps aside for a 30s join attempt —
+When the hotspot goes up is decided in `src/core/networkSupervisor.ts`: 10 s of no network on an
+unconfigured device, 3 minutes on a configured one (a flat 30 s would pop a hotspot into the house
+every time the router reboots), then every 60 s the hotspot steps aside for a 30 s join attempt —
 unless the device was never configured, in which case there is nothing to rejoin and it stays up.
 
 The reading also carries **`timeSynced`**, which has nothing to do with Wi-Fi and is here because
@@ -383,26 +405,30 @@ that `nmcli` and dnsmasq are installed. It also fails if no time-sync service is
 `/etc/systemd/journald.conf.d/50-bloopbox.conf` (`Storage=volatile`, `RuntimeMaxUse=8M` — small
 because `/run` is one tmpfs and the recordings live there too) rather than trusting whatever the OS
 image defaults to: plain Debian's `auto` turns persistent the moment `/var/log/journal` exists, and
-this is an SD card. Debug mode's drop-in is `90-bloopbox-debug.conf`, so it sorts after that file and
-its `Storage=persistent` wins while it exists; removing it (`off --purge`) is the whole of "back to
-RAM". Neither file ever edits the other. Before 2026-09-24 debug mode wrote `10-bloopbox-debug.conf`,
-which would now lose to `50-`; `install.sh` renames a leftover one and `debug-mode.sh` deletes it.
+this is an SD card. Pi OS's own `40-rpi-volatile-storage.conf` sorts before it, so ours applies.
+Debug mode's drop-in is `90-bloopbox-debug.conf`, so it sorts after `50-` and its
+`Storage=persistent` wins while it exists; removing it (`off --purge`) is the whole of "back to
+RAM". Neither file ever edits the other. (`install.sh` renames a leftover `10-bloopbox-debug.conf`
+from older releases, which would otherwise lose to `50-`.)
 
 `sudo bloopbox-debug on` makes the journal survive reboots (normally it is in RAM, as above,
 which loses exactly the logs that explain a restart), raises both daemons to debug level, and
-starts a 10s sampler writing `/var/log/bloopbox/trace.jsonl`. It expires after 24h on its own.
+starts a 10 s sampler writing `/var/log/bloopbox/trace.jsonl`. It expires after 24 h on its own.
 Then `sudo bloopbox-diagnostics` bundles all of it — journals, trace, every `nmcli` view, the
 hardware inventory and a **redacted** config — into one tarball to send somewhere.
 [`hardware-bringup.md`](./hardware-bringup.md) has the details.
 
 ## The systemd units
 
-| Unit                 | Runs                                                       |
-| -------------------- | ---------------------------------------------------------- |
-| `bloopbox-hardware`  | GPIO, LEDs, audio, API, admin UI                           |
-| `bloopbox-whatsapp`  | The Baileys bridge                                         |
-| `bloopbox-firstboot` | Wi-Fi provisioning, oneshot                                |
-| `bloopbox-net`       | Publishes the Wi-Fi state as root, for the daemon to read  |
+| Unit                       | Runs                                                                        |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `bloopbox-hardware`        | GPIO, LEDs, audio, API, admin UI and captive portal                         |
+| `bloopbox-whatsapp`        | The Baileys bridge                                                          |
+| `bloopbox-net`             | The root network agent: publishes Wi-Fi state, runs the AP and power requests |
+| `bloopbox-firstboot`       | Wi-Fi provisioning from the boot partition, oneshot, every boot             |
+| `bloopbox-audio-init`      | Codec routing from the environment's `ALSA_*` settings, oneshot, before the daemon |
+| `bloopbox-ssh-password`    | The per-device ssh password, oneshot, only while the image's marker exists  |
+| `bloopbox-debug-sampler`   | Debug mode's sampler. Installed, never enabled — `bloopbox-debug on` starts it |
 
 ```bash
 journalctl -u bloopbox-hardware -u bloopbox-whatsapp -u bloopbox-net -f
@@ -423,35 +449,73 @@ Decisions worth knowing:
   on `reset-failed` — so the cap is what every settings save costs once a boot has seen five; a
   minute for the bridge, which no save restarts; 15 s for the net agent, under the daemon's 30 s
   staleness limit.
-- **`OOMScoreAdjust`: the bridge dies first.** `-500` on the hardware unit, `+300` on the bridge.
-  Their `MemoryMax` values add up to more than a 512 MB board has, so a real out-of-memory is
-  possible, and the process the box survives losing is the one that reconnects.
+- **Memory caps, and the bridge dies first.** `MemoryHigh` / `MemoryMax` plus
+  `--max-old-space-size` on both daemons, because a Zero 2 W has 512 MB. They are tunables, not
+  measurements, enforced only once the `cmdline.txt` step has enabled the memory controller — and
+  the `MemoryMax` caps (192 M, 288 M, and 48 M each for the agent and the sampler) add up to more
+  than the board has, so a real out-of-memory is possible below all of them. `OOMScoreAdjust` is
+  `-500` on the hardware unit and `+300` on the bridge: the process the box survives losing is the
+  one that reconnects.
 - **Recordings go in `/run/bloopbox`**, via `RuntimeDirectory=` in both units. `/run` is
-  already a tmpfs, so audio lives in RAM with no mount unit and no fstab entry, and cannot
+  already a tmpfs, so outbound audio lives in RAM with no mount unit and no fstab entry, and cannot
   survive a power cut or fill the card. `RuntimeDirectoryPreserve=yes` keeps it across the
   restart-on-save; both units declare the same directory because they hand each other file
-  paths. `PrivateTmp` is off for the same reason.
+  paths. `PrivateTmp` is off for the same reason. Inbound notes are on the card instead
+  (`/data/notes`, `PRODUCT.md` §8), which `ReadWritePaths=/data` already allows.
+- **The bridge has its own scratch directory**, `/run/bloopbox-tmp`, with `TMPDIR` pointed at it.
+  Baileys writes media scratch through `os.tmpdir()` on every send, `/tmp` is read-only under
+  `ProtectSystem=strict`, and the failure arrives as an unhandled stream error that kills the
+  process. It is deliberately not `/run/bloopbox`, where recovery would take it for a note.
+- **The hardware unit holds `CAP_NET_BIND_SERVICE` and nothing else**, for the captive portal on
+  :80 — a phone's connectivity probe asks nowhere else.
 - **The bridge is deliberately not `BindsTo` the hardware unit.** WhatsApp is an unofficial API
   on a release candidate; a crash there must not take the buttons and lights with it.
-- **Memory caps are set** (`MemoryHigh` / `MemoryMax`, plus `--max-old-space-size`) because a Pi
-  Zero 2 W has 512 MB for both processes. They are tunables, not measurements.
-- **The hardening block** (`ProtectSystem=strict`, `ReadWritePaths=/data`, …) is the first thing
-  to comment out if bring-up hits an unexplained `EACCES` — the GPIO and ALSA paths have never
-  run on real hardware.
+- **`bloopbox-audio-init` is not a `Requires=` of the hardware unit.** A failed routing step shows
+  in `systemctl status` and `bloopbox-doctor`; a box that still records and blinks is more
+  recoverable than one that refuses to boot.
+- **The hardening block** (`ProtectSystem=strict`, `ReadWritePaths=/data`, `ProtectHome`,
+  `NoNewPrivileges`, …) has run on the reference board with the GPIO and ALSA paths working. On a
+  new board that hits an unexplained `EACCES`, it is still the first thing to comment out to rule
+  it in or out.
+
+## Writing the shell scripts
+
+A third of the box is bash, and two traps have each broken more than one script:
+
+- **Never `cmd | grep -q`** in a script with `pipefail` on. `grep -q` exits at the first match, the
+  producer takes a SIGPIPE, and `pipefail` reports a passing check as failed (or, under `!`, the
+  reverse). Capture the output and match it with `case` or `[[ =~ ]]`.
+  `src/tests/shellScripts.test.ts` fails on the pattern. `doctor.sh` and `wifi-apply.sh` leave
+  `pipefail` off on purpose so they can keep the idiom.
+- **Never expand a possibly empty array as `"${arr[@]}"`.** Every script runs `set -u`, and on
+  bash 3.2, which is what macOS ships as `/bin/bash` and where the release scripts also run, that
+  is an unbound-variable error when the array is empty. Use an unquoted `${VAR:-}` where word
+  splitting is wanted, with `# shellcheck disable=SC2086` and a comment saying why.
 
 ## CI
 
-- [`ci.yml`](../.github/workflows/ci.yml) — on every push and PR: `npm run doctor`, `npm audit`
-  over the production dependencies (high and above fails), `npm run check`, then building the arm64
-  tarball, smoke-testing it and running the onboarding test against it. Packaging breaks quietly (a
-  missing runtime package, a path that only resolves in the source tree), so it is checked on the
-  same cadence as the tests. Two more jobs: ShellCheck over every tracked shell script, at the
-  hook's severity, and the net agent run under its own unit's sandbox
-  ([`test-net-agent-sandbox.sh`](../box/software/scripts/test-net-agent-sandbox.sh)), because the
-  container tests have no systemd and so never exercised `ProtectSystem=strict` — which is how the
-  agent shipped unable to clear its own requests.
-- [`release.yml`](../.github/workflows/release.yml) — on a `v*` tag: the gate, then the tarball,
-  then the SD image, then a GitHub release with the tarball, the image and their checksums.
+None of this has run on GitHub yet: the repository has no remote. What the workflows are written
+to do:
+
+- [`ci.yml`](../.github/workflows/ci.yml) — on a push to `main`, every pull request, and when
+  `release.yml` calls it. A cheap `changes` job decides what was touched and gates the rest: the
+  **box gate** (`npm audit` over production dependencies at high, `sounds`, `doctor`, `check`); the
+  **box package** (the arm64 tarball, `release:smoke`, the onboarding test — packaging breaks
+  quietly, so it runs on the same cadence as the tests); the **net agent under its sandbox**
+  ([`test-net-agent-sandbox.sh`](../box/software/scripts/test-net-agent-sandbox.sh), since no
+  container test has a systemd to apply `ProtectSystem=strict`); **ShellCheck** over every tracked
+  shell script; the **website** gate; and the **docs links** check. The single required status
+  check is the aggregating `ci` job, because a filtered-out job reports as skipped, which branch
+  protection accepts. When the filter cannot run (a tag, a manual run, a call from `release.yml`)
+  everything runs.
+- [`release.yml`](../.github/workflows/release.yml) — on a `v*` tag: the gate (`ci.yml` with
+  `gate_only`, which also stops it filtering), then the tarball and its smoke test, then the SD
+  image, then a GitHub release with the tarball, the image and their checksums. Deliberately not
+  path-filtered: a tag rebuilds everything.
+
+**The CI image is built for the default board.** Its build step passes no `--audio-hat`, so it is
+a USB-audio image named `bloopbox-<version>-sd.img.xz`, not one for the WM8960 reference board.
+Until that changes, build a wm8960 card locally.
 
 **Both workflows run with `permissions: contents: read`**, and only the job that publishes a
 release asks for `contents: write`. **Every action is pinned to a commit**, with its tag in a
@@ -474,13 +538,16 @@ readable by anyone who downloads it, so the build step takes no `--wifi-ssid` / 
 
 **CI uploads no credentials artifact.** On a public repository every signed-in GitHub user can
 download a workflow's artifacts, so an "unpublished" artifact was never private. The release
-assets are still an explicit list rather than a glob, so a local `credentials.txt` cannot slip into
+assets are an explicit list rather than a glob, so a local `credentials.txt` cannot slip into
 a download either.
 
 ## What none of this proves
 
-Everything above has been exercised: the tarball builds, installs and boots on arm64 Trixie, and
-the image has been mounted back and booted from inside. Since 2026-09-30 a card flashed from it has
-also booted the reference board (a Pi 3B+ with the WM8960 HAT), made its ssh password on first
-boot, onboarded through the hotspot and linked WhatsApp, with all three buttons and lamps working.
-What has **not** happened is any of it on the Pi Zero 2 W the product targets. See `PENDING.md`.
+The tarball builds, installs and boots on arm64 Trixie in a container, and a card flashed from a
+local `--audio-hat wm8960` image has run the reference board (a Pi 3B+ with the WM8960 HAT) end to
+end: its ssh password made on first boot, onboarding through the hotspot, WhatsApp linked, all
+three buttons and lamps, audio both ways, and the restart policy, OOM scores and journal drop-ins
+as written above (bench, 2026-09-30).
+
+What has **not** happened is any of it on the Pi Zero 2 W the product targets, or any of the CI
+above on a real runner. See `PENDING.md`.

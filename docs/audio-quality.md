@@ -9,9 +9,9 @@ trusted on the parts that *are* settled.
 
 ## Method, and why it is fussy
 
-`box/software/CLAUDE.md` already warns that **ambient room noise moved 18 dB between identical
-passes**, which invalidates any before/after built from two separate recordings. That warning
-earned itself again here: two passes at identical settings gave RMS −23.1 dB and −35.6 dB, a
+The first capture measurements, on 2026-08-10, found **ambient room noise moving 18 dB between
+identical passes**, which invalidates any before/after built from two separate recordings. That warning earned itself again
+here: two passes at identical settings gave RMS −23.1 dB and −35.6 dB, a
 12.5 dB spread with nothing changed.
 
 So every comparison below comes from **windows inside one recording** — a silent window and a
@@ -34,7 +34,7 @@ showed up as a silence window 24 dB louder than the signal.
 
 ## Finding 1 — the input clips, and analog gain buys no SNR at all
 
-The shipped device runs every analog stage at maximum: `Capture` at 63/63 (+30 dB), the
+As found, the device ran every analog stage at maximum: `Capture` at 63/63 (+30 dB), the
 `LINPUT1` boost at 3/3 (+29 dB), and the +42 dB `Input Mixer Boost` path enabled. On the box
 measured here `micGainPercent` was **100**, which is what puts `Capture` at 63.
 
@@ -42,7 +42,7 @@ One recording per setting, silence window vs sweep window:
 
 | `Capture` | noise RMS | signal RMS | signal peak | SNR |
 | --------- | --------- | ---------- | ----------- | ---- |
-| **63** (shipped) | −19.9 dB | −3.6 dB | **0.00 dBFS — clipping** | 16.3 dB |
+| **63** (as found) | −19.9 dB | −3.6 dB | **0.00 dBFS — clipping** | 16.3 dB |
 | 48 | −22.9 dB | −9.1 dB | **0.00 dBFS — clipping** | 13.8 dB |
 | 40 | −27.7 dB | −13.6 dB | **0.00 dBFS — clipping** | 14.1 dB |
 | 32 | −34.0 dB | −19.6 dB | −3.0 dBFS — clean | 14.4 dB |
@@ -50,14 +50,14 @@ One recording per setting, silence window vs sweep window:
 Two things fall out, and the second is the important one:
 
 1. The signal hits **full scale** at three of the four settings. Independently, a plain
-   *ambient* recording — nobody speaking — peaked at **−0.38 dBFS** at the shipped gain. There is
+   *ambient* recording — nobody speaking — peaked at **−0.38 dBFS** at that gain. There is
    no headroom at all before anyone opens their mouth.
 2. **SNR is flat, ~14–16 dB, across a 24 dB range of analog gain.** Turning the preamp up does not
    improve the signal-to-noise ratio. It amplifies the noise by exactly as much as the signal and
    spends the headroom doing it.
 
 That is the signature of noise that is acoustic or preamp-borne rather than ADC-borne, and it
-makes the shipped setting a pure loss: same SNR as a quiet setting, plus clipping.
+makes that setting a pure loss: same SNR as a quiet setting, plus clipping.
 
 **Clipping is very likely what the report described as "echo".** Hard-clipped speech is harsh and
 smeared, and does not sound like simple distortion to most listeners — "fuzzy", "doubled" and
@@ -69,11 +69,11 @@ played from the MacBook beside the box, at a normal listening level:
 
 | `Capture` | peak | RMS |
 | --------- | ---- | --- |
-| **63** (shipped) | **0.00 dBFS — clipping** | −16.5 dB |
+| **63** (as found) | **0.00 dBFS — clipping** | −16.5 dB |
 | 49 | −10.7 dB | −26.7 dB |
 | 39 | −18.1 dB | −33.9 dB |
 
-A real voice at a realistic level clips at the shipped gain. This is no longer an inference from a
+A real voice at a realistic level clips at that gain. This is no longer an inference from a
 loud stimulus.
 
 ## Finding 2 — the noise is low-frequency, not hiss
@@ -96,9 +96,6 @@ A child's voice has a fundamental around 250–400 Hz. **A high-pass at 100–12
 largest noise component at no cost to speech**, and it is one filter argument.
 
 ## Finding 3 — a mid peak, and it is the microphone side
-
-*Originally recorded here as unattributable. Resolved the same day by using the MacBook beside the
-box as a second, completely different source — the obvious control that the first round missed.*
 
 Sweep window, by octave:
 
@@ -152,17 +149,17 @@ playing the whoosh. So the child waits out the encode before hearing that anythi
 
 | Chain | Time |
 | ----- | ---- |
-| baseline (what ships today) | 2770 ms |
+| baseline (no filter) | 2770 ms |
 | + `highpass=f=110` | 2558 ms |
 | + highpass + `speechnorm` | 2504 ms |
 | + highpass + `afftdn` + `speechnorm` | **1627 ms** |
 | + highpass + `loudnorm` | 4267 ms |
 
-Two results worth keeping:
+Three results worth keeping:
 
-- **A 10 s note already costs ~2.8 s before the whoosh**, plus `resumeGraceMs`. That is a long
-  silence for a small child who has just let go of a button, and it exists today with no filtering
-  at all.
+- **Unfiltered, a 10 s note cost ~2.8 s before the whoosh**, plus `resumeGraceMs`. That is a long
+  silence for a small child who has just let go of a button. The chain that shipped is the 1627 ms
+  row.
 - **Noise reduction is not a cost, it is a saving.** Cleaning the signal makes Opus 41 % *faster*,
   because the encoder stops spending effort and bits on noise. This was verified twice: an earlier
   run using synthetic white noise showed the same inversion, and white noise is the worst case for
@@ -178,7 +175,7 @@ voice window and a silence window taken from the one take.
 
 | Voice window | peak | RMS |
 | ------------ | ---- | --- |
-| raw — what would be sent today | −10.7 dB | −26.7 dB |
+| raw — no filter | −10.7 dB | −26.7 dB |
 | `+ highpass=110` | −11.4 dB | −27.0 dB |
 | `+ highpass + speechnorm` | −0.4 dB | **−14.4 dB** |
 | `+ highpass + afftdn + speechnorm` | −0.4 dB | **−14.7 dB** |
@@ -194,19 +191,19 @@ Read together:
 - The high-pass takes **3.7 dB off the noise and 0.3 dB off the voice**, which is Finding 2 holding
   up under a real signal rather than a sweep.
 - `speechnorm` recovers **12 dB** of level, so backing the preamp off costs nothing in loudness.
-  The processed voice ends up *louder* than the clipped recording at the shipped gain
+  The processed voice ends up *louder* than the clipped recording at the gain as found
   (−14.4 dB against −16.5 dB RMS) while peaking at −0.4 dBFS instead of hard against the rail.
 - `afftdn` removes a further **12 dB** of noise and leaves the voice level alone
   (−14.7 against −14.4 dB), on top of making the encode faster.
 
-Against what ships today, the whole chain is louder, undistorted, and roughly 16 dB quieter between
-words.
+Against the unfiltered capture at the gain as found, the whole chain is louder, undistorted, and
+roughly 16 dB quieter between words.
 
 Two cautions on those numbers. Measuring noise reduction on a silence window flatters a denoiser,
 which behaves differently while someone is speaking — the 12 dB is not a perceptual SNR gain of
 12 dB. And `speechnorm` at its default peak target lands at −0.4 dBFS, which is too close to the
-rail to survive an Opus round trip cleanly; it should be given an explicit lower target
-(`p=0.7`, about −3 dBFS) rather than shipped as measured here.
+rail to survive an Opus round trip cleanly, which is why the shipped chain gives it an explicit
+lower target (`p=0.7`, about −3 dBFS).
 
 ## What was implemented
 
@@ -252,8 +249,9 @@ harmonic relative to the fundamental.
   chain gets louder, so the loudness is available rather than borrowed.
 
 The box measured was set to `ampVolumePercent` 70 with **both boosts at 0** — about **14 dB below**
-what the same hardware produces at 100/5. That is very likely the whole of the standing
-"playback is still underwhelming" complaint in `PENDING.md`.
+what the same hardware produces at 100/5. That is very likely the whole of the
+"playback is still underwhelming" complaint raised on 2026-08-16. The defaults are already 100 / 5 / 5
+(`config.default.json`); that box had been set lower.
 
 Two caveats. The absolute distortion figure (~−15 dB, which would be a poor number for a hi-fi) is
 a *round trip* through the box's own microphone and cannot be attributed to the speaker; what is
@@ -263,8 +261,10 @@ rattle — which is why the panel tells a parent to listen for buzzing rather th
 
 ## The reasoning behind each, in order of value
 
-1. **Stop clipping the input.** Lower `micGainPercent` from 100. It is already a config field and
-   needs no code — the daemon applies it as `amixer -M sset Capture <n>% cap`. Measured mapping:
+Items 1–5 are what shipped on 2026-09-06; 6 is still open.
+
+1. **Stop clipping the input.** Lower `micGainPercent` from 100 — the default is now 65. The daemon
+   applies it as `amixer -M sset Capture <n>% cap`. Measured mapping:
 
    | `micGainPercent` | raw | dB |
    | ---------------- | --- | -- |
@@ -273,7 +273,7 @@ rattle — which is why the panel tells a parent to listen for buzzing rather th
    | 60 | 49 | +19.50 |
    | 40 | 39 | +12.00 |
 
-   **Start at 60–70.** With real speech at a normal level, `Capture` 49 (= `micGainPercent` 60) put
+   **60–70 is the range.** With real speech at a normal level, `Capture` 49 (= `micGainPercent` 60) put
    peaks at −10.7 dBFS, which is ample headroom for a child who leans in closer or shouts, and
    `speechnorm` makes the level back up afterwards. A child's mouth is not a MacBook speaker, so
    this is a starting point to confirm by ear, not a final answer — but 100 is settled as wrong: it
@@ -287,12 +287,12 @@ rattle — which is why the panel tells a parent to listen for buzzing rather th
    bring the level up in software where it can be done after the noise is gone rather than before.
    `speechnorm` is purpose-built for this and measured cheap.
 
-4. **Normalise inbound notes on decode.** Already an open item in `PENDING.md`, raised 2026-08-16
-   from a live device. The decode happens at *arrival*, where nobody is waiting, so `loudnorm`'s
-   cost is affordable exactly here and nowhere else. This is what stops one relative arriving at a
-   whisper and the next at a shout.
+4. **Normalise inbound notes on decode.** Raised 2026-08-16 from a live device. The decode happens
+   at *arrival*, where nobody is waiting, so `loudnorm`'s cost is affordable exactly here and nowhere
+   else. This is what stops one relative arriving at a whisper and the next at a shout — across a
+   quiet and a loud sender the spread measured 18.1 dB untreated and 0.03 dB through the chain.
 
-5. **`afftdn` on capture** — promoted from "consider" by Finding 5: a further 12 dB off the noise,
+5. **`afftdn` on capture**, on the strength of Finding 5: a further 12 dB off the noise,
    no measurable cost to the voice, and it makes the encode faster rather than slower. Still applies
    only after 1–3, because a denoiser cannot help a signal that is already clipped. `nf` wants
    tuning against a real noise floor; −30 was used here without being optimised.
@@ -303,5 +303,5 @@ rattle — which is why the panel tells a parent to listen for buzzing rather th
    if fitted to the wrong curve.
 
 Untested by any of this: whether the microphone is mechanically coupled to the enclosure. If it is
-rigidly mounted rather than gasketed at a port, that is a mechanical fix no filter substitutes for,
-and it belongs in [`hardware.md`](./hardware.md).
+rigidly mounted rather than gasketed at a port, that is a mechanical fix no filter substitutes for.
+[`hardware.md`](./hardware.md) lists it among what is not proven.

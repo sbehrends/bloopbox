@@ -2,8 +2,9 @@
 
 The physical half of the box: enclosure models, and eventually a PCB.
 
-**Empty so far.** The device has been built entirely against the browser simulator, and the parts
-are not on hand yet — so what exists today is the written reference, not the artefacts.
+**Empty so far.** One reference board exists — a Pi 3B+ with the WM8960 HAT, three buttons and three
+lamps, wired by hand — but no enclosure model, template or PCB has been drawn for it yet, so what
+exists today is the written reference, not the artefacts.
 
 ## The authoritative reference is `docs/hardware.md`, not this folder
 
@@ -46,5 +47,8 @@ From `docs/hardware.md` and the product spec:
   wire straight to the header, so there is no driver board to find room for.
 - It sits in a child's bedroom and will be picked up, dropped, and leaned on. Strain relief on the
   power cable is not optional.
-- Mains-adjacent heat: a sealed enclosure on a Zero 2 W can throttle. `bloopbox-debug on` samples
-  temperature every 10 s, so this is measurable once there is a case to measure.
+- Heat: a sealed enclosure on a Zero 2 W can throttle. `bloopbox-debug on` samples temperature and
+  throttling every 10 s, so this is measurable once there is a case to measure.
+- Leave room to gasket the microphones at their port.
+  [`../../docs/audio-quality.md`](../../docs/audio-quality.md) traces the boxy 400–800 Hz lift to the
+  microphone and the enclosure around it; whether a rigid mount adds to it is untested.

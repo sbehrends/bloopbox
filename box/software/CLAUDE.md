@@ -1,455 +1,292 @@
 # CLAUDE.md — box/software
 
 Rules for changing the box software. Loaded when Claude first touches a file in this directory; the
-repo-wide map, the gate and the tripwires are in [`../../CLAUDE.md`](../../CLAUDE.md), and the full
-reasoning with diagrams is in [`../../docs/architecture.md`](../../docs/architecture.md).
+repo-wide map, the gate and the tripwires are in [`../../CLAUDE.md`](../../CLAUDE.md), and the
+reasoning behind every rule here is in [`../../docs/architecture.md`](../../docs/architecture.md),
+under a heading of the same name, unless another document is named.
 
 **This file holds rules and pointers, not prose.** If an explanation here runs past a few lines, it
-belongs in `docs/`.
-
-Everything below runs from this directory (`box/software/`).
+belongs in `docs/`. Everything below runs from this directory (`box/software/`).
 
 ## Prerequisites
 
-- Node ≥ 22 (developed on 24)
-- **`ffmpeg` on PATH** — required for the Opus/ogg pipeline. `brew install ffmpeg` on macOS,
-  `apt install ffmpeg` on the Pi. Override with `FFMPEG_PATH`.
-- `npm run sounds` after a fresh clone — the cue WAVs in `src/audio/sounds/` are **generated, not
-  committed**. The designed source recordings they are partly built from (`src/audio/samples/*.mp3`)
-  **are** committed: they are authored audio, so losing one is a broken checkout, not a missing
-  build step. `data/` is gitignored too, so a clean checkout has no config and boots into
-  onboarding.
-
-`npm run doctor` verifies external prerequisites (ffmpeg, ALSA devices). Markdown is deliberately
-outside prettier's scope — see `.prettierignore`.
+- Node ≥ 22 (developed on 24), and **`ffmpeg` on PATH** (override with `FFMPEG_PATH`).
+  `npm run doctor` checks both, plus the ALSA capture device and the cue files.
+- `npm run sounds` after a fresh clone: the cue WAVs in `src/audio/sounds/` are **generated, not
+  committed**. The sources in `src/audio/samples/*.mp3` **are** committed — authored audio that
+  cannot be regenerated, so never delete one.
+- `data/` is gitignored, so a clean checkout boots into onboarding. Markdown is outside prettier's
+  scope on purpose (`.prettierignore`).
 
 ## Commands
 
 ```bash
-npm run dev:hw          # terminal 1 — hardware server + API + Socket.io on :3000 (SIMULATOR_MODE=true)
-npm run dev:web         # terminal 2 — Vite for the four UIs on :5174, proxying /api and /socket.io
-npm run dev:wa          # WhatsApp bridge (only needed for real pairing/sending)
-npm run dev             # dev:hw + dev:wa together (no Vite; use the built UIs or add dev:web)
+npm run dev:hw          # hardware server + API + Socket.io on :3000, simulator HAL, supervised
+npm run dev:web         # Vite for the four UIs on :5174, proxying /api and /socket.io
+npm run dev:wa          # WhatsApp bridge (only for real pairing/sending)
+npx vitest run src/tests/button.test.ts   # one file;  -t '<name>' for one test
 ```
 
-Then open `http://localhost:5174/simulator/` or `/admin/`. In production there is one server:
-`npm run build` emits `dist/` + `dist/public/`, and `npm run start:hw` serves both from :3000.
-
-```bash
-npx vitest run src/tests/button.test.ts        # one file
-npx vitest run -t 'discards a short recording' # one test by name
-npm run test:watch
-npm run test:coverage                          # the full per-file table, plus coverage/index.html
-```
-
-Individual gate steps when iterating: `npm run typecheck` (runs both server and web projects),
-`npm run lint`, `npm run lint:fix`, `npm run format`.
+Open `http://localhost:5174/simulator/` or `/admin/`. Every script: [`README.md`](./README.md#all-the-scripts).
 
 ### Environment variables
 
-Defaults are the **device's** absolute paths. `scripts/dev-server.ts` sets only `SIMULATOR_MODE` and
-`PORTAL_PORT`, so on macOS `/data` does not exist: without `CONFIG_PATH=./data/config.json` the
-server falls back to `config.default.json` in RAM and every settings save fails. Set it whenever you
-are testing config at all.
+Defaults are the **device's** paths; the full table is
+[`docs/architecture.md` § Environment](../../docs/architecture.md#environment). `scripts/dev-server.ts`
+sets only `SIMULATOR_MODE=true`, `PORTAL_PORT=8080` and `NOTES_DIR=./data/notes`, so:
 
-The full table is in [`../../docs/architecture.md`](../../docs/architecture.md#environment). The ones
-that bite in development:
-
-| Variable         | Default             | Notes                                            |
-| ---------------- | ------------------- | ------------------------------------------------ |
-| `SIMULATOR_MODE` | unset → `gpio`      | Selects the HAL. `HAL_DRIVER=mock` wins over it   |
-| `CONFIG_PATH`    | `/data/config.json` | Point at `./data/config.json` locally             |
-| `RECORDING_DIR`  | `/run/bloopbox`     | Outbound captures + derived WAVs. tmpfs, by design |
-| `NOTES_DIR`      | `/data/notes`       | **Inbound notes, on the card.** Dev must set it — `/data` is not there |
-| `STATS_PATH`     | `/data/stats.json`  | Activity totals. Same story: unset off-device and nothing persists |
-| `BRIDGE_TOKEN`   | `''`                | Shared secret both processes must agree on        |
-| `PORTAL_PORT`    | `80` (dev: `8080`)  | Captive-portal listener; `0` disables it          |
+- **Set `CONFIG_PATH=./data/config.json` whenever you test config.** Without it the server falls back
+  to `config.default.json` in RAM and every settings save fails.
+- Anything else run off-device must set `NOTES_DIR` (no fallback, by design) and `STATS_PATH`
+  (otherwise nothing persists). `HAL_DRIVER=mock` wins over `SIMULATOR_MODE`.
 
 ## Toolchain: TypeScript 7 + oxlint (do not swap in ESLint)
 
-TypeScript 7 is the Go rewrite. Its npm package **no longer exposes the classic JS compiler API** —
-the `.` export is just `lib/version.cjs`, with everything else under `./unstable/*`. Consequently
-`typescript-eslint` cannot work at all (its peer range caps at `<6.1.0`, and even canary does), so
-**ESLint is not usable on this project**.
+TypeScript 7's npm package no longer exposes the classic compiler API (its `.` export is just
+`lib/version.cjs`), so `typescript-eslint` cannot work. Revisit only once it ships TS 7 support.
+Linting is `oxlint` + `oxlint-tsgolint`, type-aware via `options.typeAware` in `.oxlintrc.json`.
 
-Linting is `oxlint` + `oxlint-tsgolint`, with `options.typeAware: true` in `.oxlintrc.json` giving
-real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-thenable`,
-`no-unsafe-type-assertion`). Notes:
-
-- oxlint implements ~847 rules but **not every typescript-eslint rule** — e.g. there is no
-  `unicorn/prevent-abbreviations`. An unknown rule name is a hard config parse error. Check
-  `node_modules/oxlint/configuration_schema.json` (`definitions.DummyRuleMap`) for valid names;
-  `oxlint --rules` prints nothing in 1.76.
-- The `pedantic` category is **off** on purpose — `prefer-readonly-parameter-types` and
-  `strict-void-return` fired constantly and trained us to ignore output. Curated type-aware rules
-  are enabled explicitly instead.
-- Rules that hold the layering and size in place: `switch-exhaustiveness-check` (handle `undefined`
-  as a `case`, not inside `default`), `import/no-cycle`, `no-console` outside `scripts/` (log through
-  `childLogger`), and `max-lines` at 700 code lines for non-test files. `public/admin/main.ts` has
-  its own cap at today's size, until Phase 5 splits it; lower it as it shrinks, never raise it.
-- Revisit ESLint only once typescript-eslint ships TS 7 support.
+- oxlint does **not** implement every typescript-eslint rule, and an unknown rule name is a hard
+  config parse error. Valid names are in `node_modules/oxlint/configuration_schema.json`
+  (`definitions.DummyRuleMap`); `oxlint --rules` prints nothing in 1.76.
+- `pedantic` is **off** on purpose (it fired constantly and trained us to ignore the output). Enable
+  curated type-aware rules explicitly instead.
+- `switch-exhaustiveness-check`: handle `undefined` as a `case`, not inside `default`.
+- `import/no-cycle`; `no-console` outside `scripts/` (log through `childLogger`); `max-lines` 700 for
+  non-test files. `public/admin/main.ts` has its own cap at today's size until Phase 5 splits it:
+  lower it as the file shrinks, never raise it.
 
 ## Conventions
 
-- ESM throughout. Import relative paths **with the `.ts` extension** (`./foo.ts`) —
-  `rewriteRelativeImportExtensions` rewrites them to `.js` on emit.
-- `erasableSyntaxOnly` is on: no `enum`, no `namespace`, no parameter properties. Use `as const`
-  objects + union types instead of enums.
-- `noPropertyAccessFromIndexSignature` is on: a key that may be absent is read with brackets
-  (`process.env['X']`, `record['key']`), so a dotted access always names a declared property.
-- Config types are **inferred from the Zod schema** in `src/config/schema.ts`. Never hand-write a
-  parallel interface — add the field to the schema and the type follows.
-- Timing values live in exactly one place and are exported. No magic numbers inline. Anything a user
-  might want to tune belongs in the Zod schema (`config.buttons` is the precedent).
+- ESM throughout. Relative imports carry the **`.ts` extension**; `rewriteRelativeImportExtensions`
+  rewrites them on emit.
+- `erasableSyntaxOnly`: no `enum`, `namespace` or parameter properties. Use `as const` objects plus
+  union types.
+- `noPropertyAccessFromIndexSignature`: read a possibly-absent key with brackets (`process.env['X']`).
+- `exactOptionalPropertyTypes`: an optional property rejects an explicit `undefined` — spread it in
+  conditionally.
+- Config types are **inferred from the Zod schema** (`src/config/schema.ts`). Never hand-write a
+  parallel interface.
 
 ## Architecture, in one screen
 
-`docs/architecture.md` has the diagrams and the why. The constraints on a change:
+`src/tests/architecture.test.ts` enforces the import rules below against the real import graph.
 
 | Layer          | Rule                                                                              |
 | -------------- | --------------------------------------------------------------------------------- |
-| `src/core/`    | Pure and I/O-free. Only calls `hal.setLed()`. This is what makes timing testable. A catch that swallows must report through `onFault` |
+| `src/core/`    | Pure: no Node built-in but `events`, no package but `zod`. Only calls `hal.setLed()`; `send`, `markRead`, `deleteFile` and stats are injected. A catch that swallows must report through `onFault` |
 | `src/hal/`     | All physical I/O — buttons, LEDs, **and audio** — behind `types.ts`. Load GPIO dynamically |
-| `src/ipc/`     | The daemon-to-daemon contract. **Adding an event means editing `events.ts` first**; every endpoint takes its maps as Socket.io generics. `noteFiles.ts` is the shared file-name contract |
-| `src/processes/hardware-server.ts` | Never imports Baileys                                         |
-| `src/processes/whatsapp-bridge.ts` | Never touches GPIO or audio devices. Wiring only: decisions go in `whatsapp/bridge.ts`, which is tested |
+| `src/ipc/`     | The daemon-to-daemon contract. **A new event starts in `events.ts`**; every endpoint takes its maps as Socket.io generics. `noteFiles.ts` is the shared file-name contract |
+| `src/processes/hardware-server.ts` | Never reaches Baileys, even for a type                        |
+| `src/processes/whatsapp-bridge.ts` | Never reaches the HAL or GPIO. Wiring only: decisions go in the tested `whatsapp/bridge.ts` |
 | `src/net/`     | The **only** way the daemon learns whether Wi-Fi is up                              |
-| `src/stats/`   | Activity totals, on the card. Never a config section — see below                     |
-| `src/system/`  | Read-only health readings, and the reboot/poweroff request. Every reading is nullable |
+| `src/stats/`   | Activity totals, on the card. Never a config section                                |
+| `src/system/`  | Health readings, the recent-events ring, the reboot/poweroff request. Every reading is nullable |
 
-Networking sits outside both daemons: they run unprivileged under `ProtectSystem=strict` and cannot
-talk to NetworkManager, so `bloopbox-net.service` runs `deploy/net-agent.sh` as root and the two
-communicate through files in `/run` — one writer per directory, and the action is enum-validated,
-never evaluated as shell.
-
-**A missing, stale or unparseable network reading means *unknown*, reported as "not down".** Never
-invent an outage from missing information, or every dev machine lights the error pattern.
+- Networking is the root `bloopbox-net.service` (`deploy/net-agent.sh`), reached through files in
+  `/run`: one writer per directory, the action enum-validated, **never evaluated as shell**.
+- **Reboot and shutdown go through the same agent**: `src/system/power.ts` writes `reboot` /
+  `poweroff` into the request file, and the allowlist in `consume_request` is the boundary.
+  `systemctl reboot` / `poweroff`, **never `--force`** — the ordinary path SIGTERMs the daemons,
+  which flushes the counters.
+- **A missing, stale or unparseable network reading is *unknown*, reported as "not down".** Never
+  invent an outage from missing information.
 
 ### The four browser UIs
 
-`public/simulator/`, `public/admin/`, `public/portal/` and `public/brand/` are plain TS on a shared
-design system in `public/shared/` — no framework, **outside `src/`**, compiled by Vite not tsc.
+`public/{simulator,admin,portal,brand}/`: plain TS on `public/shared/`, no framework, **outside
+`src/`**, compiled by Vite, not tsc.
 
-- Three tsconfigs. `tsconfig.json` typechecks `src/` + `scripts/` (node libs, no DOM);
-  `tsconfig.web.json` typechecks `public/` with DOM libs and `types: []`, whitelisting the only
-  shared modules browser code may import (`src/ipc/`, `src/audio/cues.ts`, `src/config/schema.ts`);
-  `tsconfig.build.json` is the emit config. `npm run typecheck` runs the first two, so a DOM global
-  in `src/` or a node global in `public/` fails there and nowhere else.
-- Vite 8 bundles with **Rolldown**: use `rolldownOptions`, not `rollupOptions`.
-- **The portal is deliberately not on the IPC contract.** It runs in a captive-portal webview where
-  WebSocket is unreliable and storage is ephemeral, so it is plain `fetch` with hand-written
-  narrowing. A dependency on Socket.io there is a page that hangs on a phone. Verify after touching
-  the build: `dist/public/portal/index.html` must reference **no shared JS chunk**.
+- `tsconfig.json` checks `src/` + `scripts/` (no DOM); `tsconfig.web.json` checks `public/` (DOM,
+  `types: []`) and whitelists the only shared modules browser code may import — `src/ipc/`,
+  `src/audio/cues.ts`, `src/config/schema.ts`. `npm run typecheck` runs both.
+- Vite 8 bundles with **Rolldown**: `rolldownOptions`, not `rollupOptions`.
+- **The portal is not on the IPC contract** — plain `fetch`, hand-written narrowing, no Socket.io.
+  The plugin in `vite.config.ts` fails the build if its entry imports a shared chunk; keep the
+  modulepreload polyfill off.
 
 ### The design system
 
-`docs/BRAND.md` is the direction; `/brand/` is the living kit, rendered with the same stylesheets the
-product pages use so it cannot drift. Rules that keep it honest:
+Direction and locked decisions in [`docs/BRAND.md`](../../docs/BRAND.md).
 
 - `shared/tokens.css` is **the only file allowed to contain a colour literal**.
-- **Nothing enters `base.css` unless two or more pages use it.** Page-local styling lives beside its
-  page.
-- **Reference the semantic token, not the brand one** — `var(--accent)`, not `var(--brand-teal)`.
-  Dark mode overrides only the semantic layer, which is why it is fifteen lines.
-- **The component layer is CSS, not JS, on purpose** — it is the only kind the portal can share
-  without a JS dependency. `dom.ts` is therefore optional and the portal imports none of it.
-- **The simulator's canvas reads tokens through `theme.ts`** rather than holding its own hexes. A
-  canvas cannot use a class; this is the only sanctioned way around that.
-- **`--ch-1/2/3` are yellow, coral, teal, in that order**, matching the logo mark. Reordering means
-  redrawing both SVGs. Nothing enforces it yet — see `PENDING.md`.
+- **Nothing enters `base.css` unless two or more pages use it.**
+- **Reference the semantic token** (`var(--accent)`), never the brand one (`var(--brand-teal)`).
+- **The component layer is CSS, not JS.** The portal imports none of `dom.ts`.
+- **The simulator's canvas reads tokens through `theme.ts`**, never its own hexes.
+- **`--ch-1/2/3` are yellow, coral, teal, in that order**, matching the logo mark and the lamps.
+  Nothing enforces it.
 
-### Server surface
+### The server surface
 
-Everything under `/api` sits behind `requireAdmin` (HTTP Basic against a bcrypt hash) **except**
-`GET /status`, `GET /whatsapp`, `GET /cues`, `POST /onboard` and the setup-gated `GET /wifi/scan`.
-`adminAuth.test.ts` enumerates the router's stack and expects `401` from every route not in its
-`OPEN` table — add an open route there, with its reason, or the gate test fails.
+- `/api` is behind `requireAdmin` except the `OPEN` table in `src/tests/adminAuth.test.ts`
+  (`GET /status`, `/whatsapp`, `/cues`, `POST /onboard`, the gated `GET /wifi/scan`). The test
+  expects `401` from every other route: an open route goes in that table, with its reason.
+- The guard **stands aside while `system.configured` is false** and on an empty
+  `adminPasswordHash`. Both are deliberate and pinned by `adminAuth.test.ts`. Don't "fix" them.
+- **Never call `verifyAdminPassword` per request** (bcrypt is ~300 ms on the button loop). Go
+  through `AdminAuthenticator`; its constants are exported and tested with an injected clock.
+- **Every browser POST/PUT to `/api` sends `content-type: application/json`**, with a `{}` body if
+  it has nothing to say, or `requireSameOrigin` (`csrf.ts`) answers 415. Pinned by `csrf.test.ts`.
+- **`/` is the settings panel, mounted after the captive-portal middleware** so the hotspot owns `/`
+  during onboarding. Pinned by `captivePortal.test.ts`. `:80` is the same app.
+- The bridge authenticates with `BRIDGE_TOKEN` on `x-bridge-token`, compared by `tokensMatch`.
 
-The guard **stands aside entirely while `system.configured` is false** — first-run onboarding could
-otherwise never set a password. Don't "fix" that. It also stands aside on an empty
-`adminPasswordHash`, which leaves a hand-edited `configured: true` config wide open: a **decided,
-accepted risk**, because the guard cannot tell that state from mid-onboarding and refusing to serve
-would make the device recoverable only by pulling the SD card. Both halves are pinned by
-`src/tests/adminAuth.test.ts`; the watch item in `PENDING.md` has the reasoning.
+### Configuration
 
-**Never call `verifyAdminPassword` per request.** bcrypt is ~300 ms on the Pi, on the loop that
-times button presses; `requireAdmin` goes through `AdminAuthenticator` (5 min success cache, global
-failure budget → 429). Its constants are exported and tested with an injected clock.
-
-**Every browser POST/PUT to `/api` sends `content-type: application/json`**, with a `{}` body if
-it has nothing to say. `requireSameOrigin` (`src/server/csrf.ts`) answers 415 otherwise and 403 to a
-cross-site `Sec-Fetch-Site` or a foreign `Origin` — the CSRF defence, since Basic credentials ride
-along on forged requests. Pinned by `csrf.test.ts`.
-
-**`/` is the settings panel and `:80` is the same app, not a second one.** The root route is
-`sendFile` of `dist/public/admin/index.html` and sits *after* the captive-portal middleware, so the
-hotspot still owns `/` during onboarding — that ordering is the safety property, and
-`captivePortal.test.ts` pins it. `/admin/` still answers.
-
-The app also listens on **:80** (`PORTAL_PORT`) because a phone's captive-portal probe asks nowhere
-else; off-device that bind fails with `EACCES` and is logged and ignored. The bridge authenticates
-separately with `BRIDGE_TOKEN` on the `x-bridge-token` header, compared in constant time.
-
-### Config
-
-`PUT /api/config` accepts **any subset of any section, to any depth**. Cross-field rules
-(debounce < threshold, an enabled contact has a target) are checked by `ConfigManager.save()`
-against the **merged** config — the only place they can be, since a patch raising `debounceMs`
-does not carry `recordThresholdMs`. Sections with a refinement are a plain `…Shape` object
-plus a refined `…Schema`, because `.partial()` exists only on a `ZodObject`.
-
-**Adding a section touches four places:** `configSchema`, `configUpdateSchema`, `ConfigPatch` and
-`mergeConfig`. The last is the one that fails silently — `whatsapp.markPlayedAsRead` shipped broken
-for ten minutes because of it, and the test that caught it asserted on **behaviour**, not on the
-response. Use `.prefault({})`, not `.default({})`, and cover the migration with a test.
-
-Config is read at construction and never re-read. A save exits the process cleanly (code 0) so a
-supervisor restarts it: systemd on the device (`Restart=always` is load-bearing),
-`scripts/dev-server.ts` under `npm run dev:hw`, and **nothing** under `npm run dev:hw:watch` —
-`tsx watch` will not restart a process that exits cleanly, so a config save leaves the server down.
+- `PUT /api/config` accepts any subset of any section. Cross-field rules are checked by
+  `ConfigManager.save()` against the **merged** config. A section with a refinement is a plain
+  `…Shape` plus a refined `…Schema`, because `.partial()` exists only on a `ZodObject`.
+- **A new section touches four places:** `configSchema`, `configUpdateSchema`, `ConfigPatch`,
+  `mergeConfig`. Use `.prefault({})`. Test it on **behaviour** (the file on disk, `config.current`),
+  not on the response.
+- A save exits with code 0 for the supervisor to restart. `npm run dev:hw:watch` has **no**
+  supervisor, so a save there leaves the server down.
 
 ### Activity totals are not config, and must not become one
 
-`/data/stats.json`, `src/stats/statsStore.ts`. Two reasons it is a separate file, either sufficient
-on its own: **saving config restarts the daemon**, so a counter in it would reboot the box on every
-button press; and **an unparseable config drops the device into onboarding**, whereas an unparseable
-stats file is allowed to cost the totals and nothing else — hence a Zod `.catch()` on every field,
-the two-tier treatment `netState.ts` uses.
+`src/stats/statsStore.ts`. Reasoning:
+[`docs/architecture.md`](../../docs/architecture.md) § Activity totals are a separate file.
 
-- **`src/core/` stays I/O-free.** `DeviceController` takes a structurally typed `StatsRecorder` —
-  three synchronous methods — exactly as it already takes `send`, `markRead` and `deleteFile`.
-  Never import the store into `core/`; `architecture.test.ts` fails if anything core reaches does.
-- **Count in `handleIncoming`, never in `restoreUnread`.** The boot scan calls the latter for every
-  unheard note on the card, and this device restarts on every settings save.
-- **Only a send WhatsApp accepted counts.** A failed one already played the "oops".
-- **Writes are coalesced.** Anything that ends the process must `flush()` first — the shutdown path
-  and the reboot/poweroff routes already do.
-
-### Reboot and shutdown go through the root agent
-
-`src/system/power.ts` writes `reboot` / `poweroff` into the **same** request file a Wi-Fi join uses,
-and `deploy/net-agent.sh` acts on them. The allowlist in `consume_request` is the boundary and is now
-guarding an action that can power the machine off — nothing from that file is ever evaluated as
-shell, and it must stay that way. `systemctl reboot` / `poweroff`, **never `--force`**: the ordinary
-path is what SIGTERMs the daemons, which is what flushes the counters.
+- `DeviceController` takes a structurally typed `StatsRecorder`. Never import the store into `core/`.
+- **Count in `handleIncoming`, never in `restoreUnread`.** Only a send WhatsApp accepted counts.
+- Writes are coalesced: anything that ends the process must `flush()` first.
 
 ### A button targets a person **or** a group
 
-`contacts.*.target` takes a phone number (normalised to `<digits>@s.whatsapp.net`) or a group JID
-ending in `@g.us`. `parseTarget()` in `src/config/schema.ts` is the only place that decides which.
-Normalisation rejects a surviving leading zero rather than guessing a country code — a
-wrong-but-plausible target validates, saves, looks configured, and is silently dead in both
-directions on a device with no screen.
-
-Group JIDs are opaque, so the admin panel offers a picker fed by `GET /api/whatsapp/groups`. For a
-group, **membership is the permission**. The field used to be `phone` and is migrated by a
-`z.preprocess`; dropping that would fail validation and silently reset a parent's contacts.
+- `parseTarget()` in `src/config/schema.ts` alone decides phone vs. group JID. It rejects a
+  surviving leading zero rather than guessing a country code. Keep it strict.
+- For a group, **membership is the permission**.
+- The `z.preprocess` migrating the old `phone` field must stay, or existing contacts reset.
 
 ## Baileys 7 notes
 
-Pinned to `7.0.0-rc14` exactly (an RC is what the `latest` tag points at). Differences from the 6.x
-examples most guides show:
+Pinned to `7.0.0-rc14` exactly; Dependabot leaves it to a human. Lifecycle reasoning:
+[`docs/architecture.md` § The WhatsApp connection](../../docs/architecture.md#the-whatsapp-connection).
 
-- **`printQRInTerminal` is deprecated and its feature removed** — passing it does nothing. The QR
-  arrives on `connection.update` and we forward it to the admin panel.
-- **`isJidUser` does not exist** (only `isJidGroup`). Group detection is a `@g.us` suffix check.
-- `version` on the socket config is `version?: WAVersion`, which under `exactOptionalPropertyTypes`
-  rejects an explicit `undefined` — spread it conditionally.
-- `syncFullHistory` is **off**: it would download every chat this account ever had into a RAM disk
-  on a 512 MB machine.
-- Outbound audio needs `-avoid_negative_ts make_zero` and one channel, per Baileys' own docs, or
-  some clients show the voice bubble but refuse to play it.
-- **`creds.registered` is only set by the phone-number pairing path.** It is assigned in exactly
-  one place in the library (`Socket/messages-recv.js`, the `link_code_companion_reg` handler). A
-  **QR scan** finishes through `configureSuccessfulPairing`, which fills in `me`, `account` and
-  `platform` and never touches the flag — so a scanned device has a complete working session on
-  disk with `registered: false` beside it. Ask `isPaired()` in `whatsapp/client.ts`, never the flag.
-- **Baileys writes media scratch through `os.tmpdir()`** (`encryptedStream` → `<type><id>-enc`) on
-  every outbound send, and a failure there arrives as an unhandled `'error'` event that kills the
-  process. The unit sets `TMPDIR=/run/bloopbox-tmp`; under `ProtectSystem=strict`, `/tmp` is
-  read-only. Keep it off `RECORDING_DIR` — `audio/recovery.ts` treats files there as unread notes.
-- **`DisconnectReason.timedOut` and `connectionLost` are both 408**, and 408 is how Baileys ends an
-  unscanned QR. An unpaired close other than 515 settles in `notLinked`; never retry it. Every
-  await in `#connect` is followed by a generation check — keep it that way when adding one
-  (`docs/architecture.md`, "The WhatsApp connection").
-- **"Delete for everyone" arrives on `messages.update`**, not `messages.upsert`, as a
-  `messageStubType: REVOKE` stub whose `key.id` is the deleted note. It goes through the whitelist
-  like a note, and `wa:revoked` carries the resolved button, never just an id.
-- `messages.upsert` must handle **both** `notify` and `append`. Baileys picks the type with
-  `node.attrs.offline ? 'append' : 'notify'`, so everything queued while disconnected arrives as
-  `append`. `messageTimestamp` is a protobuf Long — arithmetic straight on it yields `NaN`.
+- `printQRInTerminal` does nothing. The QR arrives on `connection.update` and goes to the panel.
+- `isJidUser` does not exist (only `isJidGroup`). Group detection is a `@g.us` suffix check.
+- `syncFullHistory` stays **off** (every chat ever, into RAM, on a 512 MB machine).
+- **Ask `isPaired()` in `whatsapp/client.ts`, never `creds.registered`**: a QR scan never sets it.
+- Baileys writes media scratch through `os.tmpdir()`, and a failure there kills the process. The
+  unit sets `TMPDIR=/run/bloopbox-tmp`. Keep it off `RECORDING_DIR`, which recovery treats as notes.
+- Outbound audio needs `-avoid_negative_ts make_zero` and one channel (`audio/ffmpeg.ts`).
+- 408 is both `timedOut` and `connectionLost`, and ends an unscanned QR. An unpaired close other than
+  515 settles in `notLinked`; never retry it. Follow every await in `#connect` with a generation check.
+- `messages.upsert` must handle **both** `notify` and `append` (everything queued while offline is
+  `append`). Protobuf `Long` fields are `NaN` under plain arithmetic — convert first.
+- "Delete for everyone" arrives on `messages.update` as a `REVOKE` stub. It goes through the
+  whitelist like a note, and `wa:revoked` carries the resolved button, never just an id.
 
-## Hardware status: one reference board, proven; the target, not yet
+## Hardware status: the reference board is proven, the target is not
 
-All development happens on macOS through the **simulator** HAL driver. One real device exists: the
-**reference board** (`docs/hardware.md`) — a Pi 3B+ with the WM8960 HAT and, since 2026-08-17,
-**all three buttons and all three lamps wired**. Install and build images for it with
-`--audio-hat wm8960` and **never `--no-leds`**: that flag belongs to the first, lampless bring-up
-board of 2026-08-10, which no longer exists.
+All development runs on the **simulator** HAL. The one real device is the **reference board** — Pi
+3B+, WM8960 HAT, buttons on GPIO17/27/22, lamps on GPIO23/24/25. Install and build images for it
+with `--audio-hat wm8960`, **never `--no-leds`**. The 2026-09-30 bench session proved all three
+buttons and lamps, audio both ways, lockout and the silent chord on it (`PENDING.md`); **the Pi Zero
+2 W has never run any of it**. [`docs/hardware-bringup.md`](../../docs/hardware-bringup.md) is the
+gate-by-gate plan and the debugging kit.
 
-**Proven on it** (bench, 2026-09-30, recorded in `PENDING.md`): `gpioDriver.ts` claims all six
-lines; all three buttons register, debounced by `SettledLine`; all three lamps light with the
-default polarity, yellow / coral / teal left to right; audio works in both directions; the lockout
-and the silent chord behave as specified — all under the hardened unit. **Not yet proven:** the Pi
-Zero 2 W target, which has never run any of it.
-`docs/hardware-bringup.md` is the gate-by-gate plan, with the debugging kit (`bloopbox-doctor`,
-`bloopbox-audio-test`, `bloopbox-diagnostics`, `bloopbox-hotspot-test`).
+WM8960 rules; the measurements are in [`docs/hardware.md`](../../docs/hardware.md) § The reference
+board:
 
-**Audio is the WM8960 HAT from here on** (decided 2026-08-17) — `install.sh --audio-hat wm8960`,
-with all three buttons and all three lamps wired. Three things that follow from it, all in
-`docs/hardware.md`: the HAT's own button is on **GPIO17, which is already button 1**, so keep button 1
-there and the HAT needs no wiring of its own; nothing the HAT occupies (GPIO 2, 3 and 18–21) collides
-with the buttons or lamps, so the full pin map stands; and this
-codec is set to `CAPTURE_RATE=48000` because it cannot hold two rates on one I²S clock and the cues
-are 48 kHz — though the overlap that forced it (the bip firing over an open capture) is gone as of
-2026-08-17, so the value is now belt-and-braces pending a real device; see `PENDING.md`. `BUTTON_PINS` and `LED_PINS` still shorten the pin lists for a reduced board — an empty
-`LED_PINS=` (what `--no-leds` writes) claims no output lines — without touching anything above the HAL. Its ALSA controls are **`Playback`/`Capture`** — measured 2026-08-10; this codec has no
-`Master`, and the wrong name fails silently because a mixer error is non-fatal by design.
-
-Two more ALSA facts, both learned the same day by having neither direction work on a live device:
-
-- **Playback volume is four multiplying stages, and only the first was being set.** Measured
-  2026-08-17: `Playback` was at 0 dB while `Speaker` powered up at **−20 dB** and both class-D
-  boosts at 0, so the box was ~26 dB below what the HAT can do and no `speakerVolumePercent` could
-  reach it — every one of those stages is *downstream* of it. They are now `config.audio`
-  (`ampVolumePercent`, `ampBoostDc`, `ampBoostAc`), applied by `GpioHal` at init through
-  `ALSA_AMP_*_MIXER_CONTROL`, **unset by default** because a USB adapter has none. Table in
-  `docs/hardware.md`.
-- **`aplay` is not a decoder.** It reads WAV/AU/VOC and plays anything else as raw PCM *without
-  failing*, so an inbound Ogg/Opus note came out as full-volume noise. `GpioHal.play()` decodes to a
-  `play-*.wav` in the RAM disk first; `playCue` does not, because cues are generated as WAV. Locked by
-  `gpioPlayback.test.ts`, which also covers the stop-during-decode race.
-- **A capture element's mute is separate from its gain.** `amixer sset Capture 60% cap` leaves the
-  mute bit alone, and this codec's input PGAs power up muted — a recording of exactly the right length
-  containing silence. The driver unmutes in its **own** `amixer` call (an unsupported parameter would
-  fail the line and take the gain with it) and `deploy/audio-init.sh` does it at boot for
-  `bloopbox-audio-test` and any bare `arecord`.
-- **This codec's microphone needs three settings, and only one of them is gain.** Unmute, then
-  `… Input Mixer Boost` on (42 dB — it connects the PGA to the boost mixer feeding the ADC), then
-  `… Input Boost Mixer LINPUT1=3` (+29 dB). All measured; the table is in `docs/hardware.md`. They
-  come from `ALSA_ENABLE_SWITCHES`, whose entries are now `Name` **or** `Name=Value`. When measuring
-  capture, use the HAT's own speaker as the stimulus and compare two windows of **one** recording —
-  ambient room noise moved 18 dB between identical passes and invalidates everything.
+- The HAT's own button is on **GPIO17, which is button 1** — keep button 1 there. The HAT's own
+  pins (GPIO 2, 3, 18–21) collide with nothing. `BUTTON_PINS` / `LED_PINS` shorten the pin lists.
+- `CAPTURE_RATE=48000`: the codec cannot hold two rates on one I²S clock, and the cues are 48 kHz.
+- The mixer controls are **`Playback` / `Capture`**, no `Master`; a wrong name fails silently. The
+  amp stages below `Playback` are `config.audio.amp*` via `ALSA_AMP_*_MIXER_CONTROL`, **unset by
+  default** (a USB adapter has none).
+- **`aplay` is not a decoder**: given Ogg/Opus it plays noise and exits 0. `GpioHal.play()` decodes
+  to a `play-*.wav` first; cues are already WAV. Locked by `gpioPlayback.test.ts`.
+- **A capture element's mute is separate from its gain.** The driver unmutes in its **own** `amixer`
+  call; `deploy/audio-init.sh` does it at boot.
+- The microphone also needs `… Input Mixer Boost` on and `… Input Boost Mixer LINPUT1=3`, from
+  `ALSA_ENABLE_SWITCHES` (entries are `Name` or `Name=Value`).
+- Measure capture within **one** recording, the HAT's speaker as stimulus: room noise drifts too far
+  between passes ([`docs/audio-quality.md`](../../docs/audio-quality.md)).
 
 ### opengpio 2.0.2 has a bias/debounce bug — do not "fix" the driver by passing options
 
-`Watch`'s constructor calls its native binding as `watch(chip, line, debounce, bias, cb)` while the
-binding's own signature is `watch(chip, line, bias, debounce, cb)` — **the two are transposed**.
-Asking for `{ bias: Bias.PullUp }` therefore sets a 4 ms debounce and leaves the line floating,
-which on a button input means garbage reads.
+`Watch` hands `bias` and `debounce` to its native binding transposed, so `{ bias: Bias.PullUp }`
+leaves the line floating ([`docs/hardware.md`](../../docs/hardware.md) § Pull-ups come from the
+firmware). `gpioDriver.ts` passes **no options**:
 
-`gpioDriver.ts` passes **no options at all** and handles both concerns elsewhere: pull-ups come from
-the firmware (`gpio=17,27,22=ip,pu`, written into `/boot/firmware/config.txt` by
-`deploy/install.sh`, effective only after a reboot), and debounce is software-side in two layers:
-**contact chatter** is settled in the HAL (`hal/settledLine.ts`: a line must be quiet for
-`BUTTON_SETTLE_MS`, 20 ms, and its level is then *read*, so one press is one down and one up
-however the edges arrived — measured bounce was up to 12 edges in 15 ms), and **press length** is
-judged in `core/buttonInterpreter.ts`, which we need anyway for the tap-vs-hold distinction.
+- Pull-ups come from the firmware: `gpio=17,27,22=ip,pu` in `/boot/firmware/config.txt`, written by
+  `deploy/install.sh`, effective only after a reboot.
+- Contact chatter is settled in the HAL (`hal/settledLine.ts`: quiet for `BUTTON_SETTLE_MS`, 20 ms,
+  then the level is read); press length is judged in `core/buttonInterpreter.ts`.
 
 ## Packaging: the device target is Trixie 64-bit, forced by opengpio
 
-`docs/deployment.md` is the full guide. The parts that constrain how you write code:
+[`docs/deployment.md`](../../docs/deployment.md) is the guide. What constrains code:
 
-- **`opengpio@2.0.2` compiles against the libgpiod _v2_ C++ API.** Bookworm ships libgpiod 1.6,
-  where `gpiod::line::value` and `line_request::release()` do not exist, so the addon does not build
-  there at all — verified, not assumed. Do not "add Bookworm support".
-- Everything pinned lives in **`packaging/versions.env`** — one place, sourced by the scripts and
-  both workflows.
-- The release **bundles the `node` binary** from the build image, so the compiled addon's
-  `NODE_MODULE_VERSION` and the runtime loading it cannot drift.
-- **`package.json` ships in the release.** Without `"type": "module"` beside `dist/`, node rejects
-  every import in it. `hardware-server.js` resolves the UI at `../../dist/public` and
-  `configManager.js` the defaults at `../../config.default.json`, both relative to `dist/` — that
-  layout is load-bearing, not tidiness.
-- **`RECORDING_DIR` is `/run/bloopbox` on the device**, not `/tmp`: `/run` is already a tmpfs, so
-  `RuntimeDirectory=` in both units gives audio-in-RAM with no mount unit. `NOTES_DIR` is
-  `/data/notes` and needs no unit change — `ReadWritePaths=@DATA_DIR@` is already in both.
+- `opengpio@2.0.2` needs the libgpiod **v2** API, which Bookworm lacks. Do not "add Bookworm support".
+- Everything pinned lives in **`packaging/versions.env`**, sourced by the scripts and both workflows.
+- The release bundles the build image's `node` binary, so the addon's ABI cannot drift.
+- **`package.json` ships in the release** (`"type": "module"`), and the code resolves
+  `../../dist/public` and `../../config.default.json` relative to `dist/`. That layout is
+  load-bearing.
+- `RECORDING_DIR` is `/run/bloopbox` via `RuntimeDirectory=` — audio-in-RAM with no mount unit.
+  `NOTES_DIR` is covered by `ReadWritePaths=@DATA_DIR@` in both units.
 - `npm run release:smoke` after touching anything under `deploy/` or `packaging/`.
-- `BUILDX_EXTRA_ARGS` is the hook CI uses to add `--cache-from/--cache-to type=gha` to the buildx
-  invocation. Unset locally, so a local build is unchanged.
+- `BUILDX_EXTRA_ARGS` is CI's hook for the buildx cache flags; unset locally.
 
-### Two shell traps these scripts have already hit
+### Two shell traps these scripts have already hit (reasoning: `docs/deployment.md` § Writing the shell scripts)
 
-- **Do not write `cmd | grep -q`.** `grep -q` exits at the first match, the producer takes a
-  SIGPIPE, and `set -o pipefail` reports the whole check as failed. This bit three separate checks
-  during bring-up. Capture into a variable and use `[[ $x == *y* ]]`.
-- **Do not expand a possibly-empty array as `"${arr[@]}"`.** Every script here runs
-  `set -euo pipefail`, and on **bash 3.2 — which is what macOS ships as `/bin/bash`** — that is an
-  unbound-variable error when the array is empty. Use an unquoted `${VAR:-}` where word splitting is
-  what you want, with a `# shellcheck disable=SC2086` and a note saying why.
+- **Do not write `cmd | grep -q`** (SIGPIPE under `set -o pipefail`). Capture into a variable and
+  use `[[ $x == *y* ]]`. `src/tests/shellScripts.test.ts` fails on it.
+- **Do not expand a possibly-empty array as `"${arr[@]}"`**: under `set -u`, bash 3.2 (macOS's
+  `/bin/bash`) calls it unbound. Use an unquoted `${VAR:-}` where word splitting is wanted, with
+  `# shellcheck disable=SC2086` and a note saying why.
 
 ## Tests
 
-`src/tests/*.test.ts`, node environment. Timing-sensitive suites (LED patterns, debounce, purge TTL)
-run on **fake timers** — never add a real sleep. Where a code path awaits real filesystem work
-(`deviceController.test.ts` leaves `setImmediate` real because commit awaits `rm`), assert with a
-`waitFor` condition rather than a fixed number of yields: fixed flushes passed in isolation and
-failed intermittently under parallel load.
+`src/tests/*.test.ts`, node environment.
 
-A test that builds a second `DeviceController` on the same `MockHal` must **`dispose()`** the first,
-not just `stop()` it: the HAL listeners are attached at construction and only `dispose()` removes
-them, so a stopped controller still answers every press.
-
-Server-layer tests drive a **real Express app on an ephemeral port with `fetch`**, assembled the way
-`hardware-server.ts` assembles it — see `src/tests/support/apiHarness.ts`. No supertest.
-`bridgeLink.test.ts` uses a real Socket.io server and client, because the token gate is handshake
-middleware and only exists during a connection.
-
-`vitest.config.ts` holds a **coverage ratchet**, and `npm run check` enforces it (`test:gate` is
-`vitest run --coverage`). The thresholds are the figures when they were last raised, rounded down
-(`vitest.config.ts` has them; not repeated here, so they cannot drift), so a change that lowers one
-fails the gate; raise the number in the same commit as a change that lifts it. Excluded: the composition roots in
-`src/processes/` and `src/server/simulatorTransport.ts` (the browser end of a debugging tool).
-`gpioDriver.ts` is counted now that `gpioButtons`/`gpioPlayback` drive it on a mocked opengpio.
+- Timing-sensitive suites run on **fake timers** — never add a real sleep. Where real filesystem
+  work is awaited, assert with `waitFor`, not a fixed number of yields.
+- A test that builds a second `DeviceController` on the same `MockHal` must **`dispose()`** the
+  first: `stop()` leaves its HAL listeners attached, so it still answers every press.
+- Server tests drive a **real Express app on an ephemeral port with `fetch`**
+  (`src/tests/support/apiHarness.ts`). No supertest. `bridgeLink.test.ts` uses a real Socket.io
+  pair, because the token gate exists only during a handshake.
+- **Coverage is a ratchet** in `vitest.config.ts`, enforced by `npm run check` (`test:gate`). Never
+  lower a threshold; raise it in the commit that lifts coverage. Never copy the numbers elsewhere.
 
 ## Decisions the spec left open
 
-**Resolved, and locked by tests.** The table, with each rule and the tests that lock it, is
-[`docs/architecture.md` § Decisions the spec left open](../../docs/architecture.md#decisions-the-spec-left-open). Read
-the row before changing anything it names. Test titles cite the ID (`describe('lockout … [D-05]')`),
-and `decisions.test.ts` fails when a decision loses its test or a test cites an unknown ID. If you
-think one is wrong, change it deliberately in one place, update its tests, and update `PRODUCT.md`
-and `architecture.md` in the same commit. Do not work around it locally.
+Each rule and its tests are in the table in
+[`docs/architecture.md` § Decisions the spec left open](../../docs/architecture.md#decisions-the-spec-left-open):
+read the row before changing anything it names. Test titles cite the ID (`[D-05]`), and
+`decisions.test.ts` fails when a decision loses its test or a test cites an unknown ID. Change one
+deliberately — its tests, `PRODUCT.md` and `architecture.md` in the same commit — never around it.
 
-- **D-01** LED priority ladder
-- **D-02** Tap vs. cancel
-- **D-03** A blinking button does not record
-- **D-04** Carry-on window
-- **D-05** One button at a time
-- **D-06** Bip before the mic
-- **D-07** Nothing plays over a note
-- **D-08** Whoosh after finalise
-- **D-09** One sound per send
-- **D-10** Notes are decoded on arrival
-- **D-11** Read-only mode
-- **D-12** Silent chord
-- **D-13** Silent mode gating
-- **D-14** Boot animation held
-- **D-15** Beyond the spec
-- **D-16** Designed vs synthesised cues
+| ID | Decision | ID | Decision |
+| -- | -------- | -- | -------- |
+| D-01 | LED priority ladder | D-09 | One sound per send |
+| D-02 | Tap vs. cancel | D-10 | Notes are decoded on arrival |
+| D-03 | A blinking button does not record | D-11 | Read-only mode |
+| D-04 | Carry-on window | D-12 | Silent chord |
+| D-05 | One button at a time | D-13 | Silent mode gating |
+| D-06 | Bip before the mic | D-14 | Boot animation held |
+| D-07 | Nothing plays over a note | D-15 | Beyond the spec |
+| D-08 | Whoosh after finalise | D-16 | Designed vs synthesised cues |
 
 ## Safety constraints (these protect a real device in a child's room)
 
 - **The two directions do not share a directory** (`src/audio/directories.ts`). Outbound captures
-  and every derived file stay in tmpfs (`RECORDING_DIR`, `/run/bloopbox`) — nothing the child
-  records ever reaches the card. Inbound notes are on the card (`NOTES_DIR`, `/data/notes`) so an
-  unheard note survives someone unplugging the box, which used to lose it outright. Unread audio is
-  purged after **48 h** whether heard or not; playback deletes a note immediately, which is what
-  makes *present on disk* mean *unread* — and is why losing the directory lost the unread flag too.
+  stay in tmpfs (`RECORDING_DIR`): nothing the child records reaches the card. Inbound notes are on
+  the card (`NOTES_DIR`) to survive a power cut. Playback deletes a note, so *present on disk* means
+  *unread*; everything is purged at **48 h** regardless.
+- **`notesDirectory()` must never fall back to `RECORDING_DIR`** — an upgrade keeps the environment
+  file that sets it. Pinned by `purge.test.ts`.
 - **Nothing writes a note under its final name except the rename** in `whatsapp/mediaDownload.ts`
   (`.part` → `fsync` → `rename`). Recovery treats every `wa-<i>-<id>.ogg` as unread audio.
-- **`notesDirectory()` must never fall back to `RECORDING_DIR`.** `/etc/bloopbox/environment` sets
-  that variable and an upgrade *keeps the file*, so a fallback silently puts every already-installed
-  box back in RAM while the tests stay green. Pinned by `purge.test.ts`.
-- `/data/config.json` writes are **atomic** (unique tmp file → `fsync` → `rename` → `fsync` the
-  directory, in `src/config/atomicWrite.ts`) and **serialised**. A half-written config during power
-  loss would brick the device.
-- Invalid or missing config falls back to `config.default.json` **in RAM** and boots into
-  onboarding. It never crashes the daemon.
-- Only the configured JIDs are accepted — `src/whatsapp/whitelist.ts`. Unknown numbers, groups
-  nobody assigned, status broadcasts, newsletters and the device's own echoed sends are all dropped,
-  **before download**, so a stranger's audio never reaches the disk. `src/tests/whitelist.test.ts`
-  is written from the position that anything not explicitly assigned must not get through.
-- JIDs are normalised before comparison (`15551234567:12@s.whatsapp.net` is the same person as
-  `15551234567@s.whatsapp.net`), or the same contact would be accepted or rejected depending on
-  which of their linked devices they sent from.
+- `/data/config.json` writes are **atomic and serialised** (`src/config/atomicWrite.ts`). Invalid or
+  missing config falls back to `config.default.json` **in RAM** and boots into onboarding; it never
+  crashes the daemon.
+- Only configured JIDs get through `src/whatsapp/whitelist.ts`; everything else is dropped **before
+  download**. JIDs are normalised first, so all of a contact's linked devices match.
+  `whitelist.test.ts` assumes anything not explicitly assigned must not get through.
+- **No whole WhatsApp address reaches the log**: log `maskJid(jid)` (`whatsapp/privacy.ts`).
+  `bridge.test.ts` fails on any full number.

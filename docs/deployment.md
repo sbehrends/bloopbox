@@ -513,9 +513,13 @@ to do:
   image, then a GitHub release with the tarball, the image and their checksums. Deliberately not
   path-filtered: a tag rebuilds everything.
 
-**The CI image is built for the default board.** Its build step passes no `--audio-hat`, so it is
-a USB-audio image named `bloopbox-<version>-sd.img.xz`, not one for the WM8960 reference board.
-Until that changes, build a wm8960 card locally.
+**A release is built for the tested hardware**: a Raspberry Pi 3B+ with the Waveshare WM8960
+Audio HAT, three buttons and three lamps. `release.yml` sets it once, as `AUDIO_HAT: wm8960` at the
+top of the workflow, which passes `--audio-hat wm8960` to the image builder and names the image
+`bloopbox-<version>-wm8960-sd.img.xz`; the release notes name the same board and give the tarball
+route as `install.sh --audio-hat wm8960` followed by a reboot. No release claims the Pi Zero 2 W
+until one has run it. If the tested hardware changes, change the variable, the notes and this
+paragraph together.
 
 **Both workflows run with `permissions: contents: read`**, and only the job that publishes a
 release asks for `contents: write`. **Every action is pinned to a commit**, with its tag in a

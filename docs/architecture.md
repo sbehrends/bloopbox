@@ -949,6 +949,11 @@ what makes `beginLinking()`'s `notLinked` guard hold against a double click. An 
 ended before its replacement opens, `unlink()` cancels a pending reconnect, and a socket from before
 an unlink may not write its credentials back into the directory the unlink deleted.
 
+**`creds.json` is written atomically.** The client's auth store is `whatsapp/authState.ts`:
+Baileys' file layout, so a box paired before it keeps its session, with `writeFileAtomic`
+underneath. Baileys' own store truncates the file before writing it, and a power cut in that
+window leaves a file it reads as "never paired": the box silently unlinked.
+
 `fetchLatestBaileysVersion` has no timeout and takes no signal, so it is raced against
 `VERSION_FETCH_TIMEOUT_MS`; past that, the socket opens with the version Baileys ships with.
 

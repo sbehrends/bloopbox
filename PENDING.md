@@ -1167,7 +1167,15 @@ supersedes it, but **the drop-in must be deleted when that happens** or it will 
 packaged unit. A pre-fix backup of the credentials is on the device at
 `/data/auth_info.backup-1786383903.tar.gz`.
 
-### Baileys writes its credentials non-atomically
+### ~~Baileys writes its credentials non-atomically~~ — fixed 2026-10-02
+
+**Fixed.** `WhatsAppClient` now uses `useDurableAuthState` (`src/whatsapp/authState.ts`): the same
+files and names as Baileys' store, so a paired box stays paired across the switch, with every write
+through `writeFileAtomic` and writes to one file serialised. `authState.test.ts` shows a failed save
+leaving the old `creds.json` intact, and that it reads files Baileys' own store wrote. The
+last-good copy suggested below was left out on purpose: with atomic writes a power cut can no
+longer produce a bad file, and a second copy on the same card does not survive the card failing.
+
 
 Noticed while testing the fix above, and reproduced accidentally: `useMultiFileAuthState`'s
 `writeData` is a plain `writeFile`, which truncates before it writes. Polling `creds.json` in a

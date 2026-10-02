@@ -7,7 +7,6 @@ import {
   downloadMediaMessage,
   fetchLatestBaileysVersion,
   makeWASocket,
-  useMultiFileAuthState,
   WAMessageStubType,
   type AuthenticationCreds,
   type AuthenticationState,
@@ -24,6 +23,7 @@ import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../ipc/note
 import { normalisePhone, type ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
 import { downloadToFile, MAX_INBOUND_BYTES, MediaTooLargeError } from './mediaDownload.ts';
+import { useDurableAuthState } from './authState.ts';
 import { maskJid } from './privacy.ts';
 import { extractStatusCode } from './statusCode.ts';
 
@@ -418,7 +418,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     this.#authDirectory = options.authDirectory;
     this.#log = options.logger;
     this.#socketFactory = options.socketFactory ?? makeWASocket;
-    this.#authStateFactory = options.authStateFactory ?? useMultiFileAuthState;
+    this.#authStateFactory = options.authStateFactory ?? useDurableAuthState;
     this.#download = options.download ?? defaultDownload;
     this.#versionProvider = options.versionProvider ?? defaultVersionProvider;
     this.#now = options.now ?? Date.now;

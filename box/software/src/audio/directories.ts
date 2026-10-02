@@ -56,7 +56,7 @@ export function recordingDirectory(env: NodeJS.ProcessEnv = process.env): string
  * `ReadWritePaths=/data` is already in both units, so the sandbox allows it with no unit change.
  *
  * The cost is that anything running off-device has to set this — `/data` does not exist on a
- * development machine. `scripts/dev-server.ts` does, next to `CONFIG_PATH`.
+ * development machine. `scripts/dev-server.ts` does.
  */
 export function notesDirectory(env: NodeJS.ProcessEnv = process.env): string {
   return env['NOTES_DIR'] ?? DEFAULT_NOTES_DIR;

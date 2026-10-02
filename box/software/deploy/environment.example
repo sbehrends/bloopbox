@@ -50,7 +50,7 @@ LOG_LEVEL=info
 #BAILEYS_LOG_LEVEL=warn
 
 # --- bring-up knobs (src/hal/gpioDriver.ts) -------------------------------------------
-# The GPIO driver has never run on real hardware. These are the first things to change.
+# Proven on the reference board with the defaults; on a new board these are the first things to change.
 #
 # LEDs on but dark, or dark when they should be on:
 #LED_ACTIVE_HIGH=false
@@ -86,8 +86,8 @@ LOG_LEVEL=info
 # hardware behind them, in channel order (left, centre, right). Unset uses all three;
 # empty claims none. Fewer buttons than three is a partly-wired board, not an error.
 #
-# The MVP board — Pi 3B+ with the WM8960 HAT, the HAT's own button on GPIO17 as button 1,
-# and no lamps at all — is what `install.sh --audio-hat wm8960 --no-leds` writes:
+# A board with no lamps wired is what `install.sh --no-leds` writes. The reference board has
+# all three buttons and lamps and needs neither line.
 #BUTTON_PINS=GPIO17
 #LED_PINS=
 
@@ -100,7 +100,8 @@ LOG_LEVEL=info
 #
 # Capture rate, normally left alone so no resampling happens on a slow CPU. The WM8960 is
 # the clock consumer on a shared I2S bit clock and cannot hold two rates at once, and the
-# record cues are 48 kHz — the "pop" fires while capture is open. 48000 makes them agree.
+# cues are 48 kHz, and a cue can still play while a capture is open (the inbound chime).
+# 48000 makes them agree.
 #CAPTURE_RATE=48000
 
 # Runs the browser simulator instead of real GPIO — install.sh --simulator sets this. On a

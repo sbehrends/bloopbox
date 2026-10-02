@@ -11,7 +11,7 @@ import {
 } from '../ipc/noteFiles.ts';
 
 /**
- * Rebuilding the unread queue after a restart (PENDING.md, "Unread notes should be recovered").
+ * Rebuilding the unread queue after a restart.
  *
  * The queue itself lives in `AudioQueueManager`'s memory, so a config save, a crash or an
  * update used to drop every note a child had not yet listened to — while the sender had

@@ -283,7 +283,7 @@ section.band {
 /* ---- light signature ---- */
 
 /* The product's real voice is three lamps in a dark room, so the kit shows the patterns
-   rather than describing them. The authority is the LED ladder in CLAUDE.md and the
+   rather than describing them. The authority is the LED ladder in docs/architecture.md (D-01) and the
    animator in src/core — these are a picture of it, not a second implementation. */
 
 .ladder {

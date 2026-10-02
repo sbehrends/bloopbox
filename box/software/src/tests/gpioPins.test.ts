@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * Pin and board resolution for the GPIO driver (docs/hardware.md).
  *
  * The driver itself needs a Pi, but *which lines it claims* is decided at module load from
- * the environment — and that is what lets a reduced board (the Pi 3B+ / WM8960 MVP: one
- * button, no lamps) run the same code as the full device. This is the only part of
+ * the environment — and that is what lets a partly wired board (fewer buttons, no lamps) run the
+ * same code as the full device. This is the only part of
  * `gpioDriver.ts` that can be locked down without hardware, so it is worth locking.
  *
  * Every case re-imports the module because the constants are read once at load, which is

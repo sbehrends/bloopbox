@@ -92,7 +92,7 @@ Environment=NODE_OPTIONS=--max-old-space-size=128
 
 # Hardening. /data is the only writable path on disk; everything else the daemon needs is
 # the RuntimeDirectory above. If bring-up hits an unexplained EACCES, comment this block
-# out first — the GPIO and ALSA paths have never run on real hardware.
+# out first to rule it in or out. It runs with GPIO and ALSA working on the reference board.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

@@ -13,7 +13,7 @@ export type ReadKey = WAMessage['key'];
  *
  * It used to be a `Map` in the bridge's memory, so a bridge restart — an update, a crash, every
  * reboot — lost it, and a note that arrived before the restart was played without its sender ever
- * seeing the blue ticks (PENDING.md, "Read receipts do not survive a bridge restart"). Now it is a
+ * seeing the blue ticks. Now it is a
  * small file beside the note, with the note's own lifetime: written when the note is accepted,
  * taken when the receipt is sent, dropped when the sender revokes it, and otherwise purged with
  * the audio after 48 h.

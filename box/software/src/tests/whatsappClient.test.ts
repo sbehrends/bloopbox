@@ -107,7 +107,7 @@ async function markPairedByQrScan(authDirectory: string): Promise<void> {
  * Not defensive padding: Baileys' `useMultiFileAuthState` saves with a plain `writeFile`,
  * which truncates before it writes, and polling this in a loop hits the empty window often
  * enough to fail the test outright. That the window is reachable at all is the point — see
- * `PENDING.md`, "Baileys writes its credentials non-atomically".
+ * `docs/architecture.md` (`creds.json` is written atomically).
  */
 async function readRegisteredFlag(authDirectory: string): Promise<unknown> {
   const raw = await readFile(join(authDirectory, 'creds.json'), 'utf8');

@@ -57,9 +57,9 @@ Options:
                      the recorded audio profile to one the box contradicts
   -h, --help         This message
 
-The MVP board (Pi 3B+ + WM8960 HAT, the HAT's own button as button 1, no lamps) is:
+The reference board (Pi 3B+ with the WM8960 HAT, three buttons, three lamps) is:
 
-  sudo ./install.sh --audio-hat wm8960 --no-leds
+  sudo ./install.sh --audio-hat wm8960
 
 Both of those are remembered in /etc/bloopbox/profile, so an upgrade needs neither flag
 again. Passing one changes what this box is recorded as; passing nothing keeps it.

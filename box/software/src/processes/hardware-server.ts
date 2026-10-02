@@ -665,7 +665,7 @@ async function main(): Promise<void> {
     deviceLog.debug(controller.state.snapshot(), 'state');
   });
 
-  // The raw edges, before debouncing. A press the interpreter discards leaves no other
+  // Every settled edge, before the interpreter judges it. A press the interpreter discards leaves no other
   // trace, and "the button did nothing" is the report we will actually get.
   hal.on('buttonDown', ({ index }) => {
     deviceLog.debug({ index, edge: 'down' }, 'button');

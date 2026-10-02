@@ -33,8 +33,8 @@ TimeoutStopSec=10
 # The heavier process by far, and the one whose loss the box survives — it reconnects.
 OOMScoreAdjust=300
 
-# Same tmpfs as the hardware server — inbound voice notes are downloaded here and the path
-# is handed over IPC, so the two must agree. No RuntimeDirectorySize= here — see the long
+# Same tmpfs as the hardware server, for the captures the bridge uploads (inbound notes go to
+# NOTES_DIR on the card, which ReadWritePaths covers). No RuntimeDirectorySize= here — see the long
 # comment on this same block in bloopbox-hardware.service; it was never a real directive.
 #
 # bloopbox-tmp is the second entry and belongs to this unit alone: Baileys writes media

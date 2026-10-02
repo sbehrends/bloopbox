@@ -14,9 +14,9 @@ import { DeviceState, DeviceStatus } from '../core/deviceState.ts';
 import { LedAnimator } from '../core/ledAnimator.ts';
 
 /**
- * HAL contract tests (PRODUCT.md §4, §5). The GPIO driver is excluded — it cannot be
- * exercised without hardware — so these cover the factory, the simulator transport
- * protocol, and the invariants every driver must uphold.
+ * HAL contract tests (PRODUCT.md §4, §5): the factory, the simulator transport protocol, and the
+ * invariants every driver must uphold. The GPIO driver has its own suites (`gpio*.test.ts`), which
+ * drive it with opengpio and the audio tools mocked.
  */
 
 let workDir: string;

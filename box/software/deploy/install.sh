@@ -2,8 +2,8 @@
 #
 # Installs bloopbox on a Raspberry Pi. Run from inside an unpacked release tarball:
 #
-#   tar xzf bloopbox-0.1.0-linux-arm64.tar.gz
-#   sudo ./bloopbox-0.1.0-linux-arm64/install.sh
+#   tar xzf bloopbox-<version>-linux-arm64.tar.gz
+#   sudo ./bloopbox-<version>-linux-arm64/install.sh
 #
 # Safe to re-run: an upgrade swaps the application directory and leaves /data (config,
 # WhatsApp credentials) and /etc/bloopbox/environment (the bridge token) untouched.

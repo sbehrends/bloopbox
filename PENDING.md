@@ -6,8 +6,12 @@ one line to **Recently resolved** at the foot, with the commit, so nothing disap
 
 Where things stand on hardware: the **reference board** (Pi 3B+, WM8960 HAT, three buttons, three
 lamps — `docs/hardware.md` § The reference board) proved buttons, lamps, audio both ways, the
-hotspot and WhatsApp linking on the bench, 2026-09-30. **The Pi Zero 2 W target has run none of
-it.** There is no git remote, so CI has never run on GitHub either.
+hotspot and WhatsApp linking on the bench, 2026-09-30. A `1.0.0-rc.1` card (`9e78d0f`, plus the
+version bump) repeated it on 2026-10-02: flash and first boot, hotspot onboarding onto home Wi-Fi,
+admin password, WhatsApp linking, and hold-to-send and tap-to-play on the blue button — the only
+one assigned, so the other two were not exercised end to end. Doctor was green apart from the two
+`Name=Value` false failures, and fully green with the fix (`f1d9981`). **The Pi Zero 2 W target has run
+none of it.** There is no git remote, so CI has never run on GitHub either.
 
 Ordered roughly by priority within each group.
 
@@ -107,8 +111,8 @@ would request it beside `forget`, and the panel could offer it on its own. **No 
 was held back until the agent's request channel was known not to replay requests, and the
 acknowledgement-by-id was confirmed on the reference board on 2026-09-30.
 
-Also: the reference board's current ssh password was pasted into a chat during the 2026-09-30 bench
-session. Rotate it once this exists.
+Also: the reference board's ssh password was pasted into a chat during the 2026-09-30 bench session,
+and the `1.0.0-rc.1` card's again on 2026-10-02. Rotate it once this exists.
 
 ### A factory-reset control that wipes all user configuration
 
@@ -675,7 +679,7 @@ Not work, but things that could bite.
 
 One line each, newest first. The commit holds the detail; where the reasoning lives now is named.
 
-- **`bloopbox-doctor` failed the two mic-boost levels on every WM8960 box** — 2026-10-02. A `Name=Value` entry is now read as a level and its value compared; green on the reference board.
+- **`bloopbox-doctor` failed the two mic-boost levels on every WM8960 box** — 2026-10-02, `f1d9981`. A `Name=Value` entry is now read as a level and its value compared; green on the reference board.
 - **The inbound chime could be recorded into a child's message** — 2026-10-02. A note arriving mid-take now lights its lamp without a chime (D-17).
 - **Read receipts survive a bridge restart** — 2026-10-02, `2d6a584`. `wa-<i>-<id>.key` beside each
   note (`whatsapp/readKeys.ts`, `docs/architecture.md`). Device check is in "WhatsApp end to end".

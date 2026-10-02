@@ -66,10 +66,10 @@ onboarding (hotspot, portal, scan, join) against the same tarball with only `nmc
 ## Installing on a Pi
 
 ```bash
-scp release/bloopbox-0.1.0-linux-arm64.tar.gz <user>@bloopbox.local:
+scp release/bloopbox-<version>-linux-arm64.tar.gz <user>@bloopbox.local:
 ssh <user>@bloopbox.local
-tar xzf bloopbox-0.1.0-linux-arm64.tar.gz
-sudo ./bloopbox-0.1.0-linux-arm64/install.sh --audio-hat wm8960
+tar xzf bloopbox-<version>-linux-arm64.tar.gz
+sudo ./bloopbox-<version>-linux-arm64/install.sh --audio-hat wm8960
 sudo reboot
 ```
 
@@ -200,7 +200,8 @@ use a privileged container, from `box/software/`:
 ```bash
 docker run --rm --privileged --platform linux/arm64 \
   -v "$PWD":/repo -v "$PWD/release/image-work/cache":/work/cache:ro -w /repo \
-  debian:trixie-slim bash -c 'apt-get update -qq && apt-get install -y --no-install-recommends \
+  debian:trixie-slim bash -c 'for i in $(seq 0 15); do [ -e /dev/loop$i ] || mknod -m 660 /dev/loop$i b 7 $i; done && \
+    apt-get update -qq && apt-get install -y --no-install-recommends \
     curl xz-utils parted e2fsprogs dosfstools openssl ca-certificates util-linux mawk zerofree && \
     ./scripts/build-sd-image.sh --work-dir /work --audio-hat wm8960'
 ```
@@ -211,6 +212,11 @@ Desktop and OrbStack both fail with `error deallocating: Invalid argument` on th
 `/work` is the container's own filesystem, which can. Binding `…/image-work/cache` in separately is
 what keeps the ~500 MB Pi OS download between runs, since the cache lives under the work dir. It
 is mounted read-only, so the cache has to be filled once first: drop `:ro` for that run.
+
+**So is the `mknod` loop.** A container's `/dev` is a snapshot of the loop nodes that existed when it
+started, and there is no udev to add more. The VM's loop devices are shared across containers, so
+once earlier runs have taken `loop0`–`loop3`, `losetup` is handed `loop4`, finds no node for it and
+fails with `device node /dev/loop4 (7:4) is lost`. Creating the nodes up front costs nothing.
 
 Options: `--hostname`, `--user`, `--password` (see [the ssh password](#the-ssh-password)),
 `--wifi-ssid` / `--wifi-psk` / `--wifi-country`, `--audio-hat`, `--no-leds`, `--no-ssh`,

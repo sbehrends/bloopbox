@@ -234,27 +234,6 @@ this is the next step. The design:
   `kill -STOP` the node process and watch systemd restart it within ~30 s (`Watchdog timeout` in
   `journalctl -u bloopbox-hardware`).
 
-### `bloopbox-doctor` fails two checks that are actually fine — it cannot read a `Name=Value` switch
-
-On the reference board doctor is green except:
-
-```
-✗ routing: Left Input Boost Mixer LINPUT1=3 not a switch on this card
-✗ routing: Right Input Boost Mixer RINPUT1=3 not a switch on this card
-```
-
-Both are false — the controls read `3 [100%] [29.00dB]`, as `docs/hardware.md` specifies. The loop
-in `deploy/doctor.sh` that walks `ALSA_ENABLE_SWITCHES` passes each entry straight to `amixer sget`,
-and two defects stack:
-
-1. The `=Value` suffix is never split off, so the name resolves to no control.
-2. A `Name=Value` entry is a **level, not a switch**: even by its bare name it prints no
-   `[on]`/`[off]`, so the `case` can never match. Assert the value for these, on/off only for bare
-   names.
-
-Worth fixing: doctor is the only health signal a screenless box has, and two permanent false
-failures teach you to skim past a real one.
-
 ### Audio-HAT profile: the codec is not autodetected and does not self-heal
 
 `install.sh` resolves the profile as `explicit flag > /etc/bloopbox/profile > inferred from the
@@ -696,6 +675,7 @@ Not work, but things that could bite.
 
 One line each, newest first. The commit holds the detail; where the reasoning lives now is named.
 
+- **`bloopbox-doctor` failed the two mic-boost levels on every WM8960 box** — 2026-10-02. A `Name=Value` entry is now read as a level and its value compared; green on the reference board.
 - **The inbound chime could be recorded into a child's message** — 2026-10-02. A note arriving mid-take now lights its lamp without a chime (D-17).
 - **Read receipts survive a bridge restart** — 2026-10-02, `2d6a584`. `wa-<i>-<id>.key` beside each
   note (`whatsapp/readKeys.ts`, `docs/architecture.md`). Device check is in "WhatsApp end to end".

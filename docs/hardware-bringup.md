@@ -22,7 +22,7 @@ session on the reference board" entry under "Recently resolved" in `PENDING.md`.
 | Gate | What passed |
 | ---- | ----------- |
 | 0 — image | The flashed image boots, and the first-boot ssh password is made before sshd starts, shows in the admin panel, and logs in |
-| 1 — install | `bloopbox-doctor` green apart from two known false failures (below). Restart policy, OOM scores and the journal drop-ins exactly as specified |
+| 1 — install | `bloopbox-doctor` green — fully since 2026-10-02, when its two mic-boost false failures were fixed. Restart policy, OOM scores and the journal drop-ins exactly as specified |
 | 2 — network agent | `timeSynced: true` within a minute of getting online |
 | 3 — hotspot | Onboarding through the hotspot and portal from a phone. First closed end to end on 2026-08-10, from a blank image |
 | 4a — audio | Both directions through the real path: a ~5 s hold arrives as a ~4 s note, a short hold is refused with the "oops", and a received note plays. A second arrival or **Test speaker** mid-note does not cut in over it |
@@ -162,8 +162,9 @@ ssh bloop@bloopbox.local 'sudo bloopbox-doctor'
 **Pass:** the runtime, the opengpio addon, ffmpeg's Opus encoder, `/data`, the tmpfs, the cues,
 all three services active, the firmware pull-ups present, and `nmcli` + dnsmasq installed.
 
-**Known false failures:** two `routing: … Input Boost Mixer …INPUT1=3 not a switch on this card`
-lines. Doctor cannot read a `Name=Value` entry; the stage is set correctly (`PENDING.md`).
+The mic-boost entries read as levels, `routing: … Input Boost Mixer LINPUT1  3`. A card built before
+2026-10-02 instead fails them as `…INPUT1=3 not a switch on this card`: that was doctor unable to read
+a `Name=Value` entry, not the stage, which was set correctly all along.
 
 If something fails with a permission error rather than wrong behaviour, comment out the
 hardening block in `deploy/systemd/bloopbox-hardware.service` before suspecting the code —

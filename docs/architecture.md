@@ -46,7 +46,10 @@ Each process exists because of something it is **not** allowed to do.
 physical and everything a browser talks to. It never imports Baileys.
 
 **Process 2 — the WhatsApp bridge** (`src/processes/whatsapp-bridge.ts`) owns the WhatsApp socket
-and nothing else. It never touches GPIO or audio devices. It is deliberately **not** `BindsTo` the
+and nothing else. The process file only opens its two connections and wires them to
+[`createBridge`](../box/software/src/whatsapp/bridge.ts), which holds every decision with its
+WhatsApp client, its link to the hardware server and its two file effects injected, so it runs
+under test with fakes (`bridge.test.ts`). It never touches GPIO or audio devices. It is deliberately **not** `BindsTo` the
 hardware unit: WhatsApp is an unofficial API on a release candidate, and a crash there must not
 take the buttons and lights with it.
 
@@ -997,7 +1000,15 @@ the run it belongs to.
 product. Only the configured JIDs are accepted; unknown numbers, groups nobody assigned, status
 broadcasts, newsletters and the device's own echoed sends are all dropped.
 
-Filtering happens **before download**, so a stranger's audio never reaches the disk.
+Filtering happens **before download**, so a stranger's audio never reaches the disk. The rule is
+proven in `whitelist.test.ts`; that the bridge *applies* it first is proven in `bridge.test.ts`,
+which asserts a stranger's note never has its download called, and that a contact list the bridge
+cannot read leaves nobody assigned rather than everybody.
+
+**No whole WhatsApp address reaches the log.** The journal leaves the device in a diagnostics
+bundle, so the bridge logs `maskJid(jid)` (`whatsapp/privacy.ts`): `+49•••5678`, `lid•••3857`,
+`group•••9999`, enough to tell two contacts apart and to match the ending a parent sees in the
+panel. `bridge.test.ts` serialises everything the bridge logged and fails on any full number.
 
 JIDs are normalised before comparison — `15551234567:12@s.whatsapp.net` is the same person as
 `15551234567@s.whatsapp.net` — or the same contact would be accepted or rejected depending on which
@@ -1059,8 +1070,8 @@ which is a helper rather than a suite. No supertest; nothing was worth a depende
 is handshake middleware and only exists during a connection.
 
 **Coverage is a ratchet, and the gate enforces it.** `npm run check` runs `vitest run --coverage`,
-and the thresholds in `vitest.config.ts` are the figures on the day they were set, rounded down:
-91% statements, 83% branches, 89% functions, 92% lines (2026-10-01). A change that lowers one fails
+and the thresholds in `vitest.config.ts` are the figures on the day they were last raised, rounded
+down (the numbers live there only). A change that lowers one fails
 the gate; a change that raises one raises the number in the same commit. The threshold is not a
 target. Its job is to make a quiet regression loud. Two things are excluded, each by name: the
 composition roots in `src/processes/`, which the release smoke test exercises, and

@@ -112,7 +112,7 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
 | `src/hal/`     | All physical I/O — buttons, LEDs, **and audio** — behind `types.ts`. Load GPIO dynamically |
 | `src/ipc/`     | The daemon-to-daemon contract. **Adding an event means editing `events.ts` first**; every endpoint takes its maps as Socket.io generics. `noteFiles.ts` is the shared file-name contract |
 | `src/processes/hardware-server.ts` | Never imports Baileys                                         |
-| `src/processes/whatsapp-bridge.ts` | Never touches GPIO or audio devices                           |
+| `src/processes/whatsapp-bridge.ts` | Never touches GPIO or audio devices. Wiring only: decisions go in `whatsapp/bridge.ts`, which is tested |
 | `src/net/`     | The **only** way the daemon learns whether Wi-Fi is up                              |
 | `src/stats/`   | Activity totals, on the card. Never a config section — see below                     |
 | `src/system/`  | Read-only health readings, and the reboot/poweroff request. Every reading is nullable |
@@ -396,9 +396,9 @@ Server-layer tests drive a **real Express app on an ephemeral port with `fetch`*
 middleware and only exists during a connection.
 
 `vitest.config.ts` holds a **coverage ratchet**, and `npm run check` enforces it (`test:gate` is
-`vitest run --coverage`). The thresholds are today's figures rounded down — 91% statements, 83%
-branches, 89% functions, 92% lines on 2026-10-01 — so a change that lowers one fails the gate; raise
-the number in the same commit as a change that lifts it. Excluded: the composition roots in
+`vitest run --coverage`). The thresholds are the figures when they were last raised, rounded down
+(`vitest.config.ts` has them; not repeated here, so they cannot drift), so a change that lowers one
+fails the gate; raise the number in the same commit as a change that lifts it. Excluded: the composition roots in
 `src/processes/` and `src/server/simulatorTransport.ts` (the browser end of a debugging tool).
 `gpioDriver.ts` is counted now that `gpioButtons`/`gpioPlayback` drive it on a mocked opengpio.
 

@@ -582,14 +582,13 @@ argument yet for doing the subsetted WOFF2 work above, since the reference now e
 ### Coverage: a ratchet in the gate now, with known holes
 
 **Resolved 2026-10-01 (review Phase 3):** `npm run check` runs with coverage, and the thresholds in
-`vitest.config.ts` are a ratchet at that day's figures (91% statements / 83% branches / 89%
-functions / 92% lines). `src/server/simulatorTransport.ts` is excluded by name, and `gpioDriver.ts`
+`vitest.config.ts` are a ratchet, raised whenever a change lifts the figures (the numbers live there
+only). `src/server/simulatorTransport.ts` is excluded by name, and `gpioDriver.ts`
 is counted. What is still thin, in order of size, for whoever raises the numbers next:
 
 - **`src/whatsapp/`** — what is left in `client.ts` is mostly pairing-code and group-listing glue
-  and LID resolution. The call site that enforces *whitelist before download* is still in
-  `src/processes/whatsapp-bridge.ts`, which is excluded from coverage — moving it into
-  `createBridge()` is review Phase 2F.
+  and LID resolution. The call site that enforces *whitelist before download* moved into
+  `createBridge()` (`whatsapp/bridge.ts`) on 2026-10-02 and is covered by `bridge.test.ts`.
 - **`src/audio/`** — the ffmpeg pipeline's error paths.
 - Three timeout paths in `bridgeLink.ts` (send 60s, pairing 20s, groups 10s) are deliberately
   uncovered: they need fake timers, which do not mix with real sockets.
@@ -1245,7 +1244,7 @@ harmless if it is — a plain `audioMessage` still matches.
 
 ### Read receipts do not survive a bridge restart
 
-`pendingReads` in `whatsapp-bridge.ts` is an in-memory `Map` from message id to the Baileys key
+`pendingReads` in `whatsapp/bridge.ts` is an in-memory `Map` from message id to the Baileys key
 `markRead` needs. A voice note received before a bridge restart is still played and still clears
 its unread count — that state lives in the hardware server — but the key is gone, so nothing is
 marked read upstream and the sender never sees the receipt.

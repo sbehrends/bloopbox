@@ -1,10 +1,17 @@
-import type { Namespace, Server, Socket } from 'socket.io';
+import type { Server, Socket } from 'socket.io';
 import type { AudioCue } from '../audio/cues.ts';
 import type { ButtonIndex } from '../config/schema.ts';
 import type { SimulatorHal, SimulatorTransport } from '../hal/simulatorDriver.ts';
-import type { DeviceStatusPayload } from '../ipc/events.ts';
+import type {
+  DeviceStatusPayload,
+  ServerToSimulatorEvents,
+  SimulatorToServerEvents,
+} from '../ipc/events.ts';
 import { readButtonIndex, readField, readString } from '../ipc/payload.ts';
 import { toBuffer } from './binary.ts';
+
+/** The Socket.io server as the browser end sees it: the default namespace, simulator events. */
+export type SimulatorServer = Server<SimulatorToServerEvents, ServerToSimulatorEvents>;
 
 /**
  * Bridges the simulator HAL to Socket.io (PRODUCT.md §5).
@@ -44,12 +51,12 @@ export type SimulatorInjector = {
 const MAX_CHUNK_BYTES = 1024 * 1024;
 
 export class SocketSimulatorTransport implements SimulatorTransport {
-  readonly #io: Server;
+  readonly #io: SimulatorServer;
   #hal: SimulatorHal | null = null;
   #injector: SimulatorInjector | null = null;
   #clients = 0;
 
-  constructor(io: Server) {
+  constructor(io: SimulatorServer) {
     this.#io = io;
   }
 
@@ -110,7 +117,7 @@ export class SocketSimulatorTransport implements SimulatorTransport {
 
   /* ---- inbound: browser -> server ---- */
 
-  #handleConnection(socket: Socket): void {
+  #handleConnection(socket: Socket<SimulatorToServerEvents, ServerToSimulatorEvents>): void {
     const hal = this.#hal;
     const injector = this.#injector;
     if (!hal || !injector) return;
@@ -200,6 +207,3 @@ export class SocketSimulatorTransport implements SimulatorTransport {
     });
   }
 }
-
-/** The bridge namespace, kept separate from browser traffic. */
-export type BridgeNamespace = Namespace;

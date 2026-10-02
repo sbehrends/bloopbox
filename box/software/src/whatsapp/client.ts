@@ -20,7 +20,7 @@ import {
   type proto,
 } from 'baileys';
 import type { Logger } from 'pino';
-import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../audio/recovery.ts';
+import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../ipc/noteFiles.ts';
 import { normalisePhone, type ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
 import { downloadToFile, MAX_INBOUND_BYTES, MediaTooLargeError } from './mediaDownload.ts';

@@ -13,7 +13,12 @@ import { rm } from 'node:fs/promises';
 import { dirname, extname, resolve } from 'node:path';
 import { io, type Socket } from 'socket.io-client';
 import { probeDurationMs } from '../audio/ffmpeg.ts';
-import { BRIDGE_AUTH_HEADER, BRIDGE_NAMESPACE } from '../ipc/events.ts';
+import {
+  BRIDGE_AUTH_HEADER,
+  BRIDGE_NAMESPACE,
+  type BridgeToServerEvents,
+  type ServerToBridgeEvents,
+} from '../ipc/events.ts';
 import { readButtonIndex, readString } from '../ipc/payload.ts';
 import { childLogger } from '../logger.ts';
 import { WhatsAppClient, type Revocation, type VoiceNote } from '../whatsapp/client.ts';
@@ -91,14 +96,17 @@ async function main(): Promise<void> {
     },
   });
 
-  const socket: Socket = io(`${HARDWARE_URL}${BRIDGE_NAMESPACE}`, {
-    transports: ['websocket'],
-    extraHeaders: { [BRIDGE_AUTH_HEADER]: process.env['BRIDGE_TOKEN'] ?? '' },
-    // The hardware server restarts when config is saved, so reconnecting is the normal case.
-    reconnection: true,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 10_000,
-  });
+  const socket: Socket<ServerToBridgeEvents, BridgeToServerEvents> = io(
+    `${HARDWARE_URL}${BRIDGE_NAMESPACE}`,
+    {
+      transports: ['websocket'],
+      extraHeaders: { [BRIDGE_AUTH_HEADER]: process.env['BRIDGE_TOKEN'] ?? '' },
+      // The hardware server restarts when config is saved, so reconnecting is the normal case.
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 10_000,
+    },
+  );
 
   /* ---- hardware server -> bridge ---- */
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import Long from 'long';
 import { messageAgeMs, shouldHandleUpsert } from '../whatsapp/client.ts';
-import { RECOVERY_MAX_AGE_MS } from '../audio/recovery.ts';
+import { RECOVERY_MAX_AGE_MS } from '../ipc/noteFiles.ts';
 
 /**
  * Messages WhatsApp held while the device was switched off.

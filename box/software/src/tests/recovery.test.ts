@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { notePath, recoverUnplayedNotes } from '../audio/recovery.ts';
 import {
   isSafeMessageId,
-  notePath,
+  parseRecordingName,
   RECOVERY_MAX_AGE_MS,
   recordingName,
-  recoverUnplayedNotes,
-} from '../audio/recovery.ts';
+} from '../ipc/noteFiles.ts';
 
 /**
  * Rebuilding the unread queue after a restart.
@@ -179,6 +179,24 @@ describe('recordingName', () => {
 
     expect(result.notes[0]?.note.messageId).toBe('3A77-C7FB-9C8D');
     expect(result.notes[0]?.index).toBe(2);
+  });
+
+  it('is the inverse of parseRecordingName, and nothing else parses', () => {
+    // One format, written by the bridge and read back by the hardware server after a restart.
+    expect(parseRecordingName(recordingName(1, 'ABC_123-x'))).toEqual({
+      index: 1,
+      messageId: 'ABC_123-x',
+    });
+    for (const name of [
+      'wa-3-abc.ogg',
+      'wa-1-.ogg',
+      'wa-1-a b.ogg',
+      'wa-1-abc.wav',
+      'abc.ogg',
+      'wa-1-abc.ogg.tmp',
+    ]) {
+      expect(parseRecordingName(name)).toBeNull();
+    }
   });
 });
 

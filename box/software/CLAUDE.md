@@ -110,7 +110,7 @@ real type-aware rules (`no-floating-promises`, `no-misused-promises`, `await-the
 | -------------- | --------------------------------------------------------------------------------- |
 | `src/core/`    | Pure and I/O-free. Only calls `hal.setLed()`. This is what makes timing testable. A catch that swallows must report through `onFault` |
 | `src/hal/`     | All physical I/O — buttons, LEDs, **and audio** — behind `types.ts`. Load GPIO dynamically |
-| `src/ipc/`     | The daemon-to-daemon contract. **Adding an event means editing `events.ts` first**  |
+| `src/ipc/`     | The daemon-to-daemon contract. **Adding an event means editing `events.ts` first**; every endpoint takes its maps as Socket.io generics. `noteFiles.ts` is the shared file-name contract |
 | `src/processes/hardware-server.ts` | Never imports Baileys                                         |
 | `src/processes/whatsapp-bridge.ts` | Never touches GPIO or audio devices                           |
 | `src/net/`     | The **only** way the daemon learns whether Wi-Fi is up                              |

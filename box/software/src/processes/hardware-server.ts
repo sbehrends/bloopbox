@@ -16,7 +16,8 @@ import { Server } from 'socket.io';
 import { AudioPurger } from '../audio/purge.ts';
 import { notesDirectory, recordingDirectory } from '../audio/directories.ts';
 import { CAPTURE_FILTER_CHAIN, PLAYBACK_FILTER_CHAIN } from '../audio/ffmpeg.ts';
-import { notePath, RECOVERY_MAX_AGE_MS, recoverUnplayedNotes } from '../audio/recovery.ts';
+import { notePath, recoverUnplayedNotes } from '../audio/recovery.ts';
+import { RECOVERY_MAX_AGE_MS } from '../ipc/noteFiles.ts';
 import { missingCues, SOUNDS_DIRECTORY } from '../audio/soundFiles.ts';
 import { generateTestNote, TEST_NOTE_DURATION_MS } from '../audio/testNote.ts';
 import { ConfigManager } from '../config/configManager.ts';
@@ -48,7 +49,7 @@ import { registerBridgeNamespace, type BridgeLink } from '../server/bridgeLink.t
 import { denyFraming } from '../server/csrf.ts';
 import { serveSocketsOn } from '../server/socketListeners.ts';
 import { createApiRouter, createAudioRouter, buildStatusPayload } from '../server/routes.ts';
-import { SocketSimulatorTransport } from '../server/simulatorTransport.ts';
+import { SocketSimulatorTransport, type SimulatorServer } from '../server/simulatorTransport.ts';
 import { Shutdown } from './shutdown.ts';
 
 const log = childLogger('hardware');
@@ -163,7 +164,7 @@ async function main(): Promise<void> {
   app.use(denyFraming());
   app.use(express.json({ limit: '128kb' }));
   const httpServer = createServer(app);
-  const io = new Server(httpServer, {
+  const io: SimulatorServer = new Server(httpServer, {
     // Audio chunks from the browser can be sizeable; allow headroom over the default 1MB.
     maxHttpBufferSize: 4 * 1024 * 1024,
   });

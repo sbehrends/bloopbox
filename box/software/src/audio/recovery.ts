@@ -3,6 +3,12 @@ import { join, resolve } from 'node:path';
 import { probeDurationMs } from './ffmpeg.ts';
 import type { QueuedNote } from './queueManager.ts';
 import type { ButtonIndex } from '../config/schema.ts';
+import {
+  isSafeMessageId,
+  parseRecordingName,
+  RECOVERY_MAX_AGE_MS,
+  recordingName,
+} from '../ipc/noteFiles.ts';
 
 /**
  * Rebuilding the unread queue after a restart (PENDING.md, "Unread notes should be recovered").
@@ -17,47 +23,8 @@ import type { ButtonIndex } from '../config/schema.ts';
  * bookkeeping that could disagree with it.
  *
  * What the directory does *not* record is which button a note belongs to, so the writer
- * encodes it in the name — see `recordingName`.
+ * encodes it in the name — see `recordingName` in `ipc/noteFiles.ts`.
  */
-
-/**
- * How far back a restart may reach.
- *
- * A product decision, not a technical limit: a note from this morning is still worth hearing
- * when the box comes back, and one from yesterday is a confusing thing to hand a small child
- * who has no way to know it is old. Deliberately far below `AUDIO_TTL_MS` (48 h), which
- * bounds how long audio may *exist*, not how long it stays worth playing.
- *
- * Nothing above this is deleted here. The purge owns deletion, and having one owner is worth
- * more than reclaiming a few kilobytes of RAM disk a little earlier.
- */
-export const RECOVERY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-
-/**
- * What a message id may look like before it becomes part of a file name.
- *
- * The id is chosen by the *sender's* client — Baileys only checks that one exists — and any
- * member of an assigned group counts as a sender. Real ids are hex or base32-ish runs, so this
- * refuses nothing genuine; what it refuses is `/../../x`, which `join` would happily resolve to
- * a file outside the notes directory.
- */
-const SAFE_MESSAGE_ID = /^[A-Za-z0-9_-]{1,128}$/;
-
-export function isSafeMessageId(messageId: string): boolean {
-  return SAFE_MESSAGE_ID.test(messageId);
-}
-
-/**
- * `wa-<index>-<messageId>.ogg`.
- *
- * The index leads because it is fixed-width and the message id is not, so the id takes the whole
- * remainder and cannot be confused with the field before it. Throws on an id that is not
- * {@link isSafeMessageId}: a name that could leave the directory is never built at all.
- */
-export function recordingName(index: ButtonIndex, messageId: string): string {
-  if (!isSafeMessageId(messageId)) throw new Error('refusing an unsafe message id as a file name');
-  return `wa-${String(index)}-${messageId}.ogg`;
-}
 
 /**
  * Where a note for this button and message lives — the one path both daemons agree on.
@@ -70,12 +37,6 @@ export function recordingName(index: ButtonIndex, messageId: string): string {
 export function notePath(directory: string, index: ButtonIndex, messageId: string): string | null {
   return isSafeMessageId(messageId) ? resolve(directory, recordingName(index, messageId)) : null;
 }
-
-/** Matches the above. Notes written before the index was encoded do not match, on purpose. */
-const RECORDING_PATTERN = /^wa-([0-2])-([A-Za-z0-9_-]{1,128})\.ogg$/;
-
-/** An explicit map rather than a cast, so the digit narrows to a real index or to nothing. */
-const INDEX_BY_DIGIT: Readonly<Record<string, ButtonIndex>> = { '0': 0, '1': 1, '2': 2 };
 
 export type RecoveredNote = { readonly index: ButtonIndex; readonly note: QueuedNote };
 
@@ -125,8 +86,8 @@ export async function recoverUnplayedNotes(options: RecoveryOptions): Promise<Re
   let unattributable = 0;
 
   for (const entry of entries) {
-    const match = RECORDING_PATTERN.exec(entry);
-    if (!match) {
+    const named = parseRecordingName(entry);
+    if (!named) {
       // Only count audio: a stray sound file or a partial download is not a lost note.
       if (entry.toLowerCase().endsWith('.ogg')) unattributable += 1;
       continue;
@@ -153,13 +114,7 @@ export async function recoverUnplayedNotes(options: RecoveryOptions): Promise<Re
       continue;
     }
 
-    const index = INDEX_BY_DIGIT[match[1] ?? ''];
-    const messageId = match[2] ?? '';
-    if (index === undefined || messageId.length === 0) {
-      unattributable += 1;
-      continue;
-    }
-
+    const { index, messageId } = named;
     notes.push({
       index,
       // A recovered note is not a second-class one; it carries what a live note carries.

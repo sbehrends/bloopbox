@@ -795,7 +795,9 @@ bloopbox/
 │   ├── system/
 │   │   ├── systemInfo.ts           # temperature, uptime, load, memory, card space
 │   │   └── power.ts                # asks the root agent to reboot or shut down
-│   ├── ipc/events.ts               # the IPC contract — edit this first
+│   ├── ipc/
+│   │   ├── events.ts               # the IPC contract — edit this first
+│   │   └── noteFiles.ts            # how an inbound note is named on the card
 │   ├── processes/
 │   │   ├── hardware-server.ts      # daemon 1
 │   │   └── whatsapp-bridge.ts      # daemon 2

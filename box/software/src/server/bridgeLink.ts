@@ -4,6 +4,8 @@ import type { OutboundRequest } from '../core/deviceController.ts';
 import {
   BRIDGE_AUTH_HEADER,
   createRequestId,
+  type BridgeToServerEvents,
+  type ServerToBridgeEvents,
   type WhatsAppConnectionState,
 } from '../ipc/events.ts';
 import {
@@ -36,7 +38,7 @@ export type IncomingNote = {
 };
 
 export type BridgeLinkOptions = {
-  readonly namespace: Namespace;
+  readonly namespace: Namespace<BridgeToServerEvents, ServerToBridgeEvents>;
   /** Shared secret the bridge must present. Empty disables the check (dev only). */
   readonly token: string;
   readonly onStatus: (payload: {
@@ -90,7 +92,7 @@ const PAIRING_TIMEOUT_MS = 20_000;
 const GROUPS_TIMEOUT_MS = 10_000;
 
 export function registerBridgeNamespace(options: BridgeLinkOptions): BridgeLink {
-  let socket: Socket | null = null;
+  let socket: Socket<BridgeToServerEvents, ServerToBridgeEvents> | null = null;
   let counter = 0;
   const pending = new Map<string, PendingSend>();
   const pendingGroups = new Map<string, PendingGroups>();

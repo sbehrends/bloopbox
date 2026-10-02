@@ -12,6 +12,7 @@ import {
 import { CHANNEL_TOKENS } from '../shared/theme.ts';
 // The same parser the device validates against, rather than a second one that can disagree.
 import { parseTarget } from '../../src/config/schema.ts';
+import type { ServerToSimulatorEvents, SimulatorToServerEvents } from '../../src/ipc/events.ts';
 
 /**
  * Admin panel (PRODUCT.md §3).
@@ -2047,7 +2048,10 @@ async function main(): Promise<void> {
   }
 
   // Live status without polling.
-  const socket: Socket = io({ transports: ['websocket', 'polling'] });
+  // The admin panel only listens, to the same default namespace the simulator uses.
+  const socket: Socket<ServerToSimulatorEvents, SimulatorToServerEvents> = io({
+    transports: ['websocket', 'polling'],
+  });
   socket.on('sim:status', (payload: unknown) => {
     if (isStatusView(payload) && statusLine) statusLine.textContent = describeStatus(payload);
   });

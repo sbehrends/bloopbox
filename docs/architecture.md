@@ -53,7 +53,18 @@ take the buttons and lights with it.
 The two talk over Socket.io on localhost — process 2 connects to process 1's server as a *client*,
 on the `/bridge` namespace, authenticated with a shared `BRIDGE_TOKEN` compared in constant time.
 The event contract is [`src/ipc/events.ts`](../box/software/src/ipc/events.ts) and is the single source of truth
-for both sides: adding an event means editing that file first.
+for both sides: adding an event means editing that file first. **The compiler holds every endpoint
+to it.** The hardware server's `Server`, the bridge namespace, the bridge's client socket and both
+browser clients take the maps as Socket.io's generics, so a misspelt event or a wrong payload on an
+emit fails the typecheck. Listeners still take `payload: unknown` and narrow with `ipc/payload.ts`,
+because the types describe what a peer should send, not what arrives on the wire.
+
+The one contract the daemons share outside Socket.io is the note's **file name**,
+`wa-<index>-<messageId>.ogg`: the bridge writes it, and the hardware server checks reported paths
+against it and rebuilds the unread queue from it after a restart. It lives in
+[`src/ipc/noteFiles.ts`](../box/software/src/ipc/noteFiles.ts), with `isSafeMessageId` and
+`RECOVERY_MAX_AGE_MS`, rather than in `audio/`, so the bridge does not import the audio code to get
+it. The architecture test now forbids the bridge any path into `src/hal/`, type-only included.
 
 **Request ids carry a random per-boot prefix** (`send-<boot>-<n>`, `createRequestId`). The bridge
 outlives the hardware server, which restarts on every config save and counts from 1 again, so
@@ -706,7 +717,8 @@ fails there and nowhere else.
 
 Vite 8 bundles with **Rolldown**: use `rolldownOptions`, not `rollupOptions`.
 
-The simulator and admin panel speak the same typed contract as the daemons, via `src/ipc/events.ts`.
+The simulator and admin panel speak the same typed contract as the daemons, via `src/ipc/events.ts`,
+imported for types only, so it adds nothing to their bundles.
 
 **The portal is deliberately not on that contract.** It runs in a captive-portal webview where
 WebSocket is unreliable and storage is ephemeral, so it is plain `fetch` against

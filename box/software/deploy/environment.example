@@ -45,6 +45,9 @@ NOTES_DIR=/data/notes
 NODE_ENV=production
 # debug is the dev default and is far too chatty for an SD card.
 LOG_LEVEL=info
+# Baileys' own logging, separately: warn by default, because below that it logs full WhatsApp
+# addresses. Debug mode does not raise it. Set info or debug only while chasing a Baileys problem.
+#BAILEYS_LOG_LEVEL=warn
 
 # --- bring-up knobs (src/hal/gpioDriver.ts) -------------------------------------------
 # The GPIO driver has never run on real hardware. These are the first things to change.

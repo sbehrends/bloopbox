@@ -1101,6 +1101,7 @@ are testing configuration at all.
 | `PORTAL_PORT`                                | `80` (dev: `8080`)         | Captive-portal listener; `0` disables it                  |
 | `FFMPEG_PATH`                                | `ffmpeg`                   | `ffprobe` is derived from it                              |
 | `LOG_LEVEL`                                  | `debug` in dev, else `info` | pino; `pino-pretty` in dev. On the device `bloopbox-debug on` flips it |
+| `BAILEYS_LOG_LEVEL`                          | `warn`                     | Baileys' own logger, apart from `LOG_LEVEL`: below `warn` it logs full WhatsApp addresses. Debug mode leaves it alone |
 | `NET_STATE_PATH`                             | `/run/bloopbox-net/net-state.json` | What the root net agent publishes; absent in dev  |
 | `NET_REQUEST_PATH`                           | `/run/bloopbox/net-request.json`   | What the daemon asks the agent for — network actions **and** reboot/poweroff |
 | `STATS_PATH`                                 | `/data/stats.json`         | Activity totals. Beside the config, never inside it       |

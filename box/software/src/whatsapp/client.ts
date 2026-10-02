@@ -24,6 +24,7 @@ import { isSafeMessageId, RECOVERY_MAX_AGE_MS, recordingName } from '../ipc/note
 import { normalisePhone, type ButtonIndex } from '../config/schema.ts';
 import type { WhatsAppConnectionState } from '../ipc/events.ts';
 import { downloadToFile, MAX_INBOUND_BYTES, MediaTooLargeError } from './mediaDownload.ts';
+import { maskJid } from './privacy.ts';
 import { extractStatusCode } from './statusCode.ts';
 
 export { extractStatusCode };
@@ -111,6 +112,23 @@ export function reconnectDelayMs(attempt: number, random: number): number {
  * voice note is tens of kilobytes, so a live upload never comes near it.
  */
 export const MEDIA_UPLOAD_TIMEOUT_MS = 20_000;
+
+const LOG_LEVELS = new Set(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
+
+/**
+ * How much of Baileys' own logging is kept: `warn` unless `BAILEYS_LOG_LEVEL` raises it.
+ *
+ * Baileys logs at `info` and below with full addresses in the payloads, and it is the one logger in
+ * the bridge that cannot be taught to mask them (`privacy.ts`). It used to inherit `LOG_LEVEL`, so
+ * debug mode, which raises that to `debug` for the state timeline, also wrote every frame Baileys
+ * handled, numbers included, onto the card. An unknown value falls back rather than throwing:
+ * pino rejects one at construction, and a typo must not stop the bridge.
+ */
+export function baileysLogLevel(
+  raw: string | undefined = process.env['BAILEYS_LOG_LEVEL'],
+): string {
+  return raw !== undefined && LOG_LEVELS.has(raw) ? raw : 'warn';
+}
 
 /** Voice notes longer than this are almost certainly not for a toddler; skip the download. */
 const MAX_INBOUND_SECONDS = 300;
@@ -580,7 +598,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
       // Spread rather than assigned: the config declares `version?: WAVersion`, which under
       // exactOptionalPropertyTypes will not accept an explicit undefined.
       ...(version === undefined ? {} : { version }),
-      logger: this.#log.child({ lib: 'baileys' }),
+      logger: this.#log.child({ lib: 'baileys' }, { level: baileysLogLevel() }),
       /*
        * No printQRInTerminal: it is deprecated and its feature removed in Baileys 7. The QR
        * arrives on `connection.update` and we forward it to the admin panel, which is the only
@@ -732,7 +750,10 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     try {
       return (await socket.signalRepository.lidMapping.getPNForLID(jid)) ?? undefined;
     } catch (error: unknown) {
-      this.#log.debug({ err: error, jid }, 'could not resolve a lid to a phone number');
+      this.#log.debug(
+        { err: error, jid: maskJid(jid) },
+        'could not resolve a lid to a phone number',
+      );
       return undefined;
     }
   }
@@ -759,7 +780,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
     // The sender's client picks the id and it becomes a file name, so a hostile one is dropped
     // here rather than resolved to a path outside the notes directory.
     if (!isSafeMessageId(messageId)) {
-      this.#log.warn({ chat: chatJid }, 'dropped a voice note with an unsafe message id');
+      this.#log.warn({ chat: maskJid(chatJid) }, 'dropped a voice note with an unsafe message id');
       return;
     }
 
@@ -798,7 +819,7 @@ export class WhatsAppClient extends EventEmitter<WhatsAppClientEvents> {
           ...this.#downloadTiming,
           openStream: () =>
             this.#download(message, {
-              logger: this.#log.child({ lib: 'baileys-media' }),
+              logger: this.#log.child({ lib: 'baileys-media' }, { level: baileysLogLevel() }),
               reuploadRequest: (msg) => {
                 const socket = this.#socket;
                 if (!socket) throw new Error('cannot re-request media while disconnected');

@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import pino from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BufferJSON, DisconnectReason, initAuthCreds } from 'baileys';
-import { extractStatusCode, isPaired, WhatsAppClient } from '../whatsapp/client.ts';
+import {
+  baileysLogLevel,
+  extractStatusCode,
+  isPaired,
+  WhatsAppClient,
+} from '../whatsapp/client.ts';
 import { FakeWASocket } from './support/fakeWASocket.ts';
 
 /**
@@ -346,5 +351,18 @@ describe('WhatsAppClient#start and #beginLinking', () => {
       'the registered flag to be persisted',
     );
     expect(client.state).toBe('connected');
+  });
+});
+
+describe('Baileys log level', () => {
+  it('is warn unless raised on purpose, whatever LOG_LEVEL says', () => {
+    // Below warn, Baileys logs full WhatsApp addresses, which no masking can reach.
+    expect(baileysLogLevel(undefined)).toBe('warn');
+    expect(baileysLogLevel('debug')).toBe('debug');
+  });
+
+  it('falls back on a value pino would refuse, rather than stopping the bridge', () => {
+    expect(baileysLogLevel('verbose')).toBe('warn');
+    expect(baileysLogLevel('')).toBe('warn');
   });
 });

@@ -4,9 +4,9 @@ Getting bloopbox onto a new Raspberry Pi gate by gate, the record of what has al
 the debugging kit for when something does not work.
 
 One board has passed every gate: the **reference board**, a Pi 3B+ with the WM8960 HAT, three
-buttons and three lamps ([`hardware.md`](./hardware.md) describes it). The next board to bring up
-is the **Pi Zero 2 W** the product targets, which has run none of this. The gates below are written
-for it.
+buttons and three lamps ([`hardware.md`](./hardware.md) describes it). For now it is the official,
+verified hardware, and the one board releases are built for. The **Pi Zero 2 W** is a later target
+and has run none of this; the gates below are written so that it can follow them.
 
 **Bring one thing up at a time.** Every gap here can produce "the lights do nothing", and
 debugging two unproven subsystems at once turns a morning into a week.
@@ -16,8 +16,13 @@ debugging two unproven subsystems at once turns a morning into a week.
 ## What the reference board has proven
 
 Bench session of **2026-09-30**, from a freshly flashed `--audio-hat wm8960` card: onboarded through
-the setup hotspot, WhatsApp linked, button 3 assigned to a group. The full record is the "Bench
-session on the reference board" entry under "Recently resolved" in `PENDING.md`.
+the setup hotspot, WhatsApp linked, button 3 assigned to a group. The full record is in the commits
+that closed it, `f0df8c5` and `efd9872`.
+
+Repeated on **2026-10-02** with a `1.0.0-rc.1` card (`9e78d0f`): flash and first boot, hotspot
+onboarding onto home Wi-Fi, the admin password, WhatsApp linking, hold-to-send and tap-to-play on
+the blue button (the only one assigned), and a note from an unassigned number never reaching the
+box. Doctor fully green with `f1d9981`.
 
 | Gate | What passed |
 | ---- | ----------- |
@@ -27,7 +32,7 @@ session on the reference board" entry under "Recently resolved" in `PENDING.md`.
 | 3 — hotspot | Onboarding through the hotspot and portal from a phone. First closed end to end on 2026-08-10, from a blank image |
 | 4a — audio | Both directions through the real path: a ~5 s hold arrives as a ~4 s note, a short hold is refused with the "oops", and a received note plays. A second arrival or **Test speaker** mid-note does not cut in over it |
 | 5 — buttons and lamps | All three buttons; all three lamps at the default polarity, yellow / coral / teal left to right, through every pattern the session reached; the lockout; the silent chord both ways |
-| 6 — WhatsApp | Linking, and a send to the group on button 3 |
+| 6 — WhatsApp | Linking; a send to the group on button 3; a note from a number nobody assigned is dropped (2026-10-02) |
 
 Two findings were fixed the same day and confirmed on the box:
 
@@ -39,8 +44,8 @@ Two findings were fixed the same day and confirmed on the box:
 
 ## What is still to prove
 
-**On the Pi Zero 2 W: everything.** Work through every gate below. Three differences from the 3B+
-matter:
+**On the Pi Zero 2 W, when it becomes a target: everything.** Work through every gate below. Three
+differences from the 3B+ matter:
 
 - **No ethernet.** Wi-Fi is the only way in, so an outage that does not restore itself means walking
   over with a card reader.
@@ -56,7 +61,7 @@ matter:
   the admin panel, which goes through the root agent's sandbox.
 - Gate 4a: all eight of its open questions, starting with the note's counted duration against
   `ffprobe`.
-- Gate 6: everything in its list except linking and a group send.
+- Gate 6: everything in its list except linking, a group send and the unassigned-number drop.
 - The capture and helper-process hardening, which has only run against fake child processes
   (`PENDING.md` has the list).
 - That card's ssh password was pasted into a chat during the session. Rotate it once a rotation

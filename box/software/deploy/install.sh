@@ -116,7 +116,7 @@ step "resolving the hardware profile"
 # block those same flags drive is deleted and regenerated on EVERY run. So an upgrade run
 # without the flags left the environment pointing at a codec whose overlay it had just
 # removed. The box booted, joined Wi-Fi, connected to WhatsApp, reported READY, and made no
-# sound at all. That is what this step exists to make impossible. See PENDING.md.
+# sound at all. That is what this step exists to make impossible. See docs/deployment.md.
 #
 #   explicit flag  >  recorded profile  >  inferred from an existing environment  >  usb
 

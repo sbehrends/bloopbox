@@ -183,8 +183,8 @@ Pinned to `7.0.0-rc14` exactly; Dependabot leaves it to a human. Lifecycle reaso
 All development runs on the **simulator** HAL. The one real device is the **reference board** — Pi
 3B+, WM8960 HAT, buttons on GPIO17/27/22, lamps on GPIO23/24/25. Install and build images for it
 with `--audio-hat wm8960`, **never `--no-leds`**. The 2026-09-30 bench session proved all three
-buttons and lamps, audio both ways, lockout and the silent chord on it (`PENDING.md`); **the Pi Zero
-2 W has never run any of it**. [`docs/hardware-bringup.md`](../../docs/hardware-bringup.md) is the
+buttons and lamps, audio both ways, lockout and the silent chord on it
+(`docs/hardware-bringup.md`); **the Pi Zero 2 W has never run any of it**. [`docs/hardware-bringup.md`](../../docs/hardware-bringup.md) is the
 gate-by-gate plan and the debugging kit.
 
 WM8960 rules; the measurements are in [`docs/hardware.md`](../../docs/hardware.md) § The reference

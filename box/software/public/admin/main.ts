@@ -1854,7 +1854,7 @@ function dangerConfirm(options: {
 }
 
 /**
- * Wipes every piece of user configuration (PENDING.md, "A factory-reset control").
+ * Wipes every piece of user configuration (`docs/PRODUCT.md` § What the admin panel shows, and when).
  *
  * Deliberately does not use `saveButton`/`noteRestarting` like every other control here. Those
  * poll for the device coming back, which after this it will not — not on this network. It

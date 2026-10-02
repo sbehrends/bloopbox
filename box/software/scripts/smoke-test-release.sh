@@ -11,7 +11,7 @@
 #
 # What it deliberately does not cover: real GPIO, real ALSA devices and a real WhatsApp
 # account. The container runs the mock HAL, so this is a packaging test, not hardware
-# bring-up. See PENDING.md.
+# bring-up. See docs/hardware-bringup.md.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -240,8 +240,8 @@ export function isPaired(
  * **Deliberately not `normalizeMessageContent`**, which also unwraps view-once, edits,
  * document-with-caption and more. Every wrapper it opens is another shape of message a group
  * member can put on a child's button, and each one should be a decision, not a side effect of a
- * helper. View-once in particular is an open product question — a note meant to be heard once,
- * on a box that replays until the queue drains — so it stays ignored (PENDING.md).
+ * helper. View-once is ignored by decision — a note meant to be heard once does not fit a box
+ * that replays until the queue drains (`docs/PRODUCT.md` § Receiving a message).
  *
  * Only a PTT counts: a music file or an audio attachment is not what this device is for.
  */

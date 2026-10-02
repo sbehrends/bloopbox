@@ -152,7 +152,7 @@ is gone.
 
 `gpioDriver.ts` is proven on the reference board — a Pi 3B+ with the WM8960 HAT, three buttons and
 three lamps: all three buttons, all three lamps and audio both ways (bench session 2026-09-30,
-recorded in `PENDING.md`; `box/software/CLAUDE.md` § Hardware status). The Pi Zero 2 W target has
+recorded in `docs/hardware-bringup.md`; `box/software/CLAUDE.md` § Hardware status). The Pi Zero 2 W target has
 not run it yet, so do not add code paths that only work with real GPIO.
 
 ### Domain logic is pure
@@ -651,8 +651,10 @@ could never set a password. Don't "fix" that. It stands aside on an empty `admin
 which means a config with `configured: true` and no hash is wide open — a **decided, accepted
 risk**, because the guard cannot tell that state from mid-onboarding, and refusing to serve would
 make the device recoverable only by pulling the SD card. Both halves are pinned by
-[`src/tests/adminAuth.test.ts`](../box/software/src/tests/adminAuth.test.ts); the watch item in
-`PENDING.md` has the full reasoning.
+[`src/tests/adminAuth.test.ts`](../box/software/src/tests/adminAuth.test.ts). Getting there takes
+a hand-edited `config.json`: `POST /onboard` and `POST /wifi/join` write the hash and the flag in one
+`config.update()`. An open API on a family LAN is the smaller failure; change the test only once a
+recovery path exists.
 
 **bcrypt runs once per browser, not once per request.** A check costs ~300 ms on a Zero 2 W, on
 the same event loop that times the child's button presses, and the panel sends its saved

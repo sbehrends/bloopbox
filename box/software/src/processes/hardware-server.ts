@@ -568,7 +568,7 @@ async function main(): Promise<void> {
    * that explicitly says the network is gone.
    */
   /**
-   * Decides when the setup hotspot goes up (PENDING.md). Pure; the privileged half is the
+   * Decides when the setup hotspot goes up (`docs/PRODUCT.md` § First Boot). Pure; the privileged half is the
    * root agent, reached by writing a request file it consumes.
    */
   const supervisor = new NetworkSupervisor({

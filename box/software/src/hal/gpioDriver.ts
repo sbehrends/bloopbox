@@ -65,7 +65,7 @@ const MAX_CHANNELS = 3;
  *
  * Every BCM283x board maps a BCM name to the same gpiochip0 line, so the Zero 2 W map is
  * correct on a 3B+ too — observed on 2026-08-10, where `gpioinfo` on a real 3B+ showed all
- * six lines claimed with the intended directions (PENDING.md). The override stays because
+ * six lines claimed with the intended directions (`docs/hardware-bringup.md`). The override stays because
  * opengpio ships per-board maps and a future board may not agree: `PI_BOARD` takes any
  * board name it exports, and a wrong one fails at startup listing the valid ones.
  */

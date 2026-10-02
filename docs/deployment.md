@@ -155,7 +155,7 @@ The third step covers a box installed before the file existed: an environment na
 block in `config.txt` is deleted and regenerated on *every* install. A profile that lived only on
 the command line was therefore lost the first time anyone re-ran the installer without the flags,
 leaving the environment pointing at a codec whose overlay had just been removed. The box booted,
-joined Wi-Fi, reported `READY` — and had no sound card at all (2026-09-07; `PENDING.md`).
+joined Wi-Fi, reported `READY` — and had no sound card at all (2026-09-07).
 
 Two guards stand behind the record:
 
@@ -398,8 +398,8 @@ the agent is the only process that can ask `timedatectl show -p NTPSynchronized`
 to `systemd-timedated`, refreshed every 30 s rather than every poll). A Pi has no real-time clock, so
 until NTP answers it runs on the time its last shutdown saved. It is `true`, `false`, or `null` for
 "cannot tell" — no `timedatectl`, or no clear answer — and `netState.ts` keeps it that way, reading
-anything malformed as `null` and never as `false`. The health card shows it; nothing acts on it yet
-(`PENDING.md`).
+anything malformed as `null` and never as `false`. The health card shows it; quiet hours staying off
+until it is `true` is decided but not built (`PENDING.md`).
 
 `sudo bloopbox-doctor` checks the file exists, is fresh, and is readable by the service user, and
 that `nmcli` and dnsmasq are installed. It also fails if no time-sync service is active (Pi OS ships

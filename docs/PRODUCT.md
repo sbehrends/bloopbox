@@ -94,15 +94,19 @@ Bounds:
   or the take is a failed capture and answers "oops". That floor is 150 ms and is not configurable —
   it separates "the microphone produced audio" from "the microphone produced nothing", which is not
   a feel judgement.
-- **A send that fails is dropped, not retried** — see the watch item in `PENDING.md`. There is no
-  outbound queue, on purpose.
+- **A send that fails is dropped, not retried.** There is no outbound queue, on purpose. Inbound is
+  worth recovering because the sender was told it was delivered and nobody in the house knows it is
+  missing; outbound is different — the person who recorded it is standing at the box, and a
+  restarting box or its error lights are visible. Retrying would also mean writing a child's voice
+  somewhere more durable than a RAM disk. The failure is logged as a `device fault` of kind `send`
+  and shows in the health card's "Recently" list.
 
 ### Receiving a message
 
 1. A voice note arrives from a **whitelisted** contact (§4). Anything else is dropped before it is
    downloaded. A chat with **disappearing messages** on is an ordinary chat here — its notes arrive
-   like any other. A **view-once** note is ignored: whether a box that replays until the queue
-   drains may take one at all is an open question (`PENDING.md`).
+   like any other. A **view-once** note is ignored, by decision: only ordinary voice notes play. A
+   note meant to be heard once does not fit a box that replays until the queue drains.
 2. In audible mode a soft **"notify"** chime plays — **unless a note is already playing, or the
    child is recording**, when there is no chime at all. The assigned lamp starts **blinking slowly**
    (0.8 s on / 0.8 s off) either way. While a child records, the speaker is centimetres from the
@@ -286,8 +290,8 @@ contact picker with no account behind it is a form that silently cannot work.
   than asks — see below.
 - **On the first link of a page's life the panel reloads itself**, because Contacts and its group
   picker were rendered from an account that did not exist yet.
-- **Unlink and factory reset are two taps**, the second on a different button — see the
-  factory-reset item in `PENDING.md` for why the bar is set there.
+- **Unlink and factory reset are two taps**, the second on a different button, so one stray tap
+  cannot undo a family's setup.
 
 ### Activity — what each button has carried
 
@@ -372,6 +376,10 @@ Wi-Fi can also be supplied without the hotspot at all, and that is the recovery 
 hotspot cannot be reached: write `bloopbox-wifi.txt` (`ssid=` / `psk=` / `country=`) on the FAT32
 boot partition, which any laptop can read. It is applied on the next boot and then **deleted**, so
 the passphrase does not sit in clear text.
+
+**There is no physical trigger** for forgetting the Wi-Fi or resetting the box. Recovery is the
+admin panel's factory reset while the box is reachable, and `bloopbox-wifi.txt` or a freshly flashed
+card when it is not.
 
 ### The config schema
 

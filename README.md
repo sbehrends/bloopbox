@@ -247,8 +247,8 @@ Any laptop can read that partition.
 - **Settings writes are atomic** (temp file → `fsync` → `rename`), so losing power mid-save cannot
   corrupt a parent's configuration or brick the device.
 - **The admin API is password-protected**, except while the device is still being set up — the
-  onboarding flow has to be able to set the first password. `PENDING.md` lists the accepted risks
-  around that.
+  onboarding flow has to be able to set the first password. `docs/architecture.md` explains the
+  accepted risk around that.
 - **A read-only root filesystem** ([`docs/PRODUCT.md` §8](./docs/PRODUCT.md#8-os-protection-and-storage-safety))
   is specified but **not built**: `/data` still lives on the root filesystem, so it needs a
   dedicated partition first.

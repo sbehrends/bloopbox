@@ -504,7 +504,7 @@ json_string() {
 # A Pi has no real-time clock. Until NTP answers, it boots with the time the last shutdown saved
 # (fake-hwclock / timesyncd's clock file) — hours or days behind after a spell unplugged — and
 # quiet hours, the purge TTL and debug mode's deadline all read that clock. Published so the
-# daemon can at least say so; what quiet hours should *do* about it is an open product decision
+# daemon can at least say so. Quiet hours staying off until it is synced is decided, not built
 # (PENDING.md).
 #
 # Asked through timedatectl, which is a D-Bus call to systemd-timedated — a process activated on

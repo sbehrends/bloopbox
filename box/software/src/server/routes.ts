@@ -461,7 +461,7 @@ export function createApiRouter(context: RoutesContext): Router {
 
   /**
    * Wipes every piece of user configuration and lands the device back at first boot
-   * (PENDING.md, "A factory-reset control that wipes all user configuration").
+   * (`docs/PRODUCT.md` § What the admin panel shows, and when).
    *
    * Three things, because config.json is only one of the three places a device remembers who
    * it belongs to: the config itself, the WhatsApp session on disk, and the Wi-Fi profile in

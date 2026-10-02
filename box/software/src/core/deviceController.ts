@@ -337,10 +337,14 @@ export class DeviceController {
     this.#stats?.recordReceived(index, note.durationMs);
 
     /*
-     * A courtesy, silenced at night — and held back while a note is playing. The speaker is one
-     * output, so this chime used to cut off the note being listened to, which was then counted as
-     * heard, deleted and reported read. The lamp already says something new is waiting.
+     * A courtesy, silenced at night, held back while a note is playing (the speaker is one
+     * output, and the chime would cut the note off) and while a microphone is open, from the bip
+     * to the end of the carry-on window: the speaker sits centimetres from the microphone, so a
+     * chime then is recorded into the child's message. Either way the lamp already says something
+     * new is waiting. Dropped, not deferred: a chime after the child lets go would announce a note
+     * they can already see blinking.
      */
+    if (this.#captures.size > 0) return;
     void this.#courtesyCue(AudioCue.Notify);
   }
 

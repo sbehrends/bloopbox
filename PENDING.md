@@ -625,13 +625,10 @@ Not work, but things that could bite.
   ALSA takes to open a stream on the WM8960 — **that last term has never been measured.** If a child
   who starts on the bip loses a syllable, look at the stream open, not the cue.
 - **`CAPTURE_RATE=48000` may no longer be necessary.** It exists because the codec cannot hold two
-  rates on one I²S clock and the cues are 48 kHz. The bip no longer overlaps a capture, but the
-  `notify` chime still can — `#courtesyCue` holds it back during playback, not during a recording —
-  so the premise is weaker than `gpioDriver.ts`'s comment says, not gone. Full duplex at a matched
-  48 kHz works; a mismatched pair failing was never tested. Not changed blind: `install.sh` writes
-  it and the failure mode is a silent recording.
-- **Whether the box records its own chime.** Speaker and microphone are centimetres apart on one
-  HAT, and the `notify` chime can play while the microphone is open.
+  rates on one I²S clock and the cues are 48 kHz. No cue plays over an open capture any more (the
+  bip finishes first, D-06; the inbound chime is dropped, D-17), except the admin panel's **Test
+  speaker** pressed mid-take. Full duplex at a matched 48 kHz works; a mismatched pair failing was
+  never tested. Not changed blind: `install.sh` writes it and the failure mode is a silent recording.
 - **An empty password hash opens the API even when `configured` is true — accepted, on purpose.**
   `requireAdmin` stands aside when `system.configured` is false **or** `adminPasswordHash` is empty,
   so a config in that half-written state leaves `/api` open on the LAN. It should be unreachable —
@@ -701,6 +698,7 @@ Not work, but things that could bite.
 
 One line each, newest first. The commit holds the detail; where the reasoning lives now is named.
 
+- **The inbound chime could be recorded into a child's message** — 2026-10-02. A note arriving mid-take now lights its lamp without a chime (D-17).
 - **Read receipts survive a bridge restart** — 2026-10-02, `2d6a584`. `wa-<i>-<id>.key` beside each
   note (`whatsapp/readKeys.ts`, `docs/architecture.md`). Device check is in "WhatsApp end to end".
 - **Baileys' credentials written atomically** — 2026-10-02, `8d032e8`. `whatsapp/authState.ts`; a

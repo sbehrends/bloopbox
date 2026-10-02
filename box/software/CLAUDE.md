@@ -271,6 +271,7 @@ deliberately — its tests, `PRODUCT.md` and `architecture.md` in the same commi
 | D-06 | Bip before the mic | D-14 | Boot animation held |
 | D-07 | Nothing plays over a note | D-15 | Beyond the spec |
 | D-08 | Whoosh after finalise | D-16 | Designed vs synthesised cues |
+|  |  | D-17 | No chime into an open microphone |
 
 ## Safety constraints (these protect a real device in a child's room)
 

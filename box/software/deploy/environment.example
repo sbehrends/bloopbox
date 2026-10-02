@@ -100,8 +100,8 @@ LOG_LEVEL=info
 #
 # Capture rate, normally left alone so no resampling happens on a slow CPU. The WM8960 is
 # the clock consumer on a shared I2S bit clock and cannot hold two rates at once, and the
-# cues are 48 kHz, and a cue can still play while a capture is open (the inbound chime).
-# 48000 makes them agree.
+# cues are 48 kHz. No cue plays over an open capture any more, so this may no longer be needed;
+# it stays until a device says otherwise (PENDING.md). 48000 makes the two agree.
 #CAPTURE_RATE=48000
 
 # Runs the browser simulator instead of real GPIO — install.sh --simulator sets this. On a

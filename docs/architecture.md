@@ -1110,6 +1110,7 @@ hold the full reasoning for each.
 | D-14 | **Boot animation held** | Status resolves instantly, so `BOOTING` would never be seen. `BOOT_ANIMATION_MS` (2.6 s) holds it; the simulator has a Reboot injector to replay it | —  |
 | D-15 | **Beyond the spec** | `notify.wav` (§7 implies an inbound chime without listing one), `boot.wav` (§6 defines a boot LED pattern but no sound; the only channel for "it came back on its own") and `src/core/` itself (the spec's blueprint has no home for the state machine) | `deviceController.test.ts`  |
 | D-16 | **Designed vs synthesised cues** | `boot` and `notify` are mastered from committed MP3s in `src/audio/samples/`; the rest are tone recipes. `success.mp3` is an unreferenced leftover of the retired `swoosh`, kept because authored audio cannot be regenerated. Both write one WAV per cue into `src/audio/sounds/`, so nothing below `playCue` knows the difference. Trim and peak level are decided in `scripts/generate-sounds.ts`, never left to a filter | `soundFiles.test.ts`  |
+| D-17 | **No chime into an open microphone** | A note that arrives while a microphone is open — from the bip, through the take, to the end of the carry-on window (`#captures` is not empty) — lights its button and does not chime. The speaker is centimetres from the microphone, so the chime would be recorded into the child's message. Dropped, not deferred: once the take is over the blinking lamp has already said it | `deviceController.test.ts` |
 
 ---
 

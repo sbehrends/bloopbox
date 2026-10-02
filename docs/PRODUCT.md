@@ -103,8 +103,10 @@ Bounds:
    downloaded. A chat with **disappearing messages** on is an ordinary chat here — its notes arrive
    like any other. A **view-once** note is ignored: whether a box that replays until the queue
    drains may take one at all is an open question (`PENDING.md`).
-2. In audible mode a soft **"notify"** chime plays — **unless a note is already playing**, when it
-   is held back. The assigned lamp starts **blinking slowly** (0.8 s on / 0.8 s off).
+2. In audible mode a soft **"notify"** chime plays — **unless a note is already playing, or the
+   child is recording**, when there is no chime at all. The assigned lamp starts **blinking slowly**
+   (0.8 s on / 0.8 s off) either way. While a child records, the speaker is centimetres from the
+   microphone and a chime would end up in their message, so the lamp alone says a note is waiting.
 
    > **Nothing plays over a note** — not the chime, the whoosh or the "oops". The speaker is one
    > output, so a cue cuts off whatever is playing, and a note cut off that way would be counted as

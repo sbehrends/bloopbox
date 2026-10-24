@@ -16,19 +16,19 @@ Ordered roughly by priority within each group.
 
 ## Before 1.0
 
-### CI runs on GitHub, and it is red
+### CI runs on GitHub, and Dependabot's runs are red
 
-The remote is `github.com/sbehrends/bloopbox` (private). The first runs, on 2026-10-23, all failed,
-for two different reasons:
+The remote is `github.com/sbehrends/bloopbox` (private). The first runs, on 2026-10-23, all failed.
+The failure on `main` was the production `npm audit` (`proxy-addr`, `zod`, `body-parser`,
+`music-metadata`), fixed by `npm audit fix` on 2026-10-24. Still open:
 
-1. **`main`: the box gate's `npm audit --omit=dev --audit-level=high` fails.** `proxy-addr`
-   (critical, GHSA-jqcg-44mw-7w3h) and `music-metadata` (moderate). `npm audit fix` in
-   `box/software/` is offered for both. Every other job on `main` passed, the arm64 package and
-   the website included.
-2. **Dependabot pull requests: the `changes` job fails with "Resource not accessible by
-   integration"**, so every gated job is skipped and `ci` fails. A Dependabot run gets a read-only
-   token, and `dorny/paths-filter` lists a pull request's files through the API. It most likely
-   needs `pull-requests: read` in the workflow's `permissions`. Unverified.
+**Dependabot pull requests: the `changes` job fails with "Resource not accessible by
+integration"**, so every gated job is skipped and `ci` fails. A Dependabot run gets a read-only
+token, and `dorny/paths-filter` lists a pull request's files through the API. It most likely needs
+`pull-requests: read` in the workflow's `permissions`. Unverified.
+
+**The Vercel deploy job has not run yet.** It needs the secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID` and
+`VERCEL_PROJECT_ID`, and the project's Root Directory set to `website` (`docs/deployment.md` § CI).
 
 Still unproven: the `type=gha` Docker layer cache passed through `BUILDX_EXTRA_ARGS` (a miss is not
 an error; the env block is deletable). **Branch protection must require the aggregating `ci`

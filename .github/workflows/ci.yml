@@ -261,6 +261,59 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  # The only job here that publishes anything, so it runs on a push to main and nowhere else: not on
+  # a pull request, a manual run, or a call from release.yml (whose ref is a tag). It waits for the
+  # website gate, so a site that fails `npm run check` never goes live.
+  #
+  # Vercel's own Git deploys are off (website/vercel.json), or every push would deploy twice. The
+  # CLI runs from the repository root because the Vercel project's Root Directory is `website`, and
+  # the CLI applies that setting itself.
+  website-deploy:
+    name: deploy website to Vercel
+    needs: [changes, website]
+    if: |
+      needs.changes.outputs.web == 'true' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Two pushes in quick succession deploy in order; neither is cancelled halfway through upload.
+    concurrency:
+      group: vercel-production
+      cancel-in-progress: false
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24.18.1'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      # A missing secret otherwise surfaces as an interactive login prompt that hangs, or as a
+      # deploy to whatever project the CLI guesses.
+      - name: Check the Vercel secrets are set
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${VERCEL_TOKEN}" ]] || missing+=(VERCEL_TOKEN)
+          [[ -n "${VERCEL_ORG_ID}" ]] || missing+=(VERCEL_ORG_ID)
+          [[ -n "${VERCEL_PROJECT_ID}" ]] || missing+=(VERCEL_PROJECT_ID)
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::missing repository secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      # Built here and uploaded prebuilt, so what deploys is exactly what this runner built.
+      - name: Pull the production project settings
+        run: npx --yes vercel@63.1.2 pull --yes --environment=production --token="${VERCEL_TOKEN}"
+      - name: Build
+        run: npx --yes vercel@63.1.2 build --prod --token="${VERCEL_TOKEN}"
+      - name: Deploy to production
+        run: npx --yes vercel@63.1.2 deploy --prebuilt --prod --token="${VERCEL_TOKEN}"
+
   docs-links:
     name: docs links
     needs: changes
@@ -278,7 +331,8 @@ jobs:
   # leaving the PR blocked forever. One stable check name, whatever the filter decided.
   ci:
     name: ci
-    needs: [changes, box-gate, box-package, net-agent-sandbox, shellcheck, website, docs-links]
+    needs:
+      [changes, box-gate, box-package, net-agent-sandbox, shellcheck, website, website-deploy, docs-links]
     if: always()
     runs-on: ubuntu-latest
     steps:

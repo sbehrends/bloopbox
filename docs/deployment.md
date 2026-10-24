@@ -510,7 +510,9 @@ failed (`PENDING.md`). What they are written to do:
   quietly, so it runs on the same cadence as the tests); the **net agent under its sandbox**
   ([`test-net-agent-sandbox.sh`](../box/software/scripts/test-net-agent-sandbox.sh), since no
   container test has a systemd to apply `ProtectSystem=strict`); **ShellCheck** over every tracked
-  shell script; the **website** gate; and the **docs links** check. The single required status
+  shell script; the **website** gate; the **website deploy**, which on a push to `main` that touched
+  `website/` builds the site with the Vercel CLI and deploys it to production once the website gate
+  has passed; and the **docs links** check. The single required status
   check is the aggregating `ci` job, because a filtered-out job reports as skipped, which branch
   protection accepts. When the filter cannot run (a tag, a manual run, a call from `release.yml`)
   everything runs.
@@ -536,6 +538,12 @@ candidate on purpose.
 
 GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping `runs-on` for
 an arm64 runner makes it several times faster and needs no other change.
+
+**The website deploys from CI, not from Vercel's Git integration.** `website/vercel.json` turns
+Vercel's own Git deploys off, so a push deploys once. The job needs three repository secrets,
+`VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`, and fails by name when one is missing. It
+runs the CLI from the repository root, which depends on the Vercel project's Root Directory being
+`website`.
 
 Optional repository secrets for the image job: `WIFI_COUNTRY` and `IMAGE_PASSWORD`. Without
 `IMAGE_PASSWORD` every device makes its own ssh password on first boot ([above](#the-ssh-password));

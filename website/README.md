@@ -24,9 +24,10 @@ npm run preview    # serve out/ the way a static host would
 ```
 
 CI runs `npm run check` on a push to `main` or a pull request that touches `website/`, and uploads
-`out/` as an artifact. On a push to `main` it then deploys to Vercel, live at
-https://bloopbox.vercel.app/. Vercel's own Git deploys are off (`vercel.json`); the job and its
-secrets are in `docs/deployment.md` § CI.
+`out/` as an artifact.
+Vercel deploys it through its own GitHub integration, not from CI, and serves it at
+https://bloopbox.vercel.app/. The Vercel project's Root Directory is `website`, and it skips a
+deployment when nothing under it changed. A pull request gets a preview deployment.
 
 ## Layout
 

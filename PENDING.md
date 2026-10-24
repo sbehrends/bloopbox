@@ -27,9 +27,6 @@ integration"**, so every gated job is skipped and `ci` fails. A Dependabot run g
 token, and `dorny/paths-filter` lists a pull request's files through the API. It most likely needs
 `pull-requests: read` in the workflow's `permissions`. Unverified.
 
-**The Vercel deploy job has not run yet.** It needs the secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID` and
-`VERCEL_PROJECT_ID`, and the project's Root Directory set to `website` (`docs/deployment.md` § CI).
-
 Still unproven: the `type=gha` Docker layer cache passed through `BUILDX_EXTRA_ARGS` (a miss is not
 an error; the env block is deletable). **Branch protection must require the aggregating `ci`
 check**, set by hand.

@@ -12,6 +12,7 @@ import {
 import type { VoiceNote, WhatsAppClientEvents } from '../whatsapp/client.ts';
 import { maskJid } from '../whatsapp/privacy.ts';
 import type { ReadKey, ReadKeyStore } from '../whatsapp/readKeys.ts';
+import { waitFor } from './support/waitFor.ts';
 
 /**
  * The bridge's decisions, with WhatsApp and the hardware server both faked.
@@ -145,14 +146,6 @@ function note(
   };
 }
 
-async function settle(predicate: () => boolean, label: string): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    if (predicate()) return;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error(`timed out waiting for ${label}`);
-}
-
 /** Lets every pending handler run; for asserting that something did *not* happen. */
 async function drain(): Promise<void> {
   for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
@@ -163,7 +156,7 @@ describe('inbound voice notes', () => {
     assign({ index: 0, jid: MOM });
     const voice = note();
     client.emit('voiceNote', voice);
-    await settle(() => events('wa:incoming').length > 0, 'the note to be announced');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note to be announced');
 
     expect(voice.download).toHaveBeenCalledWith(NOTES, 0);
     expect(events('wa:incoming')[0]).toMatchObject({
@@ -195,7 +188,7 @@ describe('inbound voice notes', () => {
     expect(fromMom.download).not.toHaveBeenCalled();
 
     assign({ index: 0, jid: MOM });
-    await settle(() => events('wa:incoming').length > 0, 'the held note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the held note');
     expect(events('wa:incoming')).toEqual([expect.objectContaining({ messageId: 'EARLY' })]);
     expect(fromStranger.download).not.toHaveBeenCalled();
   });
@@ -205,7 +198,7 @@ describe('inbound voice notes', () => {
       client.emit('voiceNote', note({ messageId: `N${String(i)}` }));
     }
     assign({ index: 0, jid: MOM });
-    await settle(
+    await waitFor(
       () => events('wa:incoming').length === MAX_NOTES_BEFORE_WHITELIST,
       'the held notes',
     );
@@ -232,14 +225,14 @@ describe('inbound voice notes', () => {
   it('accepts anyone in an assigned group, under the group’s button', async () => {
     assign({ index: 2, jid: FAMILY });
     client.emit('voiceNote', note({ chatJid: FAMILY, participantJid: AUNT }));
-    await settle(() => events('wa:incoming').length > 0, 'the group note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the group note');
     expect(events('wa:incoming')[0]).toMatchObject({ index: 2 });
   });
 
   it('measures a note that does not say how long it is', async () => {
     assign({ index: 0, jid: MOM });
     client.emit('voiceNote', note({ seconds: null }));
-    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note');
     expect(events('wa:incoming')[0]).toMatchObject({ durationMs: 2500 });
   });
 
@@ -248,7 +241,7 @@ describe('inbound voice notes', () => {
     const voice = note();
     voice.download.mockRejectedValueOnce(new Error('media expired'));
     client.emit('voiceNote', voice);
-    await settle(
+    await waitFor(
       () => logged.some(([, message]) => message === 'failed to download a voice note'),
       'the failure',
     );
@@ -295,7 +288,7 @@ describe('deleted for everyone', () => {
         }),
     );
     client.emit('voiceNote', voice);
-    await settle(() => finish !== undefined, 'the download to start');
+    await waitFor(() => finish !== undefined, 'the download to start');
     client.emit('revoked', {
       messageId: 'M1',
       chatJid: MOM,
@@ -304,7 +297,7 @@ describe('deleted for everyone', () => {
       fromMe: false,
     });
     finish?.();
-    await settle(() => removed.length > 0, 'the file to be removed');
+    await waitFor(() => removed.length > 0, 'the file to be removed');
 
     expect(removed).toEqual([`${NOTES}/wa-0-M1.ogg`]);
     expect(events('wa:incoming')).toEqual([]);
@@ -337,7 +330,7 @@ describe('deleted for everyone', () => {
   it('does not mark a revoked note read', async () => {
     assign({ index: 0, jid: MOM });
     client.emit('voiceNote', note());
-    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note');
     client.emit('revoked', {
       messageId: 'M1',
       chatJid: MOM,
@@ -414,7 +407,7 @@ describe('marking read', () => {
   it('marks only notes it accepted, and each only once', async () => {
     assign({ index: 0, jid: MOM });
     client.emit('voiceNote', note());
-    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note');
 
     await bridge.markRead({ index: 0, messageIds: ['M1', 'NEVER-SEEN'] });
     await bridge.markRead({ index: 0, messageIds: ['M1'] });
@@ -430,7 +423,7 @@ describe('marking read, bounded and best-effort', () => {
     // The visible half of the promise: two ticks for the sender, even across an update or a reboot.
     assign({ index: 0, jid: MOM });
     client.emit('voiceNote', note());
-    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note');
 
     client = new FakeWhatsApp();
     const restarted = newBridge();
@@ -442,7 +435,7 @@ describe('marking read, bounded and best-effort', () => {
   it('keeps the key per button, so the same id on another button is not marked', async () => {
     assign({ index: 0, jid: MOM });
     client.emit('voiceNote', note());
-    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note');
     await bridge.markRead({ index: 1, messageIds: ['M1'] });
     expect(client.markRead).not.toHaveBeenCalled();
   });
@@ -464,7 +457,7 @@ describe('marking read, bounded and best-effort', () => {
     });
     assign({ index: 0, jid: MOM });
     client.emit('voiceNote', note());
-    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note');
     expect(logged.some(([, message]) => message === 'could not keep the read key of a note')).toBe(
       true,
     );
@@ -473,7 +466,7 @@ describe('marking read, bounded and best-effort', () => {
   it('shrugs off a failure: the child has already heard it', async () => {
     assign({ index: 0, jid: MOM });
     client.emit('voiceNote', note());
-    await settle(() => events('wa:incoming').length > 0, 'the note');
+    await waitFor(() => events('wa:incoming').length > 0, 'the note');
     client.markRead.mockRejectedValueOnce(new Error('offline'));
     await bridge.markRead({ index: 0, messageIds: ['M1'] });
     expect(logged.some(([, message]) => message === 'could not mark messages read')).toBe(true);
@@ -551,7 +544,7 @@ describe('what reaches the log', () => {
     client.emit('voiceNote', note({ messageId: 'A' }));
     client.emit('voiceNote', note({ messageId: 'B', chatJid: FAMILY, participantJid: AUNT }));
     client.emit('voiceNote', note({ messageId: 'C', chatJid: STRANGER }));
-    await settle(() => events('wa:incoming').length === 2, 'both notes');
+    await waitFor(() => events('wa:incoming').length === 2, 'both notes');
     await drain();
 
     const journal = JSON.stringify(logged);

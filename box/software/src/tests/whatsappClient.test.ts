@@ -11,6 +11,7 @@ import {
   WhatsAppClient,
 } from '../whatsapp/client.ts';
 import { FakeWASocket } from './support/fakeWASocket.ts';
+import { waitFor } from './support/waitFor.ts';
 
 /**
  * The pure parts of the Baileys client, plus the two behaviours that keep it from talking to
@@ -29,23 +30,6 @@ import { FakeWASocket } from './support/fakeWASocket.ts';
  * No `vi.mock('baileys')`: the client takes its socket factory as an option, and these pass a
  * `FakeWASocket` in. Auth state stays real where a test is about what lands on disk.
  */
-/**
- * Polls rather than flushing a fixed number of times — `saveCreds` is fire-and-forget, so an
- * assertion about the file on disk depends on real filesystem work finishing. Same reasoning
- * as `deviceController.test.ts`.
- */
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  label: string,
-  attempts = 500,
-): Promise<void> {
-  for (let i = 0; i < attempts; i++) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error(`waitFor timed out waiting for: ${label}`);
-}
-
 /** A client over real auth state in `authDirectory`, opening fakes into `sockets`. */
 function createClient(authDirectory: string, sockets: FakeWASocket[]): WhatsAppClient {
   return new WhatsAppClient({

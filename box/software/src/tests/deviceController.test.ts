@@ -36,6 +36,7 @@ import {
 } from '../core/deviceController.ts';
 import { DeviceStatus } from '../core/deviceState.ts';
 import { MockHal } from '../hal/mockDriver.ts';
+import { waitFor } from './support/waitFor.ts';
 
 /**
  * End-to-end behaviour of the wired device: a HAL button edge in, cues and sends out.
@@ -138,21 +139,6 @@ async function flush(times = 4): Promise<void> {
   for (let i = 0; i < times; i++) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-}
-
-/**
- * Waits until `predicate` holds, yielding to the event loop between checks.
- *
- * Used instead of a fixed number of `flush()` calls wherever an assertion depends on
- * filesystem work finishing. A fixed count is a guess, and guessing low yields a test that
- * passes alone and fails intermittently under parallel load — which is exactly what happened.
- */
-async function waitFor(predicate: () => boolean, label: string, attempts = 500): Promise<void> {
-  for (let i = 0; i < attempts; i++) {
-    if (predicate()) return;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error(`waitFor timed out waiting for: ${label}`);
 }
 
 /**

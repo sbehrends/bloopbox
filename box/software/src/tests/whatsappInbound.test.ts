@@ -15,6 +15,7 @@ import {
 } from '../whatsapp/client.ts';
 import { MAX_INBOUND_BYTES } from '../whatsapp/mediaDownload.ts';
 import { fakeBaileys } from './support/fakeWASocket.ts';
+import { waitFor } from './support/waitFor.ts';
 
 /**
  * What the client makes of an inbound message: which shapes count as a voice note, and what
@@ -31,14 +32,6 @@ function message(content: NonNullable<WAMessage['message']>, id = 'ABC123'): WAM
     message: content,
     messageTimestamp: Math.floor(Date.now() / 1000),
   };
-}
-
-async function settle(predicate: () => boolean, label: string): Promise<void> {
-  for (let i = 0; i < 500; i++) {
-    if (predicate()) return;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error(`settle timed out waiting for: ${label}`);
 }
 
 describe('voiceNoteContent', () => {
@@ -140,7 +133,7 @@ describe('WhatsAppClient inbound', () => {
       messages: [message({ ephemeralMessage: { message: { audioMessage: PTT } } })],
     });
 
-    await settle(() => notes.length === 1, 'the note to be emitted');
+    await waitFor(() => notes.length === 1, 'the note to be emitted');
     expect(notes[0]).toMatchObject({ messageId: 'ABC123', seconds: 3 });
   });
 
@@ -155,7 +148,7 @@ describe('WhatsAppClient inbound', () => {
       ],
     });
 
-    await settle(() => notes.length === 1, 'the plain note to be emitted');
+    await waitFor(() => notes.length === 1, 'the plain note to be emitted');
     expect(notes.map((note) => note.messageId)).toEqual(['PLAIN']);
   });
 
@@ -170,7 +163,7 @@ describe('WhatsAppClient inbound', () => {
       ],
     });
 
-    await settle(() => notes.length === 1, 'the small note to be emitted');
+    await waitFor(() => notes.length === 1, 'the small note to be emitted');
     expect(notes.map((note) => note.messageId)).toEqual(['SMALL']);
     expect(baileys.download).not.toHaveBeenCalled();
   });
@@ -181,7 +174,7 @@ describe('WhatsAppClient inbound', () => {
       type: 'notify',
       messages: [message({ audioMessage: PTT }, 'DL01')],
     });
-    await settle(() => notes.length === 1, 'the note to be emitted');
+    await waitFor(() => notes.length === 1, 'the note to be emitted');
     const notesDir = join(authDirectory, 'notes');
 
     const result = await notes[0]!.download(notesDir, 2);
@@ -212,7 +205,7 @@ describe('WhatsAppClient inbound', () => {
 
     baileys.sockets[0]?.ev.emit('creds.update', {});
 
-    await settle(() => logged.mock.calls.length === 1, 'the failure to be logged');
+    await waitFor(() => logged.mock.calls.length === 1, 'the failure to be logged');
     expect(logged.mock.calls[0]?.[1]).toBe('could not save WhatsApp credentials');
   });
 
@@ -234,7 +227,7 @@ describe('WhatsAppClient inbound', () => {
       { key: { remoteJid: '120363000000000000@g.us', id: 'READ01' }, update: { status: 4 } },
     ]);
 
-    await settle(() => revocations.length === 1, 'the revoke to be emitted');
+    await waitFor(() => revocations.length === 1, 'the revoke to be emitted');
     expect(revocations).toEqual([
       {
         messageId: 'GONE01',

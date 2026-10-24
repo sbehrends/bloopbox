@@ -15,29 +15,17 @@ import {
   WhatsAppClient,
 } from '../whatsapp/client.ts';
 import { fakeBaileys } from './support/fakeWASocket.ts';
+import { waitFor } from './support/waitFor.ts';
 
 /**
  * The connection lifecycle, against a `FakeWASocket`: when the client reconnects, when it
  * refuses to, and that it never ends up with two sockets on one set of credentials.
  *
- * Only `setTimeout` is faked, so the reconnect ladder runs in virtual time while the one real
- * `mkdir` the client does still completes. Nothing here sleeps; `settle` polls.
+ * Only `setTimeout` is faked, so the reconnect ladder runs in virtual time while the real
+ * `mkdir`s the client does still complete. Nothing here sleeps; `waitFor` polls.
  */
 
 const silentLogger = pino({ level: 'silent' });
-
-async function settle(predicate: () => boolean, label: string): Promise<void> {
-  for (let i = 0; i < 500; i++) {
-    if (predicate()) return;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error(`settle timed out waiting for: ${label}`);
-}
-
-/** Lets every pending microtask and the client's real `mkdir` run. */
-async function drain(): Promise<void> {
-  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
-}
 
 describe('WhatsAppClient lifecycle', () => {
   let authDirectory: string;
@@ -111,7 +99,7 @@ describe('WhatsAppClient lifecycle', () => {
       baileys.sockets[0]?.close(DisconnectReason.restartRequired);
       expect(client.state).toBe('connecting');
       await vi.advanceTimersByTimeAsync(0);
-      await settle(() => baileys.sockets.length === 2, 'the post-scan reconnect');
+      await waitFor(() => baileys.sockets.length === 2, 'the post-scan reconnect');
     });
   });
 
@@ -144,7 +132,8 @@ describe('WhatsAppClient lifecycle', () => {
       });
       await client.start();
       const linking = client.beginLinking();
-      await drain();
+      // Not a fixed number of yields: the connect does a real `mkdir` before it asks for the version.
+      await waitFor(() => answer !== undefined, 'the connect to reach the version fetch');
 
       await client.unlink();
       answer(undefined);
@@ -164,7 +153,8 @@ describe('WhatsAppClient lifecycle', () => {
       });
       await client.start();
       const linking = client.beginLinking();
-      await drain();
+      // Not a fixed number of yields: the connect does a real `mkdir` before it asks for the version.
+      await waitFor(() => answer !== undefined, 'the connect to reach the version fetch');
 
       await client.stop();
       answer(undefined);
@@ -225,7 +215,8 @@ describe('WhatsAppClient lifecycle', () => {
         versionProvider: () => new Promise<undefined>(() => undefined),
       });
       const starting = client.start();
-      await drain();
+      // Advancing fake time before the timeout exists would skip it, and `starting` would hang.
+      await waitFor(() => vi.getTimerCount() > 0, 'the version-fetch timeout to be armed');
       expect(baileys.sockets).toHaveLength(0);
 
       await vi.advanceTimersByTimeAsync(VERSION_FETCH_TIMEOUT_MS);
@@ -245,7 +236,7 @@ describe('WhatsAppClient lifecycle', () => {
       await vi.advanceTimersByTimeAsync(RECONNECT_BASE_MS - 1);
       expect(baileys.sockets).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);
-      await settle(() => baileys.sockets.length === 2, 'the first reconnect');
+      await waitFor(() => baileys.sockets.length === 2, 'the first reconnect');
     });
 
     it('keeps backing off when each connection opens and is thrown off at once', async () => {
@@ -254,7 +245,7 @@ describe('WhatsAppClient lifecycle', () => {
       baileys.sockets[0]?.open();
       baileys.sockets[0]?.close(DisconnectReason.connectionClosed);
       await vi.advanceTimersByTimeAsync(RECONNECT_BASE_MS);
-      await settle(() => baileys.sockets.length === 2, 'the first reconnect');
+      await waitFor(() => baileys.sockets.length === 2, 'the first reconnect');
 
       // Opened, then closed a second later: not a recovery, so no reset.
       baileys.sockets[1]?.open();
@@ -264,7 +255,7 @@ describe('WhatsAppClient lifecycle', () => {
       await vi.advanceTimersByTimeAsync(RECONNECT_BASE_MS);
       expect(baileys.sockets).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(RECONNECT_BASE_MS);
-      await settle(() => baileys.sockets.length === 3, 'the doubled reconnect');
+      await waitFor(() => baileys.sockets.length === 3, 'the doubled reconnect');
     });
 
     it('forgets earlier failures once a connection has held for a minute', async () => {
@@ -272,14 +263,14 @@ describe('WhatsAppClient lifecycle', () => {
       await client.start();
       baileys.sockets[0]?.close(DisconnectReason.connectionClosed);
       await vi.advanceTimersByTimeAsync(RECONNECT_BASE_MS);
-      await settle(() => baileys.sockets.length === 2, 'the first reconnect');
+      await waitFor(() => baileys.sockets.length === 2, 'the first reconnect');
 
       baileys.sockets[1]?.open();
       clock += STABLE_CONNECTION_MS;
       baileys.sockets[1]?.close(DisconnectReason.connectionClosed);
 
       await vi.advanceTimersByTimeAsync(RECONNECT_BASE_MS);
-      await settle(() => baileys.sockets.length === 3, 'a reconnect at the base delay again');
+      await waitFor(() => baileys.sockets.length === 3, 'a reconnect at the base delay again');
       expect(client.state).toBe('connecting');
     });
 

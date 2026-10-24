@@ -1122,9 +1122,12 @@ hold the full reasoning for each.
 
 Timing-sensitive suites — LED patterns, debounce, purge TTL — run on **fake timers**. Never add a
 real sleep. Where a code path awaits real filesystem work (`deviceController.test.ts` leaves
-`setImmediate` real because a commit awaits a real `rm` through `deleteFile`), assert with a
-`waitFor` condition rather than a fixed number of yields: fixed flushes pass in isolation and fail
-intermittently under parallel load.
+`setImmediate` real because a commit awaits a real `rm` through `deleteFile`), assert with the
+shared `waitFor` (`src/tests/support/waitFor.ts`) rather than a fixed number of yields: fixed
+flushes pass in isolation and fail intermittently under parallel load. It is bounded by real time,
+not by a count of turns, because the 500-turn copies each suite once carried passed on a laptop and
+failed on a two-core CI runner. The same goes before advancing fake time past a timer that real I/O
+schedules: wait until the timer exists (`vi.getTimerCount()`), or the advance skips it.
 
 A test that builds a second `DeviceController` on the same `MockHal` must **`dispose()`** the first:
 the HAL listeners are attached at construction and only `dispose()` removes them, so a merely

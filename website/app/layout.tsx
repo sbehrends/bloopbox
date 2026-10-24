@@ -1,13 +1,16 @@
 import type { Metadata, Viewport } from 'next'
-import { Nunito } from 'next/font/google'
+import localFont from 'next/font/local'
 
 import { site } from '@/lib/site'
 
 import './globals.css'
 
-const nunito = Nunito({
-  subsets: ['latin'],
-  weight: ['400', '600', '800', '900'],
+// Committed rather than fetched from Google at build time: `next/font/google` failed on GitHub's
+// runners while passing locally and on Vercel. One variable file, Latin subset, covers 400–900.
+// Nunito is OFL-licensed (fonts/Nunito-OFL.txt).
+const nunito = localFont({
+  src: './fonts/nunito-latin-var.woff2',
+  weight: '400 900',
   variable: '--font-nunito',
   display: 'swap',
 })

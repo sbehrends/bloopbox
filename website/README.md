@@ -73,8 +73,11 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
 - **Static export, not a server.** A page about a device you build yourself has nothing to render
   per-request. It also means no Route Handlers, no middleware, no image optimisation and no server
   actions — reach for one of those on purpose, not by accident.
-- **A real webfont, unlike the box.** Nunito, self-hosted by `next/font`, with the box's exact
-  fallback stack behind it. The brand asks for a chunky rounded geometric sans; the box settles for
+- **A real webfont, unlike the box.** Nunito, self-hosted by `next/font/local` from a committed
+  variable file (`app/fonts/`, Latin, weights 400–900, OFL), with the box's exact fallback stack
+  behind it. It is committed rather than fetched by `next/font/google` because that fetch failed the
+  build on GitHub's runners while passing locally and on Vercel; a build should not depend on
+  Google answering. The brand asks for a chunky rounded geometric sans; the box settles for
   `ui-rounded` because a late font on the setup page is a page a parent stares at. The site is not
   served off a Pi and can afford the thing itself.
 - **No npm workspaces at the root, still.** Two packages would justify them, but hoisting

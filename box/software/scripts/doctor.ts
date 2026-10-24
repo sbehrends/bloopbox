@@ -74,6 +74,15 @@ async function checkAlsa(): Promise<CheckResult> {
       required: false,
     };
   }
+  // A CI runner is Linux with no sound card, so this can never pass there. GitHub Actions sets CI.
+  if (process.env['CI'] === 'true') {
+    return {
+      name: 'ALSA capture device',
+      ok: true,
+      detail: 'skipped in CI — a runner has no sound card',
+      required: false,
+    };
+  }
   try {
     const { stdout } = await run('arecord', ['-l']);
     const ok = stdout.includes('card');

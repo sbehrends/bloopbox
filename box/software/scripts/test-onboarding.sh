@@ -210,7 +210,9 @@ docker run --rm \
     # systemd brings it back on the device; nothing does in this container, and nothing below
     # needs it.
     await "the join to reach nmcli" called "802-11-wireless.ssid HomeNet"
-    called "wifi-sec.psk" || fail "the passphrase never reached the profile"
+    # Its own wait: the passphrase is a second nmcli call after the ssid, and under arm64
+    # emulation it can land after the check above has already passed.
+    await "the passphrase to reach the profile" called "wifi-sec.psk"
     await "the hotspot to stand down" state_says apActive false
     await "the device to come online" state_says online true
     echo "joined: $(cat /run/bloopbox-net/net-state.json)"

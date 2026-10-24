@@ -212,17 +212,6 @@ export default function Manual() {
                   Download the card image
                 </a>
               </p>
-              <Note title="Not published yet">
-                <p>
-                  There is no released image to download at the moment — that button points at the
-                  releases page, which is currently empty. Until one is published you can build the
-                  card yourself from the source, which is written up in the repository’s{' '}
-                  <a href={links.deployment} rel="noreferrer">
-                    deployment notes
-                  </a>
-                  .
-                </p>
-              </Note>
             </Step>
 
             <Step n={2} title="Write it to the card with Balena Etcher">

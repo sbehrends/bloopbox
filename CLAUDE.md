@@ -139,5 +139,5 @@ filtering with `on: push: paths:` would make a required check never report and b
 
 `.github/workflows/release.yml` is deliberately **not** filtered: a tag must rebuild everything.
 
-There is no git remote yet, so **none of this has run on GitHub**: a workflow change is unproven until
-it does.
+The remote is `github.com/sbehrends/bloopbox`, private. CI has run there and is red — see
+`PENDING.md` before trusting a green or red result.

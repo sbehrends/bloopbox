@@ -500,8 +500,8 @@ A third of the box is bash, and two traps have each broken more than one script:
 
 ## CI
 
-None of this has run on GitHub yet: the repository has no remote. What the workflows are written
-to do:
+The repository is `github.com/sbehrends/bloopbox`. The workflows have run there, and the first runs
+failed (`PENDING.md`). What they are written to do:
 
 - [`ci.yml`](../.github/workflows/ci.yml) — on a push to `main`, every pull request, and when
   `release.yml` calls it. A cheap `changes` job decides what was touched and gates the rest: the
@@ -536,6 +536,10 @@ candidate on purpose.
 
 GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping `runs-on` for
 an arm64 runner makes it several times faster and needs no other change.
+
+**CI does not deploy the website.** Vercel's GitHub integration builds and deploys `website/` on
+its own (`website/README.md`), so the `website` job here is a check, and its `out/` artifact is
+for inspection only.
 
 Optional repository secrets for the image job: `WIFI_COUNTRY` and `IMAGE_PASSWORD`. Without
 `IMAGE_PASSWORD` every device makes its own ssh password on first boot ([above](#the-ssh-password));

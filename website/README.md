@@ -25,7 +25,9 @@ npm run preview    # serve out/ the way a static host would
 
 CI runs `npm run check` on a push to `main` or a pull request that touches `website/`, and uploads
 `out/` as an artifact.
-Nothing publishes it yet — there is no host configured.
+Vercel deploys it through its own GitHub integration, not from CI, and serves it at
+https://bloopbox.vercel.app/. The Vercel project's Root Directory is `website`, and it skips a
+deployment when nothing under it changed. A pull request gets a preview deployment.
 
 ## Layout
 
@@ -128,11 +130,16 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
   header and colours it from `docs/hardware.md`. Every other picture on the site can be a generated
   illustration; this one cannot, because an image generator does not know which pin GPIO27 is and
   somebody will follow it with a wire in their hand.
-- **The waitlist form posts to a third party, and says so while it doesn't.** A static export has no
-  Route Handler to post to, so `waitlist.endpoint` in `lib/site.ts` names an external form service.
-  It is a plain `<form action>` rather than `fetch`, so it works before hydration. While
-  `waitlist.configured` is false the panel renders a visible note admitting submissions go nowhere —
-  quietly discarding a parent's email is the worse failure.
+- **The waitlist form posts straight to HubSpot, the CRM.** A static export has no Route Handler,
+  so the form calls HubSpot's unauthenticated Forms submission API
+  (`api-eu1.hsforms.com/submissions/v3/integration/submit/{portalId}/{formGuid}`; the account is in
+  HubSpot's EU data centre), which is built for
+  browser calls: no key, and it allows requests from any site. `waitlist.endpoint` in
+  `lib/site.ts` is built from the host and the two IDs. The API takes JSON, so the form submits with `fetch`,
+  not a plain `<form action>`, and **needs JavaScript**: the button stays disabled until hydration.
+  HubSpot rejects a field the form does not define (`FIELD_NOT_IN_FORM_DEFINITION`), so only `email`
+  is sent as a field. The page goes in `context` instead. The honeypot only stops bots that fill
+  every field. The IDs are public by design, and HubSpot rate-limits the endpoint per IP.
 - **The home page sells; the manual documents.** An earlier draft of `/` carried the full LED signal
   matrix and a "where this actually is" section listing what has never run on hardware. Both were
   cut, and that still holds for the home page: its job is to make a parent want one and click
@@ -157,13 +164,41 @@ places** — that is the accepted cost of the split, and it is cheaper than the 
   departure from `LightSignature`: there, the plate is the subject and a dark lamp is information;
   here, the cap is also the card's "which button", and it has to stay legible through the dark half.
 
+## The waitlist, on the HubSpot side
+
+The form sends one request per sign-up:
+
+```http
+POST https://api-eu1.hsforms.com/submissions/v3/integration/submit/<portalId>/<formGuid>
+Content-Type: application/json
+
+{
+  "fields": [{ "objectTypeId": "0-1", "name": "email", "value": "parent@example.com" }],
+  "context": { "pageUri": "https://…/manual/", "pageName": "…" }
+}
+```
+
+Set up once in HubSpot:
+
+1. **A form.** Marketing → Forms → create form → **Embedded code**. One field, **Email**, required.
+   Add no other required field, or every submission is rejected for missing it. Publish it.
+2. **The two IDs and the region.** The form's embed code carries `data-portal-id`,
+   `data-form-id` and `data-region`. They go in `hubspot` in `lib/site.ts`; a region of `eu1`
+   means the `api-eu1.hsforms.com` host. Only the IDs are used, never the embed script: the
+   form on the page is the site's own, so it matches the brand and loads no third-party JS.
+3. **Optionally, a list.** Contacts → Lists → active list with filter "Form submission is
+   <this form>", e.g. `bloopbox waitlist`. That gives you the waitlist as one view.
+4. **Mind the form's own follow-up.** If the form has a follow-up email or a notification set,
+   HubSpot sends it on every submission. The notice on the page promises one message, only if a kit
+   ever happens, so leave follow-up emails off.
+
+Then submit the form once from `npm run dev` and check the contact in HubSpot.
+
 ## Before this goes live
 
-- **`lib/site.ts` has a placeholder repository URL.** The repo has no git remote yet; every GitHub
-  link on the site derives from that one constant.
-- **`lib/site.ts` has a placeholder form endpoint.** `waitlist.endpoint` is `example.invalid`. Point
-  it at a real service and flip `waitlist.configured` to drop the setup note.
-- **The manual's download button leads nowhere**, because no release is published. It needs a
-  `--audio-hat wm8960` build — `docs/deployment.md`.
-- Nothing hosts `out/` yet. Any static host will do.
+- **The repository is private.** Every GitHub link on the site derives from `site.repo` in
+  `lib/site.ts`, and each one is a 404 for a visitor until the repository goes public.
+- **The manual's download button needs a published release.** It links to `releases/latest`, and
+  the manual no longer warns that it is empty. The release needs a `--audio-hat wm8960` build —
+  `docs/deployment.md`.
 - There is no social preview image — `openGraph` declares no `images`.

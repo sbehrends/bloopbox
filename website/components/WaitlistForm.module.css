@@ -75,6 +75,20 @@
   border: 0;
 }
 
+.done {
+  font-family: var(--font-display);
+  font-weight: var(--weight-display);
+  max-inline-size: var(--measure);
+}
+
+/* Spans both columns so the message sits under the field and the button, not beside them. */
+.failed {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
 .fineprint {
   font-size: var(--text-sm);
   color: var(--muted);

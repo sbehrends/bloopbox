@@ -16,41 +16,41 @@ Ordered roughly by priority within each group.
 
 ## Before 1.0
 
-### CI has never run on GitHub
+### CI runs on GitHub, and Dependabot's runs are red
 
-There is no git remote, so `.github/workflows/` has only been read, not run, and the local `v0.x`
-tags cannot be published. Unproven until it runs: the `dorny/paths-filter` outputs (an empty output
-reads as "run everything", so the failure is a slow pipeline, not a skipped gate), the `type=gha`
-Docker layer cache passed through `BUILDX_EXTRA_ARGS` (a miss is not an error; the env block is
-deletable), and the rest of what the 2026-10 review added. **Branch protection must require the
-aggregating `ci` check**, set by hand once the repository exists.
+The remote is `github.com/sbehrends/bloopbox` (private). The first runs, on 2026-10-23, all failed.
+The failure on `main` was the production `npm audit` (`proxy-addr`, `zod`, `body-parser`,
+`music-metadata`), fixed by `npm audit fix` on 2026-10-24. Still open:
+
+**Dependabot pull requests: the `changes` job fails with "Resource not accessible by
+integration"**, so every gated job is skipped and `ci` fails. A Dependabot run gets a read-only
+token, and `dorny/paths-filter` lists a pull request's files through the API. It most likely needs
+`pull-requests: read` in the workflow's `permissions`. Unverified.
+
+Still unproven: the `type=gha` Docker layer cache passed through `BUILDX_EXTRA_ARGS` (a miss is not
+an error; the env block is deletable). **Branch protection must require the aggregating `ci`
+check**, set by hand.
 
 **Pushing the history tags would publish old releases.** `release.yml` builds and publishes on any
 `v*` tag push. Guard it, or push only the tag being released, by name.
 
-### The website cannot be published yet
+### The website, before it is announced
 
-1. **The repository URL is a placeholder.** `website/lib/site.ts` guesses
-   `github.com/sergiobehrends/bloopbox`; every GitHub link derives from it.
-2. **Nothing hosts `out/`.** CI builds it as an artifact; no host or domain exists.
-3. **No social preview image.** `openGraph` in `app/layout.tsx` has no `images`.
-4. **`npm audit` reports four advisories** (2026-10-02): `next` (critical), `postcss`, `sharp` and
+It is live at https://bloopbox.vercel.app/.
+
+1. **No social preview image.** `openGraph` in `app/layout.tsx` has no `images`.
+2. **`npm audit` reports four advisories** (2026-10-02): `next` (critical), `postcss`, `sharp` and
    `nanoid` (high). The offered fix is `next@16.3.8`, outside the exact `16.2.12` pin, plus
    `npm audit fix` for `nanoid`. Bump and re-run `npm run check`.
 
 The line that must hold: **no copy may imply the device is buyable or shipping.** Every call to
 action is "build one".
 
-### The build manual ships with two placeholders
+### The build manual's download button needs the first release
 
-1. **The card image cannot be downloaded.** Step 1's button points at an empty releases page, and
-   the manual says so. A tagged release builds the right one (`-wm8960-sd.img.xz`;
-   `docs/deployment.md` § CI), so this closes with the first published tag.
-2. **The waitlist form posts nowhere.** `waitlist.endpoint` in `website/lib/site.ts` is
-   `https://example.invalid/...`. The site is a static export, so it must post to a third-party
-   endpoint (Formspree, Buttondown, a Google Form). While `waitlist.configured` is false the panel
-   says the form is not wired up. The copy says twice that no kit exists and this is not a
-   pre-order; do not let a rewrite soften that.
+Step 1's button points at `releases/latest`, and the manual no longer says the page is empty. A
+tagged release builds the right image (`-wm8960-sd.img.xz`; `docs/deployment.md` § CI), so this
+closes with the first published tag.
 
 ### A factory reset does not change the ssh password
 

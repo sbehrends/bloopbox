@@ -13,12 +13,14 @@ const nunito = Nunito({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL(site.url),
   title: `${site.name} — ${site.tagline}`,
   description: site.description,
   applicationName: site.name,
   icons: { icon: '/bloopbox-favicon.svg' },
   openGraph: {
     type: 'website',
+    url: '/',
     siteName: site.name,
     title: `${site.name} — ${site.tagline}`,
     description: site.description,

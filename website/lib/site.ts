@@ -1,10 +1,11 @@
-/** TODO: `repo` is a guess; the repository has no git remote yet. */
+/** The repository is private for now, so its links 404 for anyone without access. */
 export const site = {
   name: 'bloopbox',
   tagline: 'A WhatsApp voice messenger with three buttons and no screen.',
   description:
     'bloopbox is a screenless WhatsApp voice messenger for children aged 2–5. Three illuminated arcade buttons, one per family member: hold to send a voice note, tap to play what arrived. Open source — build it yourself on a Raspberry Pi Zero 2 W.',
-  repo: 'https://github.com/sergiobehrends/bloopbox',
+  repo: 'https://github.com/sbehrends/bloopbox',
+  url: 'https://bloopbox.vercel.app',
 } as const
 
 export const links = {
@@ -24,10 +25,15 @@ export const channels = [
   { n: 3, token: 'ch-3', example: 'Grandma' },
 ] as const
 
-/** TODO: placeholder endpoint; set a real form URL before publishing. */
+/** The HubSpot account and its waitlist form (`website/README.md`). The account is in the EU data centre, hence the `-eu1` host. */
+const hubspot = {
+  host: 'api-eu1.hsforms.com',
+  portalId: '149623017',
+  formGuid: '15bf1490-5e79-4ddb-89b5-6886660048ba',
+} as const
+
 export const waitlist = {
-  endpoint: 'https://example.invalid/bloopbox-waitlist',
-  configured: false,
+  endpoint: `https://${hubspot.host}/submissions/v3/integration/submit/${hubspot.portalId}/${hubspot.formGuid}`,
 } as const
 
 export const download = {

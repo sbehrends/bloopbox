@@ -24,10 +24,15 @@ export const channels = [
   { n: 3, token: 'ch-3', example: 'Grandma' },
 ] as const
 
-/** TODO: placeholder endpoint; set a real form URL before publishing. */
+/** The HubSpot account and its waitlist form (`website/README.md`). The account is in the EU data centre, hence the `-eu1` host. */
+const hubspot = {
+  host: 'api-eu1.hsforms.com',
+  portalId: '149623017',
+  formGuid: '15bf1490-5e79-4ddb-89b5-6886660048ba',
+} as const
+
 export const waitlist = {
-  endpoint: 'https://example.invalid/bloopbox-waitlist',
-  configured: false,
+  endpoint: `https://${hubspot.host}/submissions/v3/integration/submit/${hubspot.portalId}/${hubspot.formGuid}`,
 } as const
 
 export const download = {

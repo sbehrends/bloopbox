@@ -1,10 +1,11 @@
-/** TODO: `repo` is a guess; the repository has no git remote yet. */
+/** The repository is private for now, so its links 404 for anyone without access. */
 export const site = {
   name: 'bloopbox',
   tagline: 'A WhatsApp voice messenger with three buttons and no screen.',
   description:
     'bloopbox is a screenless WhatsApp voice messenger for children aged 2–5. Three illuminated arcade buttons, one per family member: hold to send a voice note, tap to play what arrived. Open source — build it yourself on a Raspberry Pi Zero 2 W.',
-  repo: 'https://github.com/sergiobehrends/bloopbox',
+  repo: 'https://github.com/sbehrends/bloopbox',
+  url: 'https://bloopbox.vercel.app',
 } as const
 
 export const links = {

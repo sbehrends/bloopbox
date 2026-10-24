@@ -500,8 +500,8 @@ A third of the box is bash, and two traps have each broken more than one script:
 
 ## CI
 
-None of this has run on GitHub yet: the repository has no remote. What the workflows are written
-to do:
+The repository is `github.com/sbehrends/bloopbox`. The workflows have run there, and the first runs
+failed (`PENDING.md`). What they are written to do:
 
 - [`ci.yml`](../.github/workflows/ci.yml) — on a push to `main`, every pull request, and when
   `release.yml` calls it. A cheap `changes` job decides what was touched and gates the rest: the

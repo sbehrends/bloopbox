@@ -25,7 +25,7 @@ npm run preview    # serve out/ the way a static host would
 
 CI runs `npm run check` on a push to `main` or a pull request that touches `website/`, and uploads
 `out/` as an artifact.
-Nothing publishes it yet — there is no host configured.
+Vercel serves it, live at https://bloopbox.vercel.app/.
 
 ## Layout
 
@@ -194,9 +194,9 @@ Then submit the form once from `npm run dev` and check the contact in HubSpot.
 
 ## Before this goes live
 
-- **`lib/site.ts` has a placeholder repository URL.** The repo has no git remote yet; every GitHub
-  link on the site derives from that one constant.
-- **The manual's download button leads nowhere**, because no release is published. It needs a
-  `--audio-hat wm8960` build — `docs/deployment.md`.
-- Nothing hosts `out/` yet. Any static host will do.
+- **The repository is private.** Every GitHub link on the site derives from `site.repo` in
+  `lib/site.ts`, and each one is a 404 for a visitor until the repository goes public.
+- **The manual's download button needs a published release.** It links to `releases/latest`, and
+  the manual no longer warns that it is empty. The release needs a `--audio-hat wm8960` build —
+  `docs/deployment.md`.
 - There is no social preview image — `openGraph` declares no `images`.

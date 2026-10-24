@@ -6,7 +6,7 @@ import { waitlist } from '@/lib/site'
 
 import styles from './WaitlistForm.module.css'
 
-type Status = 'idle' | 'sending' | 'done' | 'failed'
+type Status = 'idle' | 'sending' | 'done' | 'failed' | 'invalid'
 
 /** Posts to HubSpot's Forms submission API as JSON, so this needs JavaScript. Copy must never imply the device is buyable (see `website/README.md`). */
 export function WaitlistForm() {
@@ -37,7 +37,19 @@ export function WaitlistForm() {
           context: { pageUri: window.location.href, pageName: document.title },
         }),
       })
-      setStatus(response.ok ? 'done' : 'failed')
+      if (response.ok) {
+        setStatus('done')
+        return
+      }
+      // An address HubSpot rejects (its INVALID_EMAIL, or BLOCKED_EMAIL when the form blocks a
+      // domain) fails the same way on every retry, so it gets its own message.
+      const body = (await response.json().catch(() => null)) as {
+        errors?: { errorType?: string }[]
+      } | null
+      const badAddress = body?.errors?.some(
+        (error) => error.errorType === 'INVALID_EMAIL' || error.errorType === 'BLOCKED_EMAIL',
+      )
+      setStatus(badAddress ? 'invalid' : 'failed')
     } catch {
       setStatus('failed')
     }
@@ -92,6 +104,12 @@ export function WaitlistForm() {
           >
             {status === 'sending' ? 'Sending…' : 'Keep me posted'}
           </button>
+
+          {status === 'invalid' && (
+            <p className={styles.failed} role="alert">
+              That address does not look complete. Please check it and try again.
+            </p>
+          )}
 
           {status === 'failed' && (
             <p className={styles.failed} role="alert">

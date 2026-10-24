@@ -7,8 +7,8 @@ proven is in `docs/hardware-bringup.md` § What the reference board has proven.
 
 **Verified hardware: the reference board** — a Raspberry Pi 3B+ with the Waveshare WM8960 Audio HAT,
 three buttons and three lamps (`docs/hardware.md` § The reference board). It is the one board
-releases are built and tested for. The Pi Zero 2 W is a later target (below). There is no git
-remote, so CI has never run on GitHub.
+releases are built and tested for. The Pi Zero 2 W is a later target (below). CI runs on GitHub
+(`github.com/sbehrends/bloopbox`) and is not yet green — see below.
 
 Ordered roughly by priority within each group.
 

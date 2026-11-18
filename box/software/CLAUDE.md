@@ -161,7 +161,7 @@ Direction and locked decisions in [`docs/BRAND.md`](../../docs/BRAND.md).
 
 ## Baileys 7 notes
 
-Pinned to `7.0.0-rc14` exactly; Dependabot leaves it to a human. Lifecycle reasoning:
+Pinned to `7.0.0-rc14` exactly; only a human bumps it. Lifecycle reasoning:
 [`docs/architecture.md` § The WhatsApp connection](../../docs/architecture.md#the-whatsapp-connection).
 
 - `printQRInTerminal` does nothing. The QR arrives on `connection.update` and goes to the panel.

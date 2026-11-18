@@ -530,9 +530,9 @@ paragraph together.
 **Both workflows run with `permissions: contents: read`**, and only the job that publishes a
 release asks for `contents: write`. **Every action is pinned to a commit**, with its tag in a
 comment: a tag can be moved by whoever controls the action's repository, and the steps run with the
-job's token. [`dependabot.yml`](../.github/dependabot.yml) proposes the bumps weekly, grouped, for
-the actions and both lockfiles; Baileys is excluded, because it is pinned to an exact release
-candidate on purpose.
+job's token. Nothing bumps them, or either lockfile, automatically: Dependabot is off (its version
+and security-update pull requests both), so every bump is a deliberate commit that runs the gate.
+Baileys in particular is pinned to an exact release candidate on purpose.
 
 GitHub's hosted runners are x86, so the arm64 build runs under emulation. Swapping `runs-on` for
 an arm64 runner makes it several times faster and needs no other change.

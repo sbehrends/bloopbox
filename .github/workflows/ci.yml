@@ -64,6 +64,19 @@ jobs:
             docs:
               - '**/*.md'
 
+      # The manual's download button links to the release named by website/package.json's
+      # version, and the release's files are named from box/software's. Checked here, the one job
+      # every run has, rather than in either package's job, which a one-sided bump would skip.
+      - name: Site and box versions match
+        run: |
+          set -euo pipefail
+          site="$(node -p "require('./website/package.json').version")"
+          box="$(node -p "require('./box/software/package.json').version")"
+          if [[ "${site}" != "${box}" ]]; then
+            echo "::error::website/package.json is ${site} but box/software/package.json is ${box}; the manual's download link would point at the wrong release"
+            exit 1
+          fi
+
       # Fail-safe on purpose: an empty output means the filter did not run, and the right answer to
       # "I do not know what changed" is to run everything. That is what keeps a tag release from
       # silently skipping its own gate.

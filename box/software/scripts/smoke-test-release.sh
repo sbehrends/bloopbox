@@ -71,6 +71,10 @@ docker run --rm \
       *) echo "FAIL: doctor cannot verify the opengpio addon from outside the app directory"; exit 1 ;;
     esac
 
+    # The GPL travels with the object code, and a flashed card keeps nothing of the tarball.
+    [[ -f /opt/bloopbox/LICENSE ]] || { echo "FAIL: the installer did not install LICENSE"; exit 1; }
+    echo "(LICENSE installed)"
+
     echo
     echo "--- booting the hardware server ---"
     # Same command and environment as the unit file, minus systemd itself. The mock HAL

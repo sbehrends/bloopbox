@@ -35,8 +35,15 @@ jobs:
   # everything regardless of what its diff touched. `gate_only: true` is also what tells ci.yml's
   # `changes` job to stop filtering — see the fail-safe there. Do not "optimize" this by adding a
   # filter, or a release will eventually ship an artefact nothing validated.
+  #
+  # A called workflow cannot ask for more than its caller grants, and GitHub refuses the whole run
+  # before any job starts if it tries. ci.yml's `changes` job asks for pull-requests: read, so
+  # this job must grant it.
   check:
     uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      pull-requests: read
     with:
       gate_only: true
 

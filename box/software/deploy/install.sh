@@ -305,7 +305,8 @@ step "installing the application into ${PREFIX}"
 STAGING="${PREFIX}.new"
 rm -rf "${STAGING}"
 install -d -m 0755 "${STAGING}"
-for item in dist node_modules node package.json package-lock.json config.default.json release.env; do
+# LICENSE because the GPL travels with the object code: a flashed card has nothing else.
+for item in dist node_modules node package.json package-lock.json config.default.json release.env LICENSE; do
   [[ -e "${SOURCE_DIR}/${item}" ]] && cp -a "${SOURCE_DIR}/${item}" "${STAGING}/"
 done
 # Keep the operational scripts beside the app so doctor / uninstall stay available once

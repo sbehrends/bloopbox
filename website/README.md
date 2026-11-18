@@ -203,4 +203,4 @@ The checklist is `PENDING.md` § Going public. Two of its items are the site's: 
 derives from `site.repo` in `lib/site.ts` and 404s until the repository is public, and the
 manual's download button links straight to the SD image of the release named by this package's
 `version` (`lib/release.ts`). Keep that version in step with `box/software`'s: a
-release bumps both.
+release bumps both, and CI's `changes` job fails when they differ.

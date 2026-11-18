@@ -61,6 +61,12 @@
   --ch-2-off: #c39b93;
   --ch-3-off: #8fa9b4;
 
+  /* ---- paper: the portrait-print preview ---- */
+  /* Also outside every theme block, for the same reason as the device: the preview stands for a
+     printed sheet, and paper is white whatever the screen is doing. */
+  --paper: #ffffff;
+  --paper-ink: #000000;
+
   /* ---- night: the site's one addition to the box's palette ---- */
   /* The mark's ring interiors are opaque cream, so on navy the whole bubble lights up. Two
      places take that literally and run on navy in both themes: the section about the three

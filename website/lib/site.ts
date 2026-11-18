@@ -16,6 +16,7 @@ export const links = {
   deployment: `${site.repo}/blob/main/docs/deployment.md`,
   manual: '/manual/',
   lights: '/manual/#lights',
+  portraitPrint: '/portrait-print/',
   build: '/manual/',
 } as const
 

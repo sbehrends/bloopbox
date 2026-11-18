@@ -39,7 +39,7 @@ app/
 ├── manual/
 │   ├── page.tsx      the build manual: eleven steps, the parts, the wiring
 │   └── page.module.css
-├── print-prep/       a tool page: three photos laid out as button-cap prints. Not indexed
+├── portrait-print/   a tool page: three photos laid out as button-cap prints. Not indexed
 ├── globals.css       element defaults and the primitives more than one section uses
 └── tokens.css        the brand, machine-readable. The only file here with a colour literal
 components/

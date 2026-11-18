@@ -1,0 +1,395 @@
+/* Layout for the button-photo tool. Primitives (.wrap, .btn, .card, .eyebrow, .lede) live in
+   globals.css; the chrome lives in components/SiteHeader and SiteFooter. Section rhythm follows
+   app/manual/page.module.css, so the two secondary pages read as one site.
+
+   Everything inside `.sheet` is measured in millimetres and is what reaches the paper. Colours
+   there come from the --paper tokens, which do not follow the theme: a sheet of paper is white in
+   dark mode too. */
+
+/* ---- screen vs print ---- */
+
+/* `display: contents` so wrapping the shared header does not break its `position: sticky`. */
+.screenOnly {
+  display: contents;
+}
+
+.printOnly {
+  display: none;
+}
+
+/* ---- intro ---- */
+
+.hero {
+  display: grid;
+  gap: var(--space-5);
+  justify-items: start;
+  padding-block: clamp(2.5rem, 7vw, 4.5rem) clamp(1rem, 2vw, 1.5rem);
+}
+
+.hero h1 {
+  max-inline-size: 16ch;
+}
+
+/* The grid gap already spaces it; `.eyebrow` is global, hence `:global`. */
+.hero :global(.eyebrow) {
+  margin: 0;
+}
+
+/* Same treatment as the manual's facts row: three answers before anybody scrolls. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+  gap: var(--space-5);
+  margin: var(--space-4) 0 0;
+  inline-size: 100%;
+  max-inline-size: var(--measure);
+}
+
+.facts dt {
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-block-end: var(--space-1);
+}
+
+.facts dd {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-display);
+  line-height: 1.2;
+}
+
+/* ---- sections ---- */
+
+.section {
+  padding-block: clamp(2.5rem, 6vw, 4.5rem);
+  /* Lands below the sticky header when the nav jumps here. */
+  scroll-margin-block-start: 4.25rem;
+}
+
+.sectionTitle {
+  max-inline-size: 22ch;
+  margin-block-end: var(--space-4);
+}
+
+.sectionLede {
+  margin-block-end: var(--space-8);
+}
+
+/* The privacy promise, set apart so a parent sees it before choosing a photo of their child. */
+.privacy {
+  max-inline-size: var(--measure);
+  margin-block: calc(-1 * var(--space-4)) var(--space-8);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border-inline-start: 4px solid var(--accent);
+  background: var(--accent-soft);
+  font-size: var(--text-sm);
+}
+
+/* ---- the three photo slots ---- */
+
+.slots {
+  display: grid;
+  gap: var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+}
+
+/* Each card carries its button's colour as --slot-color, set inline from the channel token. */
+.slot {
+  display: grid;
+  justify-items: center;
+  /* The cards stretch to the tallest one (an error message makes a card taller); without this
+     the others spread the extra height between rows and their circles drop out of line. */
+  align-content: start;
+  gap: var(--space-5);
+  border-block-start: 6px solid var(--slot-color);
+}
+
+/* Two classes, to outrank globals.css `.card p`, which would mute it. */
+.slot .slotLabel {
+  justify-self: start;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-display);
+}
+
+.slotNumber {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: var(--radius-pill);
+  background: var(--slot-color);
+  color: var(--brand-navy);
+  border: 2px solid var(--brand-navy);
+  font-size: var(--text-sm);
+}
+
+/* The editor circle is drawn like a cap on the box: a thick ring in the button's colour inside a
+   navy edge. */
+.circle {
+  position: relative;
+  inline-size: min(100%, 13.75rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border: 8px solid var(--slot-color);
+  box-shadow: 0 0 0 2px var(--device-edge);
+  touch-action: none;
+  cursor: grab;
+}
+
+.circle:active {
+  cursor: grabbing;
+}
+
+.circle[data-empty] {
+  cursor: default;
+}
+
+.circleImage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+.circlePlaceholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.fileButton {
+  position: relative;
+  max-inline-size: 100%;
+}
+
+.fileButton:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.fileName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two classes, to outrank globals.css `.card p`. */
+.slot .slotError {
+  font-size: var(--text-sm);
+  color: var(--danger);
+  text-align: center;
+}
+
+.zoomControl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  inline-size: 100%;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+}
+
+.zoomControl input {
+  flex: 1;
+  accent-color: var(--accent);
+  min-block-size: var(--tap);
+}
+
+/* ---- preview and print ---- */
+
+/* The desk the sheet lies on. */
+.paper {
+  margin-block: var(--space-8);
+  padding: var(--space-8) var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+}
+
+/* 230 mm is about 870 px: it fits the 74rem column, not a phone. Below that it scrolls sideways
+   rather than scaling, because a scaled preview would stop being true to size. */
+.previewScroll {
+  overflow-x: auto;
+  display: grid;
+  justify-content: safe center;
+  padding-block: var(--space-2);
+}
+
+.howTo {
+  display: grid;
+  gap: var(--space-3);
+  max-inline-size: var(--measure);
+  margin: 0;
+  padding-inline-start: var(--space-6);
+  color: var(--muted);
+}
+
+.howTo strong {
+  color: var(--text);
+}
+
+.howTo li::marker {
+  font-family: var(--font-display);
+  font-weight: var(--weight-display);
+  color: var(--accent-ink);
+}
+
+.printBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  margin-block-start: var(--space-8);
+}
+
+.printButton {
+  min-inline-size: 9rem;
+}
+
+/* globals.css has no disabled state for .btn; this is the only page with one. Flat, so it does
+   not promise a press it will not give. */
+.printButton:disabled {
+  cursor: not-allowed;
+  background: var(--surface-sunken);
+  color: var(--muted);
+  border-color: var(--border-strong);
+  box-shadow: none;
+  transform: none;
+}
+
+.printHint {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.srOnly {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- the sheet: everything below is millimetres and reaches the paper ---- */
+
+/* A tab, the photo block, a tab. Its bounding box is SHEET_WIDTH_MM x BLOCK_HEIGHT_MM; the
+   visible shape comes from the outline. */
+.sheet {
+  position: relative;
+  flex: none;
+}
+
+/* Two copies of the outline: one filled with paper under the photos, so the tabs read as paper
+   on screen, and one stroked on top, so the cut line is never hidden by a photo. */
+.outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.outlineFill path {
+  fill: var(--paper);
+  stroke: none;
+}
+
+.outlineStroke path {
+  fill: none;
+  stroke: var(--paper-ink);
+  stroke-width: 0.4;
+  stroke-linejoin: miter;
+}
+
+/* The photo block between the two tabs. Its 3 children tile it edge to edge, each clipped, so a
+   photo can never spill into a neighbour's third. */
+.block {
+  position: absolute;
+  top: 0;
+  display: flex;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.printColumn {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+}
+
+.printFrame {
+  position: relative;
+  flex: none;
+}
+
+.printImage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* The framing guide, not a mask: a circle drawn on top of the full image, not clipping it. */
+.cutGuide {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 0.4mm dashed;
+  pointer-events: none;
+}
+
+@media print {
+  .screenOnly {
+    display: none;
+  }
+
+  .printOnly {
+    display: block;
+  }
+
+  /* The page is cream on screen; a browser printing backgrounds would lay that over the whole
+     sheet. Scoped with :has so the rule only reaches this page's body. */
+  :global(body):has(.printOnly) {
+    background: var(--paper);
+  }
+
+  /* Framing aid only — the circles are cut by eye, not along a printed line. */
+  .cutGuide {
+    display: none;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+}

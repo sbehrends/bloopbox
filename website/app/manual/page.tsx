@@ -571,6 +571,13 @@ export default function Manual() {
                 downloaded.
               </p>
               <p>
+                <strong>Put a face behind each colour.</strong> A small child knows Grandma before
+                they know yellow, so{' '}
+                <a href={links.portraitPrint}>print a photo of each contact</a> for the box: frame
+                three photos in your browser and print them true to size. They never leave your
+                computer.
+              </p>
+              <p>
                 Save. The box restarts — that takes a few seconds and the page waits for it — and the
                 lights go out. <strong>Dark is the ready state.</strong> Hand it to your child.
               </p>

@@ -93,7 +93,7 @@ RUN name="bloopbox-${APP_VERSION}-linux-${TARGETARCH:-arm64}" \
  && mkdir -p "${root}/node/bin" \
  && cp -r dist "${root}/dist" \
  && cp -r node_modules "${root}/node_modules" \
- && cp package.json package-lock.json config.default.json "${root}/" \
+ && cp package.json package-lock.json config.default.json LICENSE "${root}/" \
  && cp -r deploy/. "${root}/" \
  && cp "$(command -v node)" "${root}/node/bin/node" \
  && "${root}/node/bin/node" --version \

@@ -288,3 +288,11 @@ simulator's event injector, the tests, every script, and where things live.
 
 The living brand kit is a page rather than a file: `/brand/`, served by the same stylesheets the
 product pages use, so it cannot drift.
+
+## License
+
+bloopbox is free software under the [GNU General Public License v3.0](./LICENSE). Build it, change
+it, give it away or sell it; if you hand someone a box, or an image, running a modified version,
+you owe them that version's source under the same terms. The release tarball and the SD image
+carry the license beside the code. One of the libraries every image ships, `libsignal`, is itself
+GPL-3.0.

@@ -59,6 +59,117 @@
   min-block-size: 2.5rem;
 }
 
+/* Below 56rem the section links move into a disclosure, and GitHub with them, so a phone's bar is
+   the lockup, Build and the menu button. */
+.headerActions .wideOnly {
+  display: none;
+}
+
+.menu {
+  flex: none;
+}
+
+.menuButton {
+  display: grid;
+  place-items: center;
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.menuButton::-webkit-details-marker {
+  display: none;
+}
+
+.menuButton:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* Three bars, drawn as one element and its two shadows; they become a cross when open. */
+.menuIcon,
+.menuIcon::before,
+.menuIcon::after {
+  display: block;
+  inline-size: 1.1rem;
+  block-size: 2px;
+  border-radius: 2px;
+  background: currentcolor;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.menuIcon {
+  position: relative;
+}
+
+.menuIcon::before,
+.menuIcon::after {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+}
+
+.menuIcon::before {
+  transform: translateY(-6px);
+}
+
+.menuIcon::after {
+  transform: translateY(6px);
+}
+
+.menu[open] .menuIcon {
+  background: transparent;
+}
+
+.menu[open] .menuIcon::before {
+  background: var(--text);
+  transform: rotate(45deg);
+}
+
+.menu[open] .menuIcon::after {
+  background: var(--text);
+  transform: rotate(-45deg);
+}
+
+.menuPanel {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  background: var(--bg);
+  border-block-end: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.menuPanel a {
+  display: flex;
+  align-items: center;
+  min-block-size: 3rem;
+  padding-inline: var(--space-2);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  border-block-end: 1px solid var(--border);
+}
+
+.menuPanel a:last-child {
+  border-block-end: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menuIcon,
+  .menuIcon::before,
+  .menuIcon::after {
+    transition: none;
+  }
+}
+
 @media (width >= 56rem) {
   .nav {
     display: flex;
@@ -66,5 +177,13 @@
 
   .headerActions {
     margin-inline-start: 0;
+  }
+
+  .headerActions .wideOnly {
+    display: inline-flex;
+  }
+
+  .menu {
+    display: none;
   }
 }

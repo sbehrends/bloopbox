@@ -1,4 +1,5 @@
 import { Lockup } from './Lockup'
+import { MobileNav } from './MobileNav'
 import { links } from '@/lib/site'
 
 import styles from './SiteHeader.module.css'
@@ -12,6 +13,9 @@ export function SiteHeader({
   /** Which fixed link is the page being rendered, if any. Drives `aria-current`. */
   readonly current?: 'manual'
 }) {
+  const pageLink =
+    current === 'manual' ? { href: links.lights, label: 'Lights' } : { href: links.manual, label: 'Manual' }
+
   return (
     <header className={styles.header}>
       <div className={`wrap ${styles.headerInner}`}>
@@ -24,11 +28,10 @@ export function SiteHeader({
               {item.label}
             </a>
           ))}
-          {current !== 'manual' && <a href={links.manual}>Manual</a>}
-          {current === 'manual' && <a href={links.lights}>Lights</a>}
+          <a href={pageLink.href}>{pageLink.label}</a>
         </nav>
         <div className={styles.headerActions}>
-          <a className={`btn btn-secondary ${styles.headerCta}`} href={links.repo}>
+          <a className={`btn btn-secondary ${styles.headerCta} ${styles.wideOnly}`} href={links.repo}>
             GitHub
           </a>
           <a
@@ -38,6 +41,7 @@ export function SiteHeader({
           >
             Build
           </a>
+          <MobileNav items={[...nav, pageLink, { href: links.repo, label: 'GitHub' }]} />
         </div>
       </div>
     </header>

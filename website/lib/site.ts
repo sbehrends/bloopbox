@@ -8,6 +8,18 @@ export const site = {
   url: 'https://bloopbox.vercel.app',
 } as const
 
+/**
+ * The link preview, one image for every page. A page that sets its own `openGraph` replaces the
+ * root's whole object, images included, so each such page must list this again. 1200×630, cropped
+ * from the hero.
+ */
+export const ogImage = {
+  url: '/bloopbox-og.jpg',
+  width: 1200,
+  height: 630,
+  alt: 'A bloopbox on a nursery table: a small blue box with three arcade buttons, yellow, coral and teal, the yellow one lit, each above a family photo.',
+} as const
+
 export const links = {
   repo: site.repo,
   releases: `${site.repo}/releases`,
@@ -35,12 +47,6 @@ const hubspot = {
 
 export const waitlist = {
   endpoint: `https://${hubspot.host}/submissions/v3/integration/submit/${hubspot.portalId}/${hubspot.formGuid}`,
-} as const
-
-export const download = {
-  image: `${site.repo}/releases/latest`,
-  etcher: 'https://etcher.balena.io/',
-  imager: 'https://www.raspberrypi.com/software/',
 } as const
 
 /** Bill of materials. An empty `links` renders the part as plain text. */

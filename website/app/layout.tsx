@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
 
-import { site } from '@/lib/site'
+import { ogImage, site } from '@/lib/site'
 
 import './globals.css'
 
@@ -27,11 +27,13 @@ export const metadata: Metadata = {
     siteName: site.name,
     title: `${site.name} — ${site.tagline}`,
     description: site.description,
+    images: [ogImage],
   },
   twitter: {
     card: 'summary_large_image',
     title: `${site.name} — ${site.tagline}`,
     description: site.description,
+    images: [ogImage],
   },
 }
 

@@ -6,7 +6,8 @@ import { LightSignature } from '@/components/LightSignature'
 import { SiteFooter } from '@/components/SiteFooter'
 import { SiteHeader } from '@/components/SiteHeader'
 import { WaitlistForm } from '@/components/WaitlistForm'
-import { download, links, parts, site } from '@/lib/site'
+import { download } from '@/lib/release'
+import { links, ogImage, parts, site } from '@/lib/site'
 
 import styles from './page.module.css'
 
@@ -19,6 +20,7 @@ export const metadata: Metadata = {
     title: `Build your first ${site.name}`,
     description:
       'The parts, the wiring and the setup',
+    images: [ogImage],
   },
 }
 
@@ -211,6 +213,10 @@ export default function Manual() {
                 <a className="btn btn-primary" href={download.image}>
                   Download the card image
                 </a>
+              </p>
+              <p>
+                Its checksum and the files for installing by hand are on{' '}
+                <a href={download.release}>the release page</a>.
               </p>
             </Step>
 

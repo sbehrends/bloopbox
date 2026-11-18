@@ -199,9 +199,8 @@ Then submit the form once from `npm run dev` and check the contact in HubSpot.
 
 ## Before this goes live
 
-- **The repository is private.** Every GitHub link on the site derives from `site.repo` in
-  `lib/site.ts`, and each one is a 404 for a visitor until the repository goes public.
-- **The manual's download button needs a published release.** It links to `releases/latest`, and
-  the manual no longer warns that it is empty. The release needs a `--audio-hat wm8960` build —
-  `docs/deployment.md`.
-- There is no social preview image — `openGraph` declares no `images`.
+The checklist is `PENDING.md` § Going public. Two of its items are the site's: every GitHub link
+derives from `site.repo` in `lib/site.ts` and 404s until the repository is public, and the
+manual's download button links straight to the SD image of the release named by this package's
+`version` (`lib/release.ts`). Keep that version in step with `box/software`'s: a
+release bumps both.

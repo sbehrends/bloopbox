@@ -388,8 +388,11 @@
     display: none;
   }
 
+  /* Orientation only, never a named size. A named size is authoritative in Chromium: ask for A4
+     with Letter loaded and it lays out A4 and shrinks it to fit, ~0.94, so the 29 mm circles come
+     out at 27 mm. The 230 mm strip fits either paper in landscape (Letter leaves 259 mm). */
   @page {
-    size: A4 landscape;
+    size: landscape;
     margin: 10mm;
   }
 }

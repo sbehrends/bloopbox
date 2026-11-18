@@ -129,7 +129,7 @@ export function PortraitPrintTool() {
           <dl className={styles.facts}>
             <div>
               <dt>Paper</dt>
-              <dd>A4, landscape</dd>
+              <dd>A4 or Letter, landscape</dd>
             </div>
             <div>
               <dt>Strip</dt>
@@ -189,7 +189,7 @@ export function PortraitPrintTool() {
 
           <ol className={styles.howTo}>
             <li>
-              In the print dialog, choose <strong>A4 landscape</strong> and turn off{' '}
+              In the print dialog, choose <strong>landscape</strong> and turn off{' '}
               <strong>Fit to page</strong> — print at 100%.
             </li>
             <li>

@@ -8,7 +8,7 @@ proven is in `docs/hardware-bringup.md` § What the reference board has proven.
 **Verified hardware: the reference board** — a Raspberry Pi 3B+ with the Waveshare WM8960 Audio HAT,
 three buttons and three lamps (`docs/hardware.md` § The reference board). It is the one board
 releases are built and tested for. The Pi Zero 2 W is a later target (below). CI runs on GitHub
-(`github.com/sbehrends/bloopbox`) and is not yet green — see below.
+(`github.com/sbehrends/bloopbox`): green on `main`, unproven on Dependabot's runs — see below.
 
 Ordered roughly by priority within each group.
 
@@ -16,41 +16,33 @@ Ordered roughly by priority within each group.
 
 ## Before 1.0
 
-### CI runs on GitHub, and Dependabot's runs are red
+### Going public
 
-The remote is `github.com/sbehrends/bloopbox` (private). The first runs, on 2026-10-23, all failed.
-The failure on `main` was the production `npm audit` (`proxy-addr`, `zod`, `body-parser`,
-`music-metadata`), fixed by `npm audit fix` on 2026-10-24. Still open:
+The repository is private, and every GitHub link on the site 404s for a visitor until it is not. In
+order; the first block is done in the working tree, the rest are by hand.
 
-**Dependabot pull requests: the `changes` job fails with "Resource not accessible by
-integration"**, so every gated job is skipped and `ci` fails. A Dependabot run gets a read-only
-token, and `dorny/paths-filter` lists a pull request's files through the API. It most likely needs
-`pull-requests: read` in the workflow's `permissions`. Unverified.
+Done (2026-11-18): GPL-3.0 `LICENSE` at the root and in the release tarball; the site's social
+preview image; the site's four `npm audit` advisories (`next` 16.4.6); the phone nav; Dependabot
+switched off; and `v1.0.0` tagged.
 
-Still unproven: the `type=gha` Docker layer cache passed through `BUILDX_EXTRA_ARGS` (a miss is not
-an error; the env block is deletable). **Branch protection must require the aggregating `ci`
-check**, set by hand.
+1. **Decide what of the untracked tree ships.** `.agents/` and `.claude/skills/` are third-party
+   skills, some tracked already; check each one's license before it is in a public repository, or
+   untrack them. `website/public/Gemini_Generated_Image_*.jpeg` and `why-2-box-old.jpeg` are
+   tracked and unreferenced.
+2. **Every commit's author email becomes public** (176 commits). Rewriting history is the only
+   way back; decide before the flip, not after.
+3. **Flip the repository to public.** Then, now that a free plan allows it: branch protection on
+   `main` requiring the aggregating `ci` check, secret scanning with push protection, and a
+   private vulnerability reporting channel (a `SECURITY.md` pointing at it — the whitelist is a
+   child-safety boundary, and its reports must not land in a public issue).
+4. **Rotate the reference board's ssh password** before anything of it is shown (below).
 
-**Pushing the history tags would publish old releases.** `release.yml` builds and publishes on any
-`v*` tag push. Guard it, or push only the tag being released, by name.
-
-### The website, before it is announced
-
-It is live at https://bloopbox.vercel.app/.
-
-1. **No social preview image.** `openGraph` in `app/layout.tsx` has no `images`.
-2. **`npm audit` reports four advisories** (2026-10-02): `next` (critical), `postcss`, `sharp` and
-   `nanoid` (high). The offered fix is `next@16.3.8`, outside the exact `16.2.12` pin, plus
-   `npm audit fix` for `nanoid`. Bump and re-run `npm run check`.
+**Never push tags with `--tags`.** `release.yml` builds and publishes on any `v*` push, and the ten
+older local tags would each become a release; a guard in today's `release.yml` cannot stop that,
+since each tag runs the workflow file of its own commit. Push a release tag by name.
 
 The line that must hold: **no copy may imply the device is buyable or shipping.** Every call to
 action is "build one".
-
-### The build manual's download button needs the first release
-
-Step 1's button points at `releases/latest`, and the manual no longer says the page is empty. A
-tagged release builds the right image (`-wm8960-sd.img.xz`; `docs/deployment.md` § CI), so this
-closes with the first published tag.
 
 ### A factory reset does not change the ssh password
 
@@ -223,8 +215,6 @@ The gate enforces coverage as a ratchet in `vitest.config.ts`. Thin, largest fir
 
 ### Website and brand
 
-- **The site's nav disappears on a phone.** Below 56rem `.nav` in
-  `website/components/SiteHeader.module.css` is `display: none`. A disclosure button is the fix.
 - **The manual prints badly.** Sections break wherever they land, and the dark band and footer print
   as full-bleed navy. `break-inside: avoid` on the step blocks and a print rule that drops the night
   band to paper.

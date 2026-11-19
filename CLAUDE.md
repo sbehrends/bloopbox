@@ -139,5 +139,5 @@ filtering with `on: push: paths:` would make a required check never report and b
 
 `.github/workflows/release.yml` is deliberately **not** filtered: a tag must rebuild everything.
 
-The remote is `github.com/sbehrends/bloopbox`, private. CI has run there and is red — see
-`PENDING.md` before trusting a green or red result.
+The remote is `github.com/sbehrends/bloopbox`, **public** since 2026-11-19: anything committed is
+published. CI is green on `main`; what is still open after going public is in `PENDING.md`.

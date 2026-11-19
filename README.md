@@ -19,7 +19,8 @@ tested against a **browser-based hardware simulator**.
 One real device exists, the **reference board**: a Pi 3B+ with the WM8960 audio HAT, three buttons
 and three lamps. On 2026-09-30 a card flashed from a locally built image ran it end to end — first
 boot, the setup hotspot, WhatsApp linking, all three buttons and lamps, audio in both directions,
-silent mode and the one-button-at-a-time lockout.
+silent mode and the one-button-at-a-time lockout. A Raspberry Pi 4 Model B (1 GB) has also been
+confirmed working (2026-11-19).
 
 **The Pi Zero 2 W the product targets has never run any of it.** [`PENDING.md`](./PENDING.md) is
 the honest list of what is and is not proven.
@@ -40,7 +41,8 @@ own directory** — `box/software/` for the device, `website/` for the site. See
 
 ## What you need
 
-A Raspberry Pi (the Zero 2 W is the target; the reference board is a 3B+), a **Waveshare WM8960
+A Raspberry Pi (the Zero 2 W is the target; the reference board is a 3B+, and a Pi 4 Model B
+1 GB is confirmed working), a **Waveshare WM8960
 audio HAT** with one or two small speakers, three 30 mm illuminated arcade buttons with 3 V lamps,
 a 5 V 2.5 A supply and an 8 GB+ microSD card. The bill of materials, the wiring and the GPIO pins
 are in [`docs/hardware.md`](./docs/hardware.md).

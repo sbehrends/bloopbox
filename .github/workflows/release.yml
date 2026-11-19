@@ -221,7 +221,8 @@ jobs:
           notes=$(cat <<'EOF'
           Built and tested for a Raspberry Pi 3B+ with the Waveshare WM8960
           Audio HAT, three arcade buttons and three lamps (wiring in
-          `docs/hardware.md`). The Pi Zero 2 W is the target but has not been
+          `docs/hardware.md`), and confirmed working on a Raspberry Pi 4
+          Model B (1 GB). The Pi Zero 2 W is the target but has not been
           tested yet.
 
           Easiest: flash the `-wm8960-sd.img.xz` to a card and boot. Nothing

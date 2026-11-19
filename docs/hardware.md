@@ -10,7 +10,9 @@ proven.
 > yellow / coral / teal left to right. **The Pi Zero 2 W the product targets has run none of it**,
 > and `gpioDriver.ts` carries a `TODO(hardware)` banner saying so.
 > [`hardware-bringup.md`](./hardware-bringup.md) has the record and the order to prove the next
-> board in. The section at the foot of this page is the current line between the two.
+> board in. The section at the foot of this page is the current line between the two. A second
+> board, a **Raspberry Pi 4 Model B (1 GB)**, was confirmed working on 2026-11-19; it is not yet
+> recorded gate by gate, so the measurements here remain the 3B+'s.
 
 ---
 
@@ -370,6 +372,9 @@ do, including that a too-long list throws — and the settling by `settledLine.t
 card name and mixer controls above; capture and playback through the real path; all three buttons,
 with the switch bounce settled; all three lamps at the default polarity; the setup hotspot on a real
 radio with a phone joining it; a first boot from a flashed image.
+
+**Confirmed working on a Raspberry Pi 4 Model B (1 GB)** on 2026-11-19, gate by gate not yet
+recorded ([`hardware-bringup.md`](./hardware-bringup.md#what-the-reference-board-has-proven)).
 
 **Not proven anywhere:**
 

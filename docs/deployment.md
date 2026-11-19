@@ -523,7 +523,8 @@ failed (`PENDING.md`). What they are written to do:
 Audio HAT, three buttons and three lamps. `release.yml` sets it once, as `AUDIO_HAT: wm8960` at the
 top of the workflow, which passes `--audio-hat wm8960` to the image builder and names the image
 `bloopbox-<version>-wm8960-sd.img.xz`; the release notes name the same board and give the tarball
-route as `install.sh --audio-hat wm8960` followed by a reboot. No release claims the Pi Zero 2 W
+route as `install.sh --audio-hat wm8960` followed by a reboot, and add the Raspberry Pi 4 Model B
+(1 GB), confirmed working on 2026-11-19. No release claims the Pi Zero 2 W
 until one has run it. If the tested hardware changes, change the variable, the notes and this
 paragraph together.
 

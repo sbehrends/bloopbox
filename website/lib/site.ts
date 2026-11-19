@@ -1,4 +1,3 @@
-/** The repository is private for now, so its links 404 for anyone without access. */
 export const site = {
   name: 'bloopbox',
   tagline: 'A WhatsApp voice messenger with three buttons and no screen.',
@@ -60,7 +59,7 @@ export const parts = [
         href: 'https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/',
       },
     ],
-    note: 'The brain. This build was tested with Raspberry Pi 3B+ but it should work on Pi 4, Pi 5 or Pi Zero 2 W.',
+    note: 'The brain. Tested on a Raspberry Pi 3B+ and a Raspberry Pi 4 Model B (1 GB); it should work on a Pi 5 or a Pi Zero 2 W.',
   },
   {
     name: 'Waveshare WM8960 audio HAT',

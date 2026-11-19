@@ -7,8 +7,10 @@ proven is in `docs/hardware-bringup.md` § What the reference board has proven.
 
 **Verified hardware: the reference board** — a Raspberry Pi 3B+ with the Waveshare WM8960 Audio HAT,
 three buttons and three lamps (`docs/hardware.md` § The reference board). It is the one board
-releases are built and tested for. The Pi Zero 2 W is a later target (below). CI runs on GitHub
-(`github.com/sbehrends/bloopbox`): green on `main`, unproven on Dependabot's runs — see below.
+releases are built for and proven on gate by gate. A Raspberry Pi 4 Model B (1 GB) was also
+confirmed working on 2026-11-19, not yet recorded gate by gate. The Pi Zero 2 W is a later target
+(below). CI runs on GitHub (`github.com/sbehrends/bloopbox`, public since 2026-11-19), green on
+`main`; Dependabot is off.
 
 Ordered roughly by priority within each group.
 
@@ -16,25 +18,22 @@ Ordered roughly by priority within each group.
 
 ## Before 1.0
 
-### Going public
+### After going public
 
-The repository is private, and every GitHub link on the site 404s for a visitor until it is not. In
-order; the first block is done in the working tree, the rest are by hand.
+The repository is public and `v1.0.0` is released (2026-11-19), with the SD image and the tarball
+the manual's download button links to. The GPL-3.0 license, the site's link preview and phone menu,
+its `npm audit` advisories and switching Dependabot off went in with it. What the flip left behind:
 
-Done (2026-11-18): GPL-3.0 `LICENSE` at the root and in the release tarball; the site's social
-preview image; the site's four `npm audit` advisories (`next` 16.4.6); the phone nav; Dependabot
-switched off; and `v1.0.0` tagged.
-
-1. **Decide what of the untracked tree ships.** `.agents/` and `.claude/skills/` are third-party
-   skills, some tracked already; check each one's license before it is in a public repository, or
-   untrack them. `website/public/Gemini_Generated_Image_*.jpeg` and `why-2-box-old.jpeg` are
-   tracked and unreferenced.
-2. **Every commit's author email becomes public** (176 commits). Rewriting history is the only
-   way back; decide before the flip, not after.
-3. **Flip the repository to public.** Then, now that a free plan allows it: branch protection on
-   `main` requiring the aggregating `ci` check, secret scanning with push protection, and a
-   private vulnerability reporting channel (a `SECURITY.md` pointing at it — the whitelist is a
-   child-safety boundary, and its reports must not land in a public issue).
+1. **The third-party skills went public with it.** `.agents/` and `.claude/skills/` are
+   third-party skills, some tracked; check each one's license, or untrack them.
+   `website/public/Gemini_Generated_Image_*.jpeg` and `why-2-box-old.jpeg` are tracked and
+   unreferenced.
+2. **Every commit's author email is public** (176 commits). Only a history rewrite and a force push
+   would take it back, and forks or clones made since keep it regardless.
+3. **Repository settings:** branch protection on `main` requiring the aggregating `ci` check,
+   secret scanning with push protection, and private vulnerability reporting with a `SECURITY.md`
+   pointing at it — the whitelist is a child-safety boundary, and its reports must not land in a
+   public issue.
 4. **Rotate the reference board's ssh password** before anything of it is shown (below).
 
 **Never push tags with `--tags`.** `release.yml` builds and publishes on any `v*` push, and the ten

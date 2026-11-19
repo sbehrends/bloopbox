@@ -24,6 +24,10 @@ onboarding onto home Wi-Fi, the admin password, WhatsApp linking, hold-to-send a
 the blue button (the only one assigned), and a note from an unassigned number never reaching the
 box. Doctor fully green with `f1d9981`.
 
+**A Raspberry Pi 4 Model B (1 GB)** was confirmed working on **2026-11-19**. Which gates it was
+taken through was not recorded; until it is, the table below is the 3B+'s alone, and the Pi 4 is
+the next board to walk through it.
+
 | Gate | What passed |
 | ---- | ----------- |
 | 0 — image | The flashed image boots, and the first-boot ssh password is made before sshd starts, shows in the admin panel, and logs in |

@@ -96,7 +96,10 @@ jobs:
     name: build SD card image
     needs: package
     if: github.event_name == 'push' || inputs.build_image
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: from 26.04 `qemu-user-static` is only a virtual package and apt
+    # refuses it, and build-sd-image.sh needs Debian's static `qemu-aarch64-static`, registered with
+    # binfmt's F flag so it works inside the chroot. Move off 24.04 only together with that script.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: box/software
